@@ -179,9 +179,9 @@ body {
 #jobsTable th:nth-child(1) { width: 5%; }  /* LCD DATE */
 #jobsTable th:nth-child(2) { width: 5%; }  /* TXN ID */
 #jobsTable th:nth-child(3) { width: 5%; }  /* START DATE */
-#jobsTable th:nth-child(4) { width: 5%; }  /* MATERIAL ARRIVAL */
+#jobsTable th:nth-child(4) { width: 4%; }  /* MATERIAL ARRIVAL */
 #jobsTable th:nth-child(5) { width: 6%; }  /* JOB */
-#jobsTable th:nth-child(6) { width: 5%; }  /* PROCESS CODE */
+#jobsTable th:nth-child(6) { width: 6%; }  /* PROCESS CODE */
 #jobsTable th:nth-child(7) { width: 5%; }  /* RSC LOCATION */
 #jobsTable th:nth-child(8) { width: 5%; }  /* RSC CODE */
 #jobsTable th:nth-child(9) { width: 4%; }  /* JOB DEPEND */
