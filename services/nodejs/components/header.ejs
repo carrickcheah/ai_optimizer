@@ -1,0 +1,105 @@
+<!-- components/header.ejs -->
+<style>
+  /* Modern Navigation Bar Styles */
+  .nex-header {
+    width: 100%;
+    background: linear-gradient(135deg, #0669f4, #5441e9);
+    color: white;
+    box-shadow: 0 2px 8px rgba(18, 18, 18, 0.3);
+    margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+  }
+
+  .page-title-container {
+    padding: 18px;
+    background-color: rgb(0,0,255);
+    color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,255,0.2);
+    margin-bottom: 20px;
+  }
+  
+  .main-nav {
+    display: flex;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .nav-item {
+    padding: 15px 20px;
+    color: white;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.95rem;
+    transition: background-color 0.2s, transform 0.1s;
+    display: flex;
+    align-items: center;
+    border-bottom: 3px solid transparent;
+  }
+  
+  .nav-item:hover {
+    background-color: rgba(255,255,255,0.1);
+    border-bottom: 3px solid white;
+    transform: translateY(-2px);
+  }
+  
+  .nav-item.active {
+    background-color: rgba(255,255,255,0.15);
+    border-bottom: 3px solid white;
+    font-weight: 600;
+  }
+  
+  .nav-item i {
+    margin-right: 8px;
+    font-size: 1rem;
+  }
+  
+  /* Responsive adjustments */
+  @media (max-width: 768px) {
+    .main-nav {
+      flex-wrap: wrap;
+    }
+    
+    .nav-item {
+      padding: 12px 15px;
+      font-size: 0.85rem;
+    }
+  }
+</style>
+
+<!-- Main Navigation -->
+<div class="nex-header">
+  <div class="main-nav">
+    <a href="/page/dashboard" class="nav-item <%= title === 'Dashboard' ? 'active' : '' %>">
+      <i class="fas fa-tachometer-alt"></i> Dashboard
+    </a>
+    <a href="/page/sales" class="nav-item <%= title === 'Sales' ? 'active' : '' %>">
+      <i class="fas fa-chart-line"></i> Sales
+    </a>
+    <a href="/page/purchasing" class="nav-item <%= title === 'Purchasing' ? 'active' : '' %>">
+      <i class="fas fa-shopping-cart"></i> Purchasing
+    </a>
+    <a href="/page/warehouse" class="nav-item <%= title === 'Warehouse' ? 'active' : '' %>">
+      <i class="fas fa-warehouse"></i> Warehouse
+    </a>
+    <a href="/page/manufacturing" class="nav-item <%= title === 'Manufacturing' ? 'active' : '' %>">
+      <i class="fas fa-industry"></i> Manufacturing
+    </a>
+    <a href="/page/engineering" class="nav-item <%= title === 'Engineering' ? 'active' : '' %>">
+      <i class="fas fa-cogs"></i> Engineering
+    </a>
+    <a href="/page/administration" class="nav-item <%= title === 'Administration' ? 'active' : '' %>">
+      <i class="fas fa-users-cog"></i> Administration
+    </a>
+    <a href="/page/aichat" class="nav-item <%= title === 'AI Chat' ? 'active' : '' %>">
+      <i class="fas fa-comment-dots"></i> AI Chat
+    </a>
+    <a href="/page/production_planning" class="nav-item <%= title === 'Production Planning' ? 'active' : '' %>">
+      <i class="fas fa-cog"></i> Production Planning
+    </a>
+  </div>
+</div>
+

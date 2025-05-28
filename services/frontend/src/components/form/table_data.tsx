@@ -21,6 +21,10 @@ interface ProductionSchedule {
   ACCUMULATED_DAILY_OUTPUT: number | null;
   BALANCE_QUANTITY: number;
   TxnId_i: number;
+  MATERIAL_ARRIVAL: string | null;
+  JOB_DEPENDENCY: boolean;
+  PRIORITY: number | null;
+  REDUCE_OPERATION_HOURS: number | null;
 }
 
 interface TableDataProps {
@@ -127,28 +131,38 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
   };
   
   // Fetch data from API
-  const fetchData = async () => {
+  const fetchData = async (currentPage = pagination.currentPage, currentItemsPerPage = pagination.itemsPerPage, currentSortField = sortField, currentSortOrder = sortOrder) => {
     setIsLoading(true);
     setError(null);
     
+    // Construct query parameters
+    const queryParams = new URLSearchParams({
+      page: currentPage.toString(),
+      page_size: currentItemsPerPage.toString(),
+      sort_field: currentSortField,
+      sort_order: currentSortOrder,
+    });
+
+    if (search) {
+      queryParams.append('search', search);
+    }
+
     try {
-      // In a real application, we would include pagination, sorting, and filtering parameters
-      // For now, we're assuming all data is fetched at once
-      const response = await fetch(endpoint);
+      const response = await fetch(`${endpoint}?${queryParams.toString()}`);
       
       if (!response.ok) {
         throw new Error(`Server responded with status ${response.status}`);
       }
       
-      const data = await response.json();
-      setJobs(data);
+      const data = await response.json(); // Expecting { items: [], total_items: 0, ... }
+      setJobs(data.items || []); // Update jobs with data.items
       
-      // Update pagination info
-      // This is a placeholder - in a real app, this would come from the API
+      // Update pagination info from API response
       setPagination({
-        ...pagination,
-        totalItems: data.length,
-        totalPages: Math.ceil(data.length / pagination.itemsPerPage)
+        currentPage: data.page || 1,
+        totalPages: data.total_pages || 1,
+        totalItems: data.total_items || 0,
+        itemsPerPage: data.page_size || 50
       });
       
     } catch (err) {
@@ -164,44 +178,29 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     const newOrder = field === sortField && sortOrder === 'asc' ? 'desc' : 'asc';
     setSortField(field);
     setSortOrder(newOrder);
+    fetchData(1, pagination.itemsPerPage, field, newOrder); // Fetch data from backend
   };
   
-  // Handle search
+  // Handle search - applyFilters will trigger fetchData
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
   };
   
   // Handle apply filters button
   const applyFilters = () => {
-    // Reset to first page when filters change
-    setPagination({
-      ...pagination,
-      currentPage: 1
-    });
-    // In a real app, this would trigger a new API call with the filters
-    fetchData();
+    fetchData(1, pagination.itemsPerPage, sortField, sortOrder); // Fetch data from backend
   };
   
   // Handle rows per page change
   const handleRowsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newItemsPerPage = parseInt(e.target.value);
-    setPagination({
-      ...pagination,
-      itemsPerPage: newItemsPerPage,
-      currentPage: 1 // Reset to first page
-    });
-    // In a real app, this would trigger a new API call
+    fetchData(1, newItemsPerPage, sortField, sortOrder); // Fetch data from backend
   };
   
   // Handle page change
   const handlePageChange = (pageNumber: number) => {
     if (pageNumber < 1 || pageNumber > pagination.totalPages) return;
-    
-    setPagination({
-      ...pagination,
-      currentPage: pageNumber
-    });
-    // In a real app, this would trigger a new API call
+    fetchData(pageNumber, pagination.itemsPerPage, sortField, sortOrder); // Fetch data from backend
   };
   
   // Handle delete button click
@@ -298,51 +297,11 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // Removed dependencies to prevent multiple calls on sort/filter changes, fetchData handles it
   
-  // Filter and sort jobs
+  // Filter and sort jobs - Now handled by backend, just return jobs
   const getDisplayedJobs = () => {
-    // Filter by search term
-    let filteredJobs = jobs;
-    if (search) {
-      const searchLower = search.toLowerCase();
-      filteredJobs = jobs.filter(job => 
-        job.JOB?.toLowerCase().includes(searchLower) ||
-        job.PROCESS_CODE?.toLowerCase().includes(searchLower) ||
-        job.RSC_LOCATION?.toLowerCase().includes(searchLower) ||
-        job.RSC_CODE?.toLowerCase().includes(searchLower)
-      );
-    }
-    
-    // Sort data using sortField and sortOrder
-    const sortedJobs = [...filteredJobs].sort((a, b) => {
-      let aValue = a[sortField as keyof ProductionSchedule];
-      let bValue = b[sortField as keyof ProductionSchedule];
-
-      // Handle nulls
-      if (aValue === null && bValue === null) return 0;
-      if (aValue === null) return 1;
-      if (bValue === null) return -1;
-
-      // Handle dates
-      if (sortField.endsWith('DATE') || sortField.endsWith('Date')) {
-        aValue = new Date(aValue as string).getTime();
-        bValue = new Date(bValue as string).getTime();
-      }
-
-      // Handle numbers
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        return sortOrder === 'asc' ? (aValue as number) - (bValue as number) : (bValue as number) - (aValue as number);
-      }
-
-      // Default string comparison
-      const result = String(aValue).localeCompare(String(bValue));
-      return sortOrder === 'asc' ? result : -result;
-    });
-    
-    // Paginate data
-    const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
-    return sortedJobs.slice(startIndex, startIndex + pagination.itemsPerPage);
+    return jobs; // Data is already sorted and paginated by backend
   };
   
   // Calculate display rows
@@ -435,6 +394,10 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('START_DATE')}>
                         START<br/>DATE
                       </th>
+                      <th className={`text-center sortable ${sortField === 'MATERIAL_ARRIVAL' ? `sort-${sortOrder}` : ''}`}
+                          onClick={() => handleSort('MATERIAL_ARRIVAL')}>
+                        MATERIAL<br/>ARRIVAL
+                      </th>
                       <th className={`text-center sortable ${sortField === 'JOB' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('JOB')}>
                         JOB
@@ -450,6 +413,10 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       <th className={`text-center sortable ${sortField === 'RSC_CODE' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('RSC_CODE')}>
                         RSC<br/>CODE
+                      </th>
+                      <th className={`text-center sortable ${sortField === 'JOB_DEPENDENCY' ? `sort-${sortOrder}` : ''}`}
+                          onClick={() => handleSort('JOB_DEPENDENCY')}>
+                        JOB<br/>DEPEND
                       </th>
                       <th className={`text-center sortable ${sortField === 'NUMBER_OPERATOR' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('NUMBER_OPERATOR')}>
@@ -487,22 +454,30 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('NO_PROD')}>
                         NO<br/>PROD
                       </th>
+                      <th className={`text-center sortable ${sortField === 'PRIORITY' ? `sort-${sortOrder}` : ''}`}
+                          onClick={() => handleSort('PRIORITY')}>
+                        PRIORITY
+                      </th>
+                      <th className={`text-center sortable ${sortField === 'REDUCE_OPERATION_HOURS' ? `sort-${sortOrder}` : ''}`}
+                          onClick={() => handleSort('REDUCE_OPERATION_HOURS')}>
+                        REDUCE<br/>HRS
+                      </th>
                       <th className="text-center">ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody id="jobsTableBody">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={19} className="text-center py-4">
+                        <td colSpan={21} className="text-center py-4">
                           <div className="spinner-border text-primary" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
-                          <p className="mt-2">Loading production jobs...</p>
+                          <p className="mt-2">Loading production schedule...</p>
                         </td>
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                        <td colSpan={19} className="text-center">No production jobs found</td>
+                        <td colSpan={21} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
@@ -510,10 +485,12 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{formatDate(job.LCD_DATE)}</td>
                           <td className="text-center">{job.TxnId_i}</td>
                           <td className="text-center">{formatDateTimeMilliseconds(job.START_DATE)}</td>
+                          <td className="text-center">{job.MATERIAL_ARRIVAL || 'N/A'}</td>
                           <td className="text-center">{job.JOB}</td>
                           <td className="text-center">{job.PROCESS_CODE}</td>
                           <td className="text-center">{job.RSC_LOCATION}</td>
                           <td className="text-center">{job.RSC_CODE}</td>
+                          <td className="text-center">{job.JOB_DEPENDENCY ? 'Yes' : 'No'}</td>
                           <td className="text-center">{job.NUMBER_OPERATOR}</td>
                           <td className="text-center">{job.JOB_QUANTITY}</td>
                           <td className="text-center">{job.ACCUMULATED_DAILY_OUTPUT}</td>
@@ -523,6 +500,8 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{job.SETTING_HOURS}</td>
                           <td className="text-center">{job.BREAK_HOURS}</td>
                           <td className="text-center">{job.NO_PROD}</td>
+                          <td className="text-center">{job.PRIORITY}</td>
+                          <td className="text-center">{job.REDUCE_OPERATION_HOURS ? formatReduceHours(job.REDUCE_OPERATION_HOURS) : 'NO'}</td>
                           <td className="text-center">
                             <Link to={`/job/view/${job.TxnId_i}`} className="action-btn action-btn-view" title="View">
                               <i className="fas fa-eye"></i>

@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import mysql.connector
 from datetime import datetime
+import math # Added for math.ceil
 
 from ..fastapi_app import (
     ProductionJobData, 
@@ -156,6 +157,144 @@ async def get_production_jobs(
         except mysql.connector.Error as e:
             logger.error(f"Database error fetching jobs: {e}")
             raise HTTPException(status_code=500, detail="Failed to fetch production jobs")
+        finally:
+            cursor.close()
+
+@router.get("/production-schedule", 
+           response_model=Dict[str, Any],
+           summary="Get production schedule data",
+           description="Get production schedule from joined tables with pagination, sorting, and search")
+@monitor_performance
+async def get_production_schedule(
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    page_size: int = Query(50, ge=1, le=500, description="Number of items per page"),
+    sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by (e.g., LCD_DATE, JOB, PROCESS_CODE)"),
+    sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
+    search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION")
+):
+    """Get production schedule data with pagination, sorting, and search."""
+    with get_db_connection_from_pool() as conn:
+        cursor = conn.cursor(dictionary=True)
+        
+        # Define allowed sortable columns to prevent SQL injection and map to SQL expressions if needed
+        allowed_sort_fields = {
+            "LCD_DATE": "jot.TargetDate_dd",
+            "JOB": "jot.DocRef_v",
+            "PROCESS_CODE": "jop.Task_v",
+            "RSC_LOCATION": "RSC_LOCATION", # This is an alias from the SELECT
+            "RSC_CODE": "jop.Machine_v",
+            "NUMBER_OPERATOR": "jop.ManCount_i",
+            "JOB_QUANTITY": "jot.JoQty_d",
+            "EXPECT_OUTPUT_PER_HOUR": "EXPECT_OUTPUT_PER_HOUR", # Alias
+            "HOURS_NEED": "HOURS_NEED", # Alias
+            "DAY_NEED": "DAY_NEED", # Alias
+            "SETTING_HOURS": "jop.SetupTime_d",
+            "START_DATE": "START_DATE", # Alias
+            "ACCUMULATED_DAILY_OUTPUT": "di.Qty_d", # careful with alias vs direct field with LEFT JOIN nulls
+            "BALANCE_QUANTITY": "BALANCE_QUANTITY", # Alias
+            "TxnId_i": "jop.TxnId_i",
+            "MATERIAL_ARRIVAL": "MATERIAL_ARRIVAL", #Alias
+            "PRIORITY": "PRIORITY" #Alias
+        }
+
+        sql_sort_field = allowed_sort_fields.get(sort_field, "jot.TargetDate_dd") # Default sort
+        sql_sort_order = "DESC" if sort_order and sort_order.lower() == "desc" else "ASC"
+
+        params = []
+        search_conditions = ""
+        if search:
+            search_term_like = f"%{search.lower()}%"
+            search_conditions = """
+            AND (
+                LOWER(jot.DocRef_v) LIKE %s OR 
+                LOWER(jop.Task_v) LIKE %s OR 
+                LOWER(jop.Machine_v) LIKE %s OR
+                LOWER('' AS RSC_LOCATION) LIKE %s 
+            )
+            """
+             # For aliased RSC_LOCATION, direct SQL search is tricky without subquery or if it's always ''.
+             # If RSC_LOCATION can have actual values from a field, replace LOWER('' AS RSC_LOCATION) LIKE %s
+             # with LOWER(actual_field_for_RSC_LOCATION) LIKE %s
+            params.extend([search_term_like, search_term_like, search_term_like, search_term_like])
+
+        try:
+            base_select_fields = """ \n                jot.TargetDate_dd AS LCD_DATE, \
+                jot.DocRef_v AS JOB, \
+                jop.Task_v AS PROCESS_CODE, \
+                '' AS RSC_LOCATION, \
+                jop.Machine_v AS RSC_CODE, \
+                jop.ManCount_i AS NUMBER_OPERATOR, \
+                jot.JoQty_d AS JOB_QUANTITY, \
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
+                     THEN jop.CapQty_d * 60 \
+                     ELSE NULL END AS EXPECT_OUTPUT_PER_HOUR,\
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
+                     THEN jot.JoQty_d / (jop.CapQty_d * 60) \
+                     ELSE NULL END AS HOURS_NEED,\
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
+                     THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)\
+                     WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 \
+                     THEN jop.LeadTime_d \
+                     ELSE NULL END AS DAY_NEED,\
+                jop.SetupTime_d AS SETTING_HOURS, \
+                1 AS BREAK_HOURS, \
+                8 AS NO_PROD, \
+                '' AS START_DATE, \
+                di.Qty_d AS ACCUMULATED_DAILY_OUTPUT, \
+                (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS BALANCE_QUANTITY, \
+                jop.TxnId_i,\
+                '' AS MATERIAL_ARRIVAL,\
+                1 AS JOB_DEPENDENCY,\
+                3 AS PRIORITY,\
+                0 AS REDUCE_OPERATION_HOURS
+            """
+            from_join_clauses = """ \n            FROM tbl_jo_process AS jop \
+            INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i \
+            LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
+            """
+            base_where_clauses = """ \n            WHERE jot.Void_c != 1 \
+                AND jot.DocStatus_c != 'CP' \
+                AND jop.QtyStatus_c != 'FF' \
+                AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL 10 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+            """
+
+            # Count query
+            count_query = f"SELECT COUNT(*) as total_items {from_join_clauses} {base_where_clauses} {search_conditions}"
+            cursor.execute(count_query, tuple(params)) # Use a copy of params for count query
+            total_items_result = cursor.fetchone()
+            total_items = total_items_result['total_items'] if total_items_result else 0
+            total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
+
+            # Data query with pagination, sorting, and search
+            order_by_clause = f"ORDER BY {sql_sort_field} {sql_sort_order}"
+            offset = (page - 1) * page_size
+            
+            data_query_params = list(params) # Create a new list for data query params
+            data_query_params.extend([page_size, offset])
+
+            data_query = f""" \n            SELECT {base_select_fields}
+            {from_join_clauses}
+            {base_where_clauses}
+            {search_conditions}
+            {order_by_clause}
+            LIMIT %s OFFSET %s
+            """            
+            cursor.execute(data_query, tuple(data_query_params))
+            results = cursor.fetchall()
+            
+            logger.info(f"Retrieved {len(results)} production schedule records for page {page}/{total_pages}, sort: {sql_sort_field} {sql_sort_order}, search: '{search}'")
+            
+            return {
+                "items": results,
+                "total_items": total_items,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages
+            }
+            
+        except mysql.connector.Error as e:
+            logger.error(f"Database error fetching production schedule: {e}")
+            raise HTTPException(status_code=500, detail="Failed to fetch production schedule")
         finally:
             cursor.close()
 
@@ -323,66 +462,6 @@ async def delete_production_job(job_id: int):
         except HTTPException:
             conn.rollback()
             raise
-        finally:
-            cursor.close()
-
-@router.get("/production-schedule", 
-           response_model=List[Dict[str, Any]],
-           summary="Get production schedule data",
-           description="Get production schedule from joined tables")
-@monitor_performance
-async def get_production_schedule():
-    """Get production schedule data from joined tables."""
-    with get_db_connection_from_pool() as conn:
-        cursor = conn.cursor(dictionary=True)
-        
-        try:
-            query = """
-            SELECT 
-                jot.TargetDate_dd AS LCD_DATE, 
-                jot.DocRef_v AS JOB, 
-                jop.Task_v AS PROCESS_CODE, 
-                '' AS RSC_LOCATION, 
-                jop.Machine_v AS RSC_CODE, 
-                jop.ManCount_i AS NUMBER_OPERATOR, 
-                jot.JoQty_d AS JOB_QUANTITY, 
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
-                     THEN jop.CapQty_d * 60 
-                     ELSE NULL END AS EXPECT_OUTPUT_PER_HOUR,
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
-                     THEN jot.JoQty_d / (jop.CapQty_d * 60) 
-                     ELSE NULL END AS HOURS_NEED,
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
-                     THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
-                     WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 
-                     THEN jop.LeadTime_d 
-                     ELSE NULL END AS DAY_NEED,
-                jop.SetupTime_d AS SETTING_HOURS, 
-                1 AS BREAK_HOURS, 
-                8 AS NO_PROD, 
-                '' AS START_DATE, 
-                di.Qty_d AS ACCUMULATED_DAILY_OUTPUT, 
-                (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS BALANCE_QUANTITY, 
-                jop.TxnId_i
-            FROM tbl_jo_process AS jop 
-            INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
-            LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i 
-            WHERE jot.Void_c != 1 
-                AND jot.DocStatus_c != 'CP' 
-                AND jop.QtyStatus_c != 'FF' 
-                AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL 10 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY) 
-            ORDER BY jot.TargetDate_dd, jot.DocRef_v, jop.Task_v
-            """
-            
-            cursor.execute(query)
-            results = cursor.fetchall()
-            
-            logger.info(f"Retrieved {len(results)} production schedule records")
-            return results
-            
-        except mysql.connector.Error as e:
-            logger.error(f"Database error fetching production schedule: {e}")
-            raise HTTPException(status_code=500, detail="Failed to fetch production schedule")
         finally:
             cursor.close()
 
