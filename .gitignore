@@ -1,0 +1,209 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.py[cod]
+*$py.class
+.ruff_cache/
+build/
+dist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+env/
+.env
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# C extensions
+*.so
+services/technical-indicators/ta-lib/
+
+# Distribution / packaging
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+share/python-wheels/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff
+instance/
+.webassets-cache
+
+# Scrapy stuff
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#.idea/
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.history/
+*.vsix
+
+# Artifacts
+results/
+output*/
+model_cache/
+output*
+user_data.sh
+set_env_variables.sh
+logs/
+.DS_Store
+gradio_cached_examples
+trust_policy.json
+.TODOS
+ca.cert
+*.pkl
+**/state
+**/setup_credentials.sh
+certificates/
+*.parquet
+*.rar
+*.joblib
+
+# direnv
+.env.local
+
+# Config env files
+**/comet.credentials.env
+**/hopsworks.credentials.env
+**/anthropic.env
+**/hopsworks_credentials.env
+**/aws.env
+**/ollama.env
+**/anthropic_credentials.env
+**/openai.env
+**/credentials.env
+**/comet.env
+**/cryptopanic_credentials.env
+**/settings.env
+
+# My laptop files
+short.txt
+solution.txt
+**/tools.yaml
+tools.txt
+**/abc.json
+
+
+# Specific directories
+services/news_signal/data
+**/CLAUDE.local.md
+
+# windsurf rules
+.windsurfrules
+
+
+supabase-js
+manual.md
+
+# Node.js dependencies
+node_modules/
+m_purchasing/
+
+search_db.sh
+
+.cursor/
+logic.md
+
+
+/win

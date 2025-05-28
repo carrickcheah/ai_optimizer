@@ -1,0 +1,609 @@
+import React, { useState, useEffect } from 'react';
+import Plot from 'react-plotly.js';
+import { API_BASE_URL } from '../config';
+import { PlotData } from 'plotly.js';
+import './resource_chart.css'; // Import the CSS file for this component
+
+interface TaskData {
+  Task: string;      // Represents the unique task identifier (e.g., UNIQUE_JOB_ID)
+  Start: string;
+  Finish: string;
+  Resource: string;  // Machine or resource responsible for the task
+  PriorityInteger?: number;
+  PriorityLabel?: string;
+  Color?: string;
+  Description?: string;
+  JobFamily?: string;
+  ProcessNumber?: number;
+  BufferStatusLabel?: string;
+}
+
+interface ResourceChartProps {
+  title?: string;
+}
+
+const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
+  const [tasks, setTasks] = useState<TaskData[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [timeRange, setTimeRange] = useState<string>('all');
+  const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
+  const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      const endpoint = `${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}`;
+      
+      console.log('[ResourceChart] Fetching data from API:', endpoint);
+
+      try {
+        const response = await fetch(endpoint);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || `Failed to fetch chart data: ${response.statusText}`);
+        }
+        const data: TaskData[] = await response.json();
+        console.log('[ResourceChart] API response data:', data.length, 'tasks');
+        
+        if (data.length === 0) {
+          console.warn("[ResourceChart] No data returned from API for Gantt chart (Resource View)");
+        } else {
+          // Log a sample task to inspect the date format
+          console.log('[ResourceChart] Sample task from API:', data[0]);
+          
+          // Calculate date range from the actual data
+          const dates = data.flatMap(task => [
+            new Date(task.Start),
+            new Date(task.Finish)
+          ]).filter(date => !isNaN(date.getTime()));
+          
+          if (dates.length > 0) {
+            const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+            let maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
+            
+            console.log('[ResourceChart] Data date range:', {
+              earliest: minDate.toISOString(),
+              latest: maxDate.toISOString(),
+              span: Math.round((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+            });
+            
+            // Ensure date range is at most 1 year
+            const oneYearFromMin = new Date(minDate);
+            oneYearFromMin.setFullYear(oneYearFromMin.getFullYear() + 1);
+            
+            if (maxDate > oneYearFromMin) {
+              console.log('[ResourceChart] Limiting max date to one year from min date');
+              maxDate = oneYearFromMin;
+            }
+            
+            setDateRange({
+              start: minDate,
+              end: maxDate
+            });
+          } else {
+            console.warn('[ResourceChart] No valid dates found in task data!');
+          }
+        }
+        setTasks(data);
+      } catch (err) {
+        if (err instanceof Error) {
+            setError(err.message);
+        } else {
+            setError('An unknown error occurred');
+        }
+        console.error("[ResourceChart] Error fetching resource chart data:", err);
+      }
+      setIsLoading(false);
+    };
+
+    fetchData();
+  }, [solver]); // Re-fetch when solver changes
+
+  // Sort tasks first by resource, then by start time
+  const sortedTasks = [...tasks].sort((a, b) => {
+    if (a.Resource !== b.Resource) {
+      return a.Resource.localeCompare(b.Resource);
+    }
+    return new Date(a.Start).getTime() - new Date(b.Start).getTime();
+  });
+
+  const resourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort();
+  
+  // Buffer status color mapping
+  const bufferStatusColors: Record<string, string> = {
+    'Late': '#f44336',      // Red
+    'Warning': '#ff9800',   // Orange
+    'Caution': '#9c27b0',   // Purple
+    'OK': '#4caf50'         // Green
+  };
+  
+  const plotData: Partial<PlotData>[] = [];
+  
+  resourceGroups.forEach(resource => {
+    const resourceTasks = sortedTasks.filter(task => task.Resource === resource);
+    
+    plotData.push({
+      type: 'bar',
+      name: resource, // Legend entry for this machine
+      x: resourceTasks.map(task => {
+        const start = new Date(task.Start);
+        const end = new Date(task.Finish);
+        return end.getTime() - start.getTime(); // Duration in milliseconds
+      }),
+      y: resourceTasks.map(() => resource), // Y-value is the machine name for all tasks of this machine
+      base: resourceTasks.map(task => new Date(task.Start).getTime()),
+      orientation: 'h',
+      marker: {
+        color: resourceTasks.map(task => {
+          // Use actual buffer status color only
+          return task.Color || 
+                 (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+        })
+      },
+      text: resourceTasks.map(task => {
+        const tooltipParts = [
+          `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
+          `<b>Machine:</b> ${task.Resource}`,
+          `<b>Start:</b> ${task.Start}`,
+          `<b>End:</b> ${task.Finish}`,
+          `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
+        ];
+        return tooltipParts.join('<br>');
+      }),
+      hoverinfo: 'text',
+      showlegend: false
+    });
+  });
+
+  const chartTitle = title || 'Production Planning System (by Resource)';
+  
+  const handleTimeRangeChange = (range: string) => {
+    if (range !== timeRange) {
+      setTimeRange(range);
+      // No loading state toggle to prevent blinking
+    }
+  };
+
+  // CP-SAT solver is always used
+
+  if (isLoading) {
+    return (
+      <div className="p-4 bg-white shadow-md rounded-lg loading-container">
+        <div className="spinner"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 bg-white shadow-md rounded-lg">
+        <div className="error-message">Error loading chart data: {error}</div>
+      </div>
+    );
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <div className="p-4 bg-white shadow-md rounded-lg">
+        <div className="empty-state">
+          No data available to display the Resource View chart. Please check your data source or try again later.
+        </div>
+      </div>
+    );
+  }
+
+  // Helper function to safely parse dates
+  const parseDateSafely = (dateStr: string): Date | null => {
+    if (!dateStr) return null;
+    try {
+      const date = new Date(dateStr);
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return null;
+      }
+      return date;
+    } catch {
+      return null;
+    }
+  };
+
+  const getTimeFilteredData = () => {
+    // If timeframe is 'all' or we have no tasks, return complete data
+    if (timeRange === 'all' || sortedTasks.length === 0) {
+      console.log('[ResourceChart] Using all tasks for "all" timeframe:', sortedTasks.length);
+      return plotData; // Return the default plotData
+    }
+    
+    const now = new Date();
+    console.log('[ResourceChart] Current timeRange:', timeRange);
+    console.log('[ResourceChart] Total tasks before filtering:', sortedTasks.length);
+    
+    // Find earliest and latest dates in the dataset to use as reference points
+    const validDates = sortedTasks
+      .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
+      .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+    
+    if (validDates.length === 0) {
+      console.error('[ResourceChart] No valid dates found in task data');
+      return [];
+    }
+    
+    // Find earliest date in dataset
+    const allTimestamps = validDates.flatMap(([start, end]) => [start.getTime(), end.getTime()]);
+    const earliestDate = new Date(Math.min(...allTimestamps));
+    const latestDate = new Date(Math.max(...allTimestamps));
+    
+    console.log('[ResourceChart] Dataset date range:', {
+      earliest: earliestDate.toISOString(),
+      latest: latestDate.toISOString(),
+      span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+    });
+    
+    // Always filter forward from today's date for time range selections
+    let startDate = new Date(now);
+    let endDate = new Date(now);
+    
+    console.log('[ResourceChart] Filtering forward from today for timeRange:', timeRange);
+    
+    // Set end date based on timeframe (forward from today)
+    if (timeRange === '1w') {
+      endDate.setDate(now.getDate() + 7);
+    } else if (timeRange === '2w') {
+      endDate.setDate(now.getDate() + 14);
+    } else if (timeRange === '1m') {
+      endDate.setMonth(now.getMonth() + 1);
+    } else if (timeRange === '3m') {
+      endDate.setMonth(now.getMonth() + 3);
+    } else if (timeRange === '6m') {
+      endDate.setMonth(now.getMonth() + 6);
+    } else if (timeRange === '9m') {
+      endDate.setMonth(now.getMonth() + 9);
+    } else if (timeRange === '12m') {
+      endDate.setFullYear(now.getFullYear() + 1);
+    }
+    
+    console.log('[ResourceChart] Filter date range:', {
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+    
+    // Filter tasks to include anything that falls within our date range
+    const startTimestamp = startDate.getTime();
+    const endTimestamp = endDate.getTime();
+    
+    const filteredTasks = sortedTasks.filter(task => {
+      const taskStart = parseDateSafely(task.Start);
+      const taskEnd = parseDateSafely(task.Finish);
+      
+      // Skip tasks with invalid dates
+      if (!taskStart || !taskEnd) {
+        console.warn('[ResourceChart] Task has invalid date format:', task.Task, task.Start, task.Finish);
+        return false;
+      }
+      
+      const taskStartTime = taskStart.getTime();
+      const taskEndTime = taskEnd.getTime();
+      
+      // A task should be included if:
+      // 1. It starts within our date range, OR
+      // 2. It ends within our date range, OR
+      // 3. It spans our date range (starts before and ends after)
+      return (taskStartTime >= startTimestamp && taskStartTime <= endTimestamp) ||
+             (taskEndTime >= startTimestamp && taskEndTime <= endTimestamp) ||
+             (taskStartTime <= startTimestamp && taskEndTime >= endTimestamp);
+    });
+    
+    console.log('[ResourceChart] Filtered tasks for', timeRange, ':', filteredTasks.length, 'of', sortedTasks.length);
+    
+    // If no tasks matched, show an empty chart rather than erroring
+    if (filteredTasks.length === 0) {
+      console.warn('[ResourceChart] No tasks passed the time filter for:', timeRange);
+      return [];
+    }
+    
+    // Create filtered plotData
+    const filteredPlotData: Partial<PlotData>[] = [];
+    
+    // Get unique resources from filtered tasks
+    const filteredResourceGroups = [...new Set(filteredTasks.map(task => task.Resource))].sort();
+    
+    filteredResourceGroups.forEach(resource => {
+      const resourceTasks = filteredTasks.filter(task => task.Resource === resource);
+      
+      if (resourceTasks.length > 0) {
+        filteredPlotData.push({
+          type: 'bar',
+          name: resource, // Legend entry for this machine
+          x: resourceTasks.map(task => {
+            const start = new Date(task.Start);
+            const end = new Date(task.Finish);
+            return end.getTime() - start.getTime(); // Duration in milliseconds
+          }),
+          y: resourceTasks.map(() => resource), // Y-value is the machine name for all tasks of this machine
+          base: resourceTasks.map(task => new Date(task.Start).getTime()),
+          orientation: 'h',
+          marker: {
+            color: resourceTasks.map(task => {
+              // Use actual buffer status color only
+              return task.Color || 
+                     (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+            })
+          },
+          text: resourceTasks.map(task => {
+            const tooltipParts = [
+              `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
+              `<b>Machine:</b> ${task.Resource}`,
+              `<b>Start:</b> ${task.Start}`,
+              `<b>End:</b> ${task.Finish}`,
+              `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
+            ];
+            return tooltipParts.join('<br>');
+          }),
+          hoverinfo: 'text',
+          showlegend: false
+        });
+      }
+    });
+    
+    return filteredPlotData;
+  };
+
+  const layout = {
+    title: chartTitle,
+    height: Math.max(700, resourceGroups.length * 50 + 200), // Adjusted height for resource groups
+    width: window.innerWidth * 0.95,
+    xaxis: {
+      type: 'date' as const,
+      title: 'Timeline',
+      gridcolor: 'rgb(230, 230, 230)',
+      gridwidth: 1,
+      tickformat: '%b %d',
+      dtick: 86400000 * 3,
+    },
+    yaxis: {
+      title: 'Machines', // Changed Y-axis title
+      automargin: true,
+      gridcolor: 'rgb(230, 230, 230)',
+      gridwidth: 1,
+      autorange: 'reversed' as const, // Order machines top-to-bottom
+      categoryorder: 'array' as const, // Use the order from categoryarray
+      categoryarray: resourceGroups, // Ensures machines are sorted A-Z if resourceGroups is sorted
+    },
+    autosize: true,
+    margin: { l: 180, r: 50, t: 50, b: 100 },
+    plot_bgcolor: 'rgb(255, 255, 255)',
+    paper_bgcolor: 'rgb(255, 255, 255)',
+    showlegend: false,
+    legend: {
+      x: 1,
+      y: 1,
+      xanchor: 'right' as const,
+    },
+    barmode: 'stack' as const, // Stack bars for the same machine if they overlap (though base should prevent this for distinct tasks)
+    shapes: [] as any[],
+  };
+
+  // Calculate layout based on filtered tasks
+  const calculateFilteredLayout = () => {
+    // For "all" timeframe, we can just use all tasks
+    if (timeRange === 'all') {
+      // Get all unique resources for the y-axis
+      const allResourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort();
+      
+      return {
+        ...layout,
+        height: Math.max(700, allResourceGroups.length * 50 + 200),
+        xaxis: {
+          ...layout.xaxis,
+          range: undefined // Don't restrict the range for 'all'
+        },
+        yaxis: {
+          ...layout.yaxis,
+          categoryarray: allResourceGroups
+        },
+        shapes: [{
+          type: 'line',
+          x0: new Date().toISOString(),
+          y0: -0.5,
+          x1: new Date().toISOString(),
+          y1: allResourceGroups.length > 0 ? allResourceGroups.length - 0.5 : 0,
+          line: {
+            color: 'red',
+            width: 2,
+            dash: 'dash'
+          }
+        }]
+      };
+    }
+    
+    const now = new Date();
+    
+    // Find earliest and latest dates in the dataset
+    const validDates = sortedTasks
+      .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
+      .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+      
+    if (validDates.length === 0) {
+      return {
+        ...layout,
+        height: 700,
+        shapes: [{
+          type: 'line',
+          x0: new Date().toISOString(),
+          y0: -0.5,
+          x1: new Date().toISOString(),
+          y1: 0,
+          line: {
+            color: 'red',
+            width: 2,
+            dash: 'dash'
+          }
+        }]
+      };
+    }
+    
+    // Always calculate ranges forward from today's date for time range selections
+    let startDate = new Date(now);
+    let endDate = new Date(now);
+    
+    // Set end date based on timeframe (forward from today)
+    if (timeRange === '1w') {
+      endDate.setDate(now.getDate() + 7);
+    } else if (timeRange === '2w') {
+      endDate.setDate(now.getDate() + 14);
+    } else if (timeRange === '1m') {
+      endDate.setMonth(now.getMonth() + 1);
+    } else if (timeRange === '3m') {
+      endDate.setMonth(now.getMonth() + 3);
+    } else if (timeRange === '6m') {
+      endDate.setMonth(now.getMonth() + 6);
+    } else if (timeRange === '9m') {
+      endDate.setMonth(now.getMonth() + 9);
+    } else if (timeRange === '12m') {
+      endDate.setFullYear(now.getFullYear() + 1);
+    }
+    
+    // Filter tasks to get resources that should be shown
+    const startTimestamp = startDate.getTime();
+    const endTimestamp = endDate.getTime();
+    
+    const filteredTasksForLayout = sortedTasks.filter(task => {
+      const taskStart = parseDateSafely(task.Start);
+      const taskEnd = parseDateSafely(task.Finish);
+      
+      if (!taskStart || !taskEnd) {
+        return false;
+      }
+      
+      const taskStartTime = taskStart.getTime();
+      const taskEndTime = taskEnd.getTime();
+      
+      return (taskStartTime >= startTimestamp && taskStartTime <= endTimestamp) ||
+             (taskEndTime >= startTimestamp && taskEndTime <= endTimestamp) ||
+             (taskStartTime <= startTimestamp && taskEndTime >= endTimestamp);
+    });
+    
+    // Get unique resources from filtered tasks
+    const filteredResourceGroups = [...new Set(filteredTasksForLayout.map(task => task.Resource))].sort();
+    
+    // Set the x-axis range to show our filtered window
+    const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
+    
+    return {
+      ...layout,
+      height: Math.max(700, filteredResourceGroups.length * 50 + 200),
+      xaxis: {
+        ...layout.xaxis,
+        range: xAxisRange
+      },
+      yaxis: {
+        ...layout.yaxis,
+        categoryarray: filteredResourceGroups
+      },
+      shapes: [{
+        type: 'line',
+        x0: new Date().toISOString(),
+        y0: -0.5,
+        x1: new Date().toISOString(),
+        y1: filteredResourceGroups.length > 0 ? filteredResourceGroups.length - 0.5 : 0,
+        line: {
+          color: 'red',
+          width: 2,
+          dash: 'dash'
+        }
+      }]
+    };
+  };
+  
+  // Get the adjusted layout based on filtered tasks
+  const adjustedLayout = calculateFilteredLayout();
+  
+  return (
+    <div className="gantt-container">
+      <button 
+        className="back-button" 
+        onClick={() => window.history.back()}
+      >
+        <i className="fas fa-arrow-left"></i> Back
+      </button>
+      <div className="flat-time-selector">
+        <div className="flat-button-group">
+          <button 
+            className={timeRange === '1w' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('1w')}
+            style={{width: '55px'}}
+          >1w</button>
+          <button 
+            className={timeRange === '2w' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('2w')}
+            style={{width: '55px'}}
+          >2w</button>
+          <button 
+            className={timeRange === '1m' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('1m')}
+            style={{width: '55px'}}
+          >1m</button>
+          <button 
+            className={timeRange === '3m' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('3m')}
+            style={{width: '55px'}}
+          >3m</button>
+          <button 
+            className={timeRange === '6m' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('6m')}
+            style={{width: '55px'}}
+          >6m</button>
+          <button 
+            className={timeRange === '9m' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('9m')}
+            style={{width: '55px'}}
+          >9m</button>
+          <button 
+            className={timeRange === '12m' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('12m')}
+            style={{width: '55px'}}
+          >12m</button>
+          <button 
+            className={timeRange === 'all' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('all')}
+            style={{width: '55px'}}
+          >all</button>
+        </div>
+      </div>
+
+      <div className="priority-legend">
+        <div className="priority-item">
+          <span className="priority-color" style={{ backgroundColor: '#f44336' }}></span>
+          <span className="priority-label">Late (&lt;0h)</span>
+        </div>
+        <div className="priority-item">
+          <span className="priority-color" style={{ backgroundColor: '#ff9800' }}></span>
+          <span className="priority-label">Warning (&lt;24h)</span>
+        </div>
+        <div className="priority-item">
+          <span className="priority-color" style={{ backgroundColor: '#9c27b0' }}></span>
+          <span className="priority-label">Caution (&lt;72h)</span>
+        </div>
+        <div className="priority-item">
+          <span className="priority-color" style={{ backgroundColor: '#4caf50' }}></span>
+          <span className="priority-label">OK (&gt;72h)</span>
+        </div>
+      </div>
+
+      {isLoading && <div className="loading">Loading chart data...</div>}
+      {error && <div className="error">{error}</div>}
+      
+      {!isLoading && !error && (
+        <Plot
+          data={getTimeFilteredData()}
+          layout={adjustedLayout as any} // Cast to any to handle Plotly type complexities with categoryarray etc.
+          config={{ responsive: true }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ResourceChart;

@@ -1,0 +1,255 @@
+/* Dashboard specific styles, inspired by purchase_dashboard.ejs */
+body, h1, h2, h3, h4, h5, h6, p, label, input, select, button {
+    /* Ensure Poppins is loaded in your main HTML or via @import in a global CSS file */
+    font-family: 'Poppins', sans-serif; 
+}
+
+.dashboard-page-container {
+    background-color: #f0f4f8; /* Light blue-gray background */
+    min-height: calc(100vh - 70px); /* Adjust 70px based on actual header height */
+}
+
+.dashboard-main-content {
+    padding: 26px;
+    max-width: 1280px;
+    margin: 0 auto;
+}
+
+.dashboard-title {
+    font-size: 1.75rem;
+    margin-bottom: 1.2rem;
+    font-weight: 700;
+    color: #1a237e; /* Dark blue for title */
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.dashboard-section-description {
+    background-color: white;
+    border-radius: 13px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 6px 13px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 255, 0.05);
+}
+
+.dashboard-section-description p {
+    font-size: 0.9rem;
+    color: #455a64;
+    line-height: 1.6;
+}
+
+.dashboard-back-button {
+    display: inline-block;
+    padding: 6px 14px;
+    color: #3d5afe;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    transition: all 0.3s;
+    border: 1px solid #3d5afe;
+    background-color: transparent;
+    margin-bottom: 16px;
+}
+
+.dashboard-back-button:hover {
+    background-color: #3d5afe;
+    color: white;
+}
+
+.dashboard-back-button i {
+    margin-right: 6px;
+}
+
+.dashboard-header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.dashboard-cards-container {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-top: 32px;
+}
+
+.dashboard-menu-card {
+    background: white;
+    border-radius: 13px; /* Rounded corners */
+    box-shadow: 0 8px 16px rgba(0, 0, 255, 0.1); /* Subtle blue shadow */
+    transition: all 0.4s ease;
+    overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(0, 0, 255, 0.05); /* Faint blue border */
+}
+
+.dashboard-menu-card:hover {
+    transform: translateY(-8px); /* Lift effect on hover */
+    box-shadow: 0 12px 24px rgba(0, 0, 255, 0.15); /* Enhanced shadow on hover */
+}
+
+.dashboard-card-body {
+    padding: 24px;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 1;
+}
+
+/* Optional: Decorative pseudo-element like in purchasing.ejs */
+.dashboard-card-body::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 80px;
+    height: 80px;
+    background: radial-gradient(circle, rgba(0, 0, 255, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
+    z-index: -1;
+}
+
+.dashboard-card-icon {
+    font-size: 2.8rem; /* Icon size */
+    margin-bottom: 16px;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 255, 0.3));
+}
+
+/* Example of varied icon colors - apply specific classes to cards in TSX if needed */
+.dashboard-menu-card:nth-child(4n+1) .dashboard-card-icon {
+    background: linear-gradient(45deg, #3d5afe, #304ffe); /* Blue */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card:nth-child(4n+2) .dashboard-card-icon {
+    background: linear-gradient(45deg, #00b0ff, #0091ea); /* Light Blue */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card:nth-child(4n+3) .dashboard-card-icon {
+    background: linear-gradient(45deg, #651fff, #6200ea); /* Purple */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card:nth-child(4n+4) .dashboard-card-icon {
+    background: linear-gradient(45deg, #2979ff, #2962ff); /* Indigo */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+/* Add more up to 8 if you want unique colors for each */
+.dashboard-menu-card.icon-color-5 .dashboard-card-icon {
+    background: linear-gradient(45deg, #ffab00, #ff8f00); /* Amber */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card.icon-color-6 .dashboard-card-icon {
+    background: linear-gradient(45deg, #00c853, #00a152); /* Green */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card.icon-color-7 .dashboard-card-icon {
+    background: linear-gradient(45deg, #d50000, #b71c1c); /* Red */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.dashboard-menu-card.icon-color-8 .dashboard-card-icon {
+    background: linear-gradient(45deg, #f57c00, #e65100); /* Orange */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.dashboard-card-title {
+    font-size: 1.3rem;
+    margin-bottom: 12px;
+    font-weight: 700;
+    color: #1a237e; /* Dark blue for card titles */
+}
+
+.dashboard-card-text { /* Placeholder for potential descriptive text */
+    color: #455a64; /* Medium gray for text */
+    margin-bottom: 24px;
+    flex-grow: 1;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.dashboard-card-btn {
+    display: inline-block;
+    padding: 10px 19px;
+    color: white;
+    text-decoration: none;
+    border-radius: 40px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.3s;
+    text-align: center;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 3px 6px rgba(0, 0, 255, 0.2);
+    letter-spacing: 0.4px;
+    margin-top: auto;
+}
+
+.dashboard-menu-card:nth-child(4n+1) .dashboard-card-btn {
+    background: linear-gradient(45deg, #3d5afe, #304ffe);
+}
+
+.dashboard-menu-card:nth-child(4n+2) .dashboard-card-btn {
+    background: linear-gradient(45deg, #00b0ff, #0091ea);
+}
+
+.dashboard-menu-card:nth-child(4n+3) .dashboard-card-btn {
+    background: linear-gradient(45deg, #651fff, #6200ea);
+}
+
+.dashboard-menu-card:nth-child(4n+4) .dashboard-card-btn {
+    background: linear-gradient(45deg, #2979ff, #2962ff);
+}
+
+.dashboard-card-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 10px rgba(0, 0, 255, 0.3);
+    color: white;
+}
+
+/* Placeholder for Font Awesome if not globally included. 
+   It's better to include this in your public/index.html or install via npm/yarn.
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
+*/
+
+/* Ensure Poppins font is available. 
+   It's better to include this in your public/index.html or main CSS file (e.g., index.css).
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+*/
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    .dashboard-cards-container {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 900px) {
+    .dashboard-cards-container {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .dashboard-cards-container {
+        grid-template-columns: 1fr;
+    }
+}
