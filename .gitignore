@@ -205,5 +205,6 @@ search_db.sh
 .cursor/
 logic.md
 
+.mcp/
 
 /win

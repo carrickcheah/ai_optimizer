@@ -17,5 +17,8 @@ dependencies = [
     "uvicorn>=0.34.2",
     "fastapi>=0.115.12",
     "mysql-connector-python>=9.3.0",
+    "fastmcp>=2.5.1",
+    "psutil>=7.0.0",
+    "pyside6>=6.9.0",
 ]
 

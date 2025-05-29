@@ -35,3 +35,6 @@ Max load 50 row per page.
 
 
 
+    The SQL is built in get_production_schedule in production_jobs_endpoints.py.
+    It selects from tbl_jo_process, joins tbl_jo_txn and tbl_daily_item.
+    This is the source for /production-jobs/production-schedule (and similar endpoints).

@@ -24,5 +24,4 @@ llm:
 	uv run services/sql_agent/src/sql_agent/models/llm.py
 
 
-
 .PHONY: start backend frontend stop
