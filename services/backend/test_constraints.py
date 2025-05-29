@@ -10,7 +10,7 @@ def epoch_to_dt(epoch):
 def main():
     print("Testing improved constraint handling...")
     
-    jobs, machines, setup = load_jobs_planning_data()
+    jobs, machines, setup = load_jobs_planning_data(max_jobs=100)
     result = schedule_jobs(jobs, machines, setup, time_limit_seconds=60)
     
     print(f"Status: {result.get('_metadata', {}).get('status')}")

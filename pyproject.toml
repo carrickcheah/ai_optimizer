@@ -20,5 +20,6 @@ dependencies = [
     "fastmcp>=2.5.1",
     "psutil>=7.0.0",
     "pyside6>=6.9.0",
+    "pytz>=2025.2",
 ]
 

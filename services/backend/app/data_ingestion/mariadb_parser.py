@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, date, time
 import pytz
 from dotenv import load_dotenv
 import mysql.connector
@@ -80,6 +80,12 @@ def convert_datetime_to_epoch(dt_value):
                     logger.error(f"Could not parse datetime string: {dt_value}")
                     return None
     
+    # Handle datetime.date objects by converting to datetime
+    if isinstance(dt_value, date) and not isinstance(dt_value, datetime):
+        # Convert date to datetime at midnight
+        dt_value = datetime.combine(dt_value, time.min)
+        logger.debug(f"Converted date to datetime: {dt_value}")
+    
     if not isinstance(dt_value, (pd.Timestamp, datetime)):
         logger.warning(f"Unexpected datetime type: {type(dt_value)}")
         return None
@@ -101,9 +107,12 @@ def convert_datetime_to_epoch(dt_value):
         logger.error(f"Error converting datetime to epoch: {e} for value {dt_value}")
         return None
         
-def load_jobs_planning_data():
+def load_jobs_planning_data(max_jobs: int = 100):
     """
-    Load job data for production planning from MariaDB.
+    Load job data for production planning from MariaDB using joined tables.
+    
+    Args:
+        max_jobs: Maximum number of jobs to load (default: 100)
         
     Returns:
         Tuple of (jobs_list, machines_list, setup_times_dict) where:
@@ -111,7 +120,7 @@ def load_jobs_planning_data():
             machines_list (list): List of available machine dictionaries.
             setup_times_dict (dict): Dictionary mapping machine transitions to setup times.
     """
-    logger.info("Starting to load jobs planning data from MariaDB")
+    logger.info(f"Starting to load jobs planning data from MariaDB using joined tables (max_jobs: {max_jobs})")
     conn = None
     jobs_list = []
     machines_list = []
@@ -125,39 +134,62 @@ def load_jobs_planning_data():
 
         cursor = conn.cursor(dictionary=True)
 
-        # Get existing columns
-        columns_query = "SHOW COLUMNS FROM tbl_aa_job"
-        cursor.execute(columns_query)
-        existing_columns = [column['Field'] for column in cursor.fetchall()]
-        logger.info(f"Found {len(existing_columns)} columns in tbl_aa_job table")
-
-        # FIX: Create case-insensitive column lookup once
-        columns_lower = {col.lower(): col for col in existing_columns}
+        # New complex SQL query joining three tables
+        jobs_query = """
+        SELECT
+            jot.TargetDate_dd AS lcd_date,
+            jop.TxnId_i AS op_id,
+            jot.DocRef_v AS job,
+            jop.Task_v AS process_code,
+            '' AS rsc_location,
+            jop.Machine_v AS rsc_code,
+            jop.ManCount_i AS number_operator,
+            jot.JoQty_d AS job_quantity,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jop.CapQty_d * 60 
+                 ELSE NULL END AS expect_output_per_hour,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jot.JoQty_d / (jop.CapQty_d * 60) 
+                 ELSE NULL END AS hours_need,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
+                 WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 
+                 THEN jop.LeadTime_d 
+                 ELSE NULL END AS day_need,
+            jop.SetupTime_d AS setting_hours,
+            1 AS break_hours,
+            8 AS no_prod,
+            '' AS start_date,
+            di.Qty_d AS accumulated_daily_output,
+            (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS balance_quantity,
+            jot.MaterialDate_dd AS material_arrival,
+            1 AS job_dependency,
+            3 AS priority,
+            0 AS reduce_operation_hours,
+            NOW() AS created_at,
+            NOW() AS updated_at
+        FROM tbl_jo_process AS jop 
+        INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+        LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
+        WHERE jot.Void_c != 1 
+            AND jot.DocStatus_c != 'CP' 
+            AND jop.QtyStatus_c != 'FF' 
+            AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+        ORDER BY jot.TargetDate_dd ASC, jop.TxnId_i ASC
+        LIMIT %s
+        """
         
-        jobs_query = "SELECT * FROM tbl_aa_job"
-        cursor.execute(jobs_query)
+        cursor.execute(jobs_query, (max_jobs,))
         raw_jobs = cursor.fetchall()
-        logger.info(f"Fetched {len(raw_jobs)} raw job records from database.")
+        logger.info(f"Fetched {len(raw_jobs)} raw job records from joined tables (requested max: {max_jobs}).")
 
-        # Validate required fields
-        id_field = 'op_id'
-        if id_field not in existing_columns:
-            raise ValueError(f"Required column '{id_field}' not found in tbl_aa_job table")
-        
-        # FIX: Use the case-insensitive lookup
-        has_rsc_code = 'rsc_code' in columns_lower
-        has_job_field = 'job' in columns_lower
-        has_process_code = 'process_code' in columns_lower
-        
-        # Log all columns for debugging
-        logger.info(f"Available columns: {existing_columns}")
-        
+        # Process the results
         date_fields = ['lcd_date', 'material_arrival', 'start_date']
 
         for job_row in raw_jobs:
-            op_id = job_row.get(id_field)
-            job_value = job_row.get("job") if has_job_field else None
-            process_code = job_row.get("process_code") if has_process_code else None
+            op_id = job_row.get('op_id')
+            job_value = job_row.get("job")
+            process_code = job_row.get("process_code")
             
             # Generate composite job_id
             if job_value and process_code:
@@ -173,38 +205,52 @@ def load_jobs_planning_data():
                 "job": job_value if job_value else composite_job_id
             }
             
-            # FIX: Simplified date field handling - avoid redundant storage
+            # Handle date field conversions
             for date_field in date_fields:
                 if date_field in job_row and job_row[date_field] is not None:
+                    # Debug: Log the raw value from database
+                    logger.info(f"Processing {date_field} for job {composite_job_id}: raw value = {job_row[date_field]}, type = {type(job_row[date_field])}")
+                    
                     epoch_value = convert_datetime_to_epoch(job_row[date_field])
+                    logger.info(f"Converted {date_field} to epoch: {epoch_value}")
+                    
                     if epoch_value is not None:
                         job[f"{date_field}_epoch"] = epoch_value
                         job[f"{date_field.upper()}_EPOCH"] = epoch_value  # For backward compatibility
                         
-                        # Store formatted string for display purposes only
-                        if hasattr(job_row[date_field], 'strftime'):
-                            job[f"{date_field}_str"] = job_row[date_field].strftime("%Y-%m-%d %H:%M:%S")
-                        # DO NOT store the original datetime object to avoid 2025 date confusion
+                        # Always create the string representation for display
+                        try:
+                            if hasattr(job_row[date_field], 'strftime'):
+                                # It's already a datetime object
+                                job[f"{date_field}_str"] = job_row[date_field].strftime("%Y-%m-%d %H:%M:%S")
+                            else:
+                                # Convert from epoch to formatted string
+                                dt_obj = datetime.fromtimestamp(epoch_value)
+                                job[f"{date_field}_str"] = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+                        except Exception as e:
+                            logger.warning(f"Could not create string representation for {date_field}: {e}")
+                            # Fallback: use the original value as string
+                            job[f"{date_field}_str"] = str(job_row[date_field])
                         
                         # Special handling for start_date to ensure scheduler compatibility
                         if date_field == 'start_date':
-                            # Create all possible variants that the scheduler might look for
                             job['START_DATE_EPOCH'] = epoch_value
                             job['START_DATE _EPOCH'] = epoch_value  # Handle space variant
                             job['start_date_input_epoch'] = epoch_value
                             logger.debug(f"Set START_DATE constraint for job {composite_job_id}: {epoch_value}")
+                    else:
+                        logger.warning(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")
             
             # Handle resource code
-            job["rsc_code"] = job_row.get("rsc_code", "DEFAULT") if has_rsc_code else "DEFAULT"
+            job["rsc_code"] = job_row.get("rsc_code", "DEFAULT") or "DEFAULT"
 
             # Add other columns with proper type conversion
             numeric_int_fields = {"number_operator", "job_quantity", "expect_output_per_hour", 
                                 "priority", "accumulated_daily_output", "balance_quantity", "reduce_operation_hours"}
-            numeric_float_fields = {"hours_need", "setting_hours", "break_hours", "no_prod", "bal_hr"}
+            numeric_float_fields = {"hours_need", "setting_hours", "break_hours", "no_prod", "day_need"}
             
-            for col in existing_columns:
-                if col not in job and col not in [id_field, "job", "rsc_code"] + date_fields:
-                    value = job_row.get(col)
+            for col, value in job_row.items():
+                if col not in job and col not in ["op_id", "job", "rsc_code"] + date_fields:
                     col_lower = col.lower()
                     
                     if value is not None:
@@ -222,17 +268,19 @@ def load_jobs_planning_data():
                         else:
                             job[col_lower] = value
 
-            # Calculate derived fields
-            if job.get("expect_output_per_hour", 0) > 0 and job.get("job_quantity"):
-                job["hours_need"] = round(job["job_quantity"] / job["expect_output_per_hour"], 1)
+            # Calculate derived fields if needed
+            if job.get("expect_output_per_hour", 0) and job.get("expect_output_per_hour") > 0 and job.get("job_quantity"):
+                if not job.get("hours_need"):
+                    job["hours_need"] = round(job["job_quantity"] / job["expect_output_per_hour"], 1)
 
             if job.get("job_quantity") is not None:
                 accumulated = job.get("accumulated_daily_output", 0) or 0
-                job["balance_quantity"] = job["job_quantity"] - accumulated
+                if not job.get("balance_quantity"):
+                    job["balance_quantity"] = job["job_quantity"] - accumulated
             
             jobs_list.append(job)
         
-        logger.info(f"Successfully processed {len(jobs_list)} jobs from database.")
+        logger.info(f"Successfully processed {len(jobs_list)} jobs from joined tables.")
 
         # Extract unique machine codes
         machine_codes = list(set(
@@ -251,7 +299,7 @@ def load_jobs_planning_data():
             for code in machine_codes
         ]
 
-        # FIX: Generate setup times using consistent machine identifiers
+        # Generate setup times using consistent machine identifiers
         setup_times_dict = {}
         for from_machine in machine_codes:
             setup_times_dict[from_machine] = {}
@@ -288,7 +336,7 @@ if __name__ == '__main__':
     logger.info("Testing mariadb_parser.py directly")
     
     try:
-        jobs, machines, setup_times = load_jobs_planning_data()
+        jobs, machines, setup_times = load_jobs_planning_data(max_jobs=100)
         
         if jobs:
             print(f"Loaded {len(jobs)} jobs.")

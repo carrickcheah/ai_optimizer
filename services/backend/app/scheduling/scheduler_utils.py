@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 def extract_process_number(job_id: str) -> int:
     """
-    Extract the process sequence number (e.g., 1 from 'P01-06' in 'JOB_P01-06') or return 999 if not found.
-    job_id is in the format job_process_code.
+    Extract the process sequence number from the new format (e.g., 1 from '1/4' in 'CP08-342-1/4') or return 999 if not found.
+    job_id is in the format job_process_code where process_code ends with 'number/total'.
     
     Args:
         job_id: The job identifier string
@@ -28,18 +28,49 @@ def extract_process_number(job_id: str) -> int:
         logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
         return 999
 
-    match = re.search(r'P(\d{2})', str(process_code).upper())  # Match exactly two digits after P
+    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3")
+    match = re.search(r'(\d+)/\d+$', str(process_code))
     if match:
         seq = int(match.group(1))
         return seq
+        
     return 999  # Default if parsing fails
+
+def extract_total_processes(job_id: str) -> int:
+    """
+    Extract the total number of processes from the new format (e.g., 4 from '1/4' in 'CP08-342-1/4') or return 1 if not found.
+    This is useful for understanding the full sequence length for a job family.
+    
+    Args:
+        job_id: The job identifier string
+        
+    Returns:
+        Total number of processes or 1 if parsing fails
+    """
+    if not isinstance(job_id, str):
+        logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
+        return 1
+        
+    try:
+        process_code = job_id.split('_', 1)[1]  # Split on first underscore to get PROCESS_CODE
+    except IndexError:
+        logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
+        return 1
+
+    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3")
+    match = re.search(r'\d+/(\d+)$', str(process_code))
+    if match:
+        total = int(match.group(1))
+        return total
+        
+    return 1  # Default if parsing fails
 
 def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
     """
-    Extract the job family (e.g., 'CP33-333' from 'JOST333333_CP33-333-P01-02') from the job_id.
+    Extract the job family from the job_id using the new format (e.g., 'CP33-333' from 'JOST333333_CP33-333-1/4').
     If job_id_suffix is provided, it will be included in the family to distinguish between
     different jobs that share the same process code pattern.
-    job_id is in the format PREFIX_FAMILY-PROCESS.
+    job_id is in the format PREFIX_FAMILY-PROCESS where PROCESS is 'number/total'.
     
     Args:
         job_id: The job identifier string
@@ -64,8 +95,9 @@ def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
         return job_id
 
     process_code = str(process_code).upper()
-    # First try to match everything up to -P followed by digits
-    match = re.search(r'(.*?)-P\d+', process_code)
+    
+    # Match everything up to the new format "-number/total"
+    match = re.search(r'(.*?)-\d+/\d+$', process_code)
     if match:
         family = match.group(1)
         logger.debug(f"Extracted family {family} from {job_id}")
@@ -73,14 +105,15 @@ def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
             return f"{family}_{job_id_suffix}"
         return family
     
-    # If that fails, try splitting on -P
-    parts = process_code.split("-P")
-    if len(parts) >= 2:
-        family = parts[0]
-        logger.debug(f"Extracted family {family} from {job_id} (using split)")
-        if job_id_suffix:
-            return f"{family}_{job_id_suffix}"
-        return family
+    # If regex fails, try splitting on the new format pattern
+    if re.search(r'-\d+/\d+$', process_code):
+        parts = re.split(r'-\d+/\d+$', process_code)
+        if len(parts) >= 1:
+            family = parts[0]
+            logger.debug(f"Extracted family {family} from {job_id} (using split)")
+            if job_id_suffix:
+                return f"{family}_{job_id_suffix}"
+            return family
     
     logger.warning(f"Could not extract family from {job_id}, using full code")
     if job_id_suffix:
@@ -142,22 +175,17 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     # Create a copy to avoid modifying original
     normalized_job = job.copy()
     
-    # Field name mappings for consistency
+    # Map uppercase fields to lowercase for consistency
     field_mappings = {
-        'NUMBER_OPERATOR': 'number_operator',
-        'JOB_QUANTITY': 'job_quantity', 
-        'EXPECT_OUTPUT_PER_HOUR': 'expect_output_per_hour',
-        'PRIORITY': 'priority',
-        'HOURS_NEED': 'hours_need',
-        'SETTING_HOURS': 'setting_hours',
-        'BREAK_HOURS': 'break_hours',
-        'NO_PROD': 'no_prod',
-        'ACCUMULATED_DAILY_OUTPUT': 'accumulated_daily_output',
-        'BALANCE_QUANTITY': 'balance_quantity',
-        'BAL_HR': 'bal_hr',
+        'JOB_ID': 'job_id',
         'RSC_CODE': 'rsc_code',
-        'LCD_DATE_EPOCH': 'lcd_date_epoch',
-        'START_DATE_EPOCH': 'start_date_epoch'
+        'HOURS_NEED': 'hours_need',
+        'DAY_NEED': 'day_need',
+        'PRIORITY': 'priority',
+        'PROCESSING_TIME': 'processing_time',
+        'SETUP_TIME': 'setup_time',
+        'BREAK_TIME': 'break_time',
+        'NO_PROD': 'no_prod'
     }
     
     # Copy uppercase fields to lowercase if they exist and lowercase doesn't
@@ -166,7 +194,7 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
             normalized_job[lower_field] = normalized_job[upper_field]
             
     # Normalize numeric fields
-    numeric_fields = ['hours_need', 'priority', 'processing_time', 'setup_time', 'break_time', 'no_prod']
+    numeric_fields = ['hours_need', 'day_need', 'priority', 'processing_time', 'setup_time', 'break_time', 'no_prod']
     for field in numeric_fields:
         if field in normalized_job and normalized_job[field] is not None:
             try:
@@ -178,6 +206,7 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     defaults = {
         'priority': 3,
         'hours_need': 1.0,
+        'day_need': None,  # Default to None so HOURS_NEED takes precedence
         'processing_time': 3600,  # 1 hour in seconds
         'setup_time': 0,
         'break_time': 0,
@@ -446,5 +475,4 @@ def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> Dict[str, An
         'average_utilization': avg_utilization,
         'machine_utilization': machine_utilization,
         'earliest_start': earliest_start,
-        'latest_end': latest_end
-    } 
+    }

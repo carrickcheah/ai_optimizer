@@ -90,14 +90,52 @@ def reduce_non_productive_time(
                 if no_prod > 0:
                     job['no_prod'] = no_prod * reduction_factor
                 
-                # Update the hours_need if it exists by reducing it
-                current_hours_need = job.get('hours_need')
-                if current_hours_need is not None:
+                # Update the duration fields if they exist by reducing them
+                # Priority: If DAY_NEED exists and has value, reduce it. Otherwise reduce HOURS_NEED
+                day_need = job.get('day_need') or job.get('DAY_NEED')
+                hours_need = job.get('hours_need')
+                
+                if day_need is not None:
                     try:
-                        current_hours_need = float(current_hours_need)
-                        job['hours_need'] = max(0, current_hours_need - time_saved)
+                        day_need_val = float(day_need)
+                        if day_need_val > 0:
+                            # Reduce DAY_NEED (convert time_saved from hours to days)
+                            time_saved_days = time_saved / 24
+                            job['day_need'] = max(0, day_need_val - time_saved_days)
+                            if 'DAY_NEED' in job:
+                                job['DAY_NEED'] = job['day_need']
+                            logger.debug(f"Reduced DAY_NEED for job {job.get('job_id', 'unknown')}: "
+                                       f"{day_need_val:.2f} -> {job['day_need']:.2f} days")
+                        else:
+                            # DAY_NEED is 0/negative, reduce HOURS_NEED instead
+                            if hours_need is not None:
+                                try:
+                                    hours_need_val = float(hours_need)
+                                    job['hours_need'] = max(0, hours_need_val - time_saved)
+                                    logger.debug(f"DAY_NEED is 0/negative, reduced HOURS_NEED for job {job.get('job_id', 'unknown')}: "
+                                               f"{hours_need_val:.2f} -> {job['hours_need']:.2f} hours")
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Invalid hours_need for job {job.get('job_id', 'unknown')}: {hours_need}")
                     except (ValueError, TypeError):
-                        logger.warning(f"Invalid hours_need for job {job.get('job_id', 'unknown')}: {current_hours_need}")
+                        # DAY_NEED is invalid, reduce HOURS_NEED instead
+                        if hours_need is not None:
+                            try:
+                                hours_need_val = float(hours_need)
+                                job['hours_need'] = max(0, hours_need_val - time_saved)
+                                logger.debug(f"DAY_NEED is invalid, reduced HOURS_NEED for job {job.get('job_id', 'unknown')}: "
+                                           f"{hours_need_val:.2f} -> {job['hours_need']:.2f} hours")
+                            except (ValueError, TypeError):
+                                logger.warning(f"Invalid hours_need for job {job.get('job_id', 'unknown')}: {hours_need}")
+                else:
+                    # No DAY_NEED, reduce HOURS_NEED
+                    if hours_need is not None:
+                        try:
+                            hours_need_val = float(hours_need)
+                            job['hours_need'] = max(0, hours_need_val - time_saved)
+                            logger.debug(f"No DAY_NEED, reduced HOURS_NEED for job {job.get('job_id', 'unknown')}: "
+                                       f"{hours_need_val:.2f} -> {job['hours_need']:.2f} hours")
+                        except (ValueError, TypeError):
+                            logger.warning(f"Invalid hours_need for job {job.get('job_id', 'unknown')}: {hours_need}")
             
                 # Update statistics
                 urgent_jobs_count += 1
@@ -170,7 +208,7 @@ def should_reschedule(jobs: List[Dict[str, Any]], reduction_percent: int) -> boo
             processing_time = float(processing_time) if processing_time is not None else 0
             
             if processing_time <= 0:
-            continue
+                continue
             
             setup_time = float(job.get('setup_time', 0) or 0)
             break_time = float(job.get('break_time', 0) or 0)

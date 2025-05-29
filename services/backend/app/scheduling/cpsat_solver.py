@@ -230,16 +230,33 @@ def _create_error_result(message: str) -> Dict[str, Any]:
     }
 
 def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
-    """Calculate the solver horizon based on job durations."""
+    """Calculate the solver horizon based on job durations.
+    
+    Considers both DAY_NEED (priority) and HOURS_NEED for duration calculation.
+    """
     max_hours_need = 0
     for job_item in jobs:
-        hours_val = job_item.get('hours_need', 1)
+        # Use the same priority logic as _calculate_total_job_hours
+        day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
+        
+        if day_need is not None:
+            try:
+                day_need_val = float(day_need)
+                if day_need_val > 0:
+                    hours_val = day_need_val * 24  # Convert days to hours
+                else:
+                    hours_val = job_item.get('hours_need', 1)
+            except (ValueError, TypeError):
+                hours_val = job_item.get('hours_need', 1)
+        else:
+            hours_val = job_item.get('hours_need', 1)
+        
         try:
             hours_val = float(hours_val)
             if hours_val > max_hours_need:
                 max_hours_need = hours_val
         except (ValueError, TypeError):
-            logger.warning(f"Job {job_item.get('job_id')} has invalid hours_need: {hours_val}")
+            logger.warning(f"Job {job_item.get('job_id')} has invalid duration values")
     
     if max_hours_need == 0:
         max_hours_need = 1
@@ -248,13 +265,44 @@ def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
     return max(horizon, 24*7)  # Minimum one week
 
 def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
-    """Calculate total hours needed including non-working time components."""
-    total_hours = job_item.get('hours_need', 1)
+    """Calculate total hours needed including non-working time components.
     
-    try:
-        total_hours = float(total_hours)
-    except (ValueError, TypeError):
-        total_hours = 1.0
+    Priority logic:
+    1. If DAY_NEED has a value, use that (convert days to hours by * 24)
+    2. If DAY_NEED is empty/null, fall back to HOURS_NEED
+    """
+    # Priority 1: Check for DAY_NEED first
+    day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
+    if day_need is not None:
+        try:
+            day_need_val = float(day_need)
+            if day_need_val > 0:
+                total_hours = day_need_val * 24  # Convert days to hours
+                logger.debug(f"Using DAY_NEED for job {job_item.get('job_id')}: {day_need_val} days = {total_hours} hours")
+            else:
+                # DAY_NEED is 0 or negative, fall back to HOURS_NEED
+                total_hours = job_item.get('hours_need', 1)
+                try:
+                    total_hours = float(total_hours)
+                except (ValueError, TypeError):
+                    total_hours = 1.0
+                logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
+        except (ValueError, TypeError):
+            # DAY_NEED is invalid, fall back to HOURS_NEED
+            total_hours = job_item.get('hours_need', 1)
+            try:
+                total_hours = float(total_hours)
+            except (ValueError, TypeError):
+                total_hours = 1.0
+            logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
+    else:
+        # Priority 2: No DAY_NEED, use HOURS_NEED
+        total_hours = job_item.get('hours_need', 1)
+        try:
+            total_hours = float(total_hours)
+        except (ValueError, TypeError):
+            total_hours = 1.0
+        logger.debug(f"No DAY_NEED, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
     
     # Add setup time if available (convert from seconds to hours)
     setup_time = job_item.get('setup_time') or job_item.get('setting_hours', 0)

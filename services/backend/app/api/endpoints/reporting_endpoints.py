@@ -70,10 +70,10 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         A tuple of (schedule_output, jobs_data)
     """
     try:
-        # 1. Load data using MariaDB parser
+        # 1. Load data using MariaDB parser (limited to 100 jobs for performance)
         # This requires DB connection and might be slow for an API call if not cached/pre-run.
         # For now, we assume it's feasible for demonstration.
-        jobs_data, machines_data, setup_times_data = load_jobs_planning_data()
+        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(max_jobs=100)
         
         # Extract machine names from jobs_data using rsc_code instead of RSC_MACHINE
         # This assumes jobs have rsc_code field which identifies the machine

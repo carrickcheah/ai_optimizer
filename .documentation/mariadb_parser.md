@@ -38,15 +38,15 @@ DB_PORT = os.getenv("MARIADB_PORT", "3306")
 ## Data Processing Logic
 
 ### Job Data Loading
-1. Fetches all columns from `tbl_aa_job`
+1. Fetches data from joined tables (`tbl_jo_process`, `tbl_jo_txn`, `tbl_daily_item`) with complex SQL
 2. For each job:
-   - Uses `op_id` as primary key
+   - Uses `TxnId_i` as primary key (op_id)
    - Processes date fields (epoch + string formats)
-   - Converts numeric fields
-   - Calculates derived fields
+   - Converts numeric fields with CASE statements
+   - Calculates derived fields (hours_need, day_need, balance_quantity)
 
 ### Machine Processing
-1. Extracts unique machines from `rsc_code`
+1. Extracts unique machines from `jop.Machine_v`
 2. Creates machine entries with:
    - `MachineName_v`: Machine code
    - `Description`: "Resource {code}"
@@ -58,11 +58,17 @@ DB_PORT = os.getenv("MARIADB_PORT", "3306")
 ## Field Handling
 
 ### Special Fields
-- **rsc_code**: Used for machine assignment
+- **rsc_code**: Mapped from `jop.Machine_v` for machine assignment
 - **Date Fields** (converted to both formats):
-  - lcd_date
-  - material_arrival
-  - start_date
+  - lcd_date (from `jot.TargetDate_dd`)
+  - material_arrival (set to empty string)
+  - start_date (set to empty string)
+
+### Calculated Fields
+- **expect_output_per_hour**: `jop.CapQty_d * 60` when `jop.CapMin_d = 1`
+- **hours_need**: `jot.JoQty_d / (jop.CapQty_d * 60)`
+- **day_need**: `jot.JoQty_d / (jop.CapQty_d * 60 * 24)` or `jop.LeadTime_d`
+- **balance_quantity**: `jot.JoQty_d - COALESCE(di.Qty_d, 0)`
 
 ### Excluded Fields
 - created_at
@@ -86,3 +92,7 @@ When run directly:
 - pytz
 - pandas
 - datetime
+
+## Key Features
+
+1. Fetches data from joined tables (`tbl_jo_process`, `tbl_jo_txn`, `tbl_daily_item`) instead of single table

@@ -1,5 +1,5 @@
 # services/ai_optimizer/backend/app/api/endpoints/production_jobs_endpoints.py
-"""Production-grade production jobs API endpoints with optimized performance and error handling."""
+"""Production-grade production jobs API endpoints with read-only access to joined table data."""
 
 from fastapi import APIRouter, HTTPException, Body, Query, Depends
 from fastapi.responses import JSONResponse
@@ -14,6 +14,7 @@ from ..fastapi_app import (
     ProductionJobResponse, 
     DataTransformer,
     get_db_connection_from_pool,
+    get_connection_pool,
     monitor_performance,
     APIResponse
 )
@@ -27,23 +28,52 @@ class ProductionJobQueries:
     
     @staticmethod
     def get_base_select_query() -> str:
-        """Base SELECT query for production jobs."""
+        """Base SELECT query for production jobs from joined tables."""
         return """
         SELECT
-            op_id, created_at AS plan_date, lcd_date, job, process_code, 
-            rsc_location, rsc_code, job_dependency, number_operator, 
-            job_quantity, expect_output_per_hour, hours_need, day_need, 
-            setting_hours, break_hours, no_prod, priority,
-            material_arrival, start_date, reduce_operation_hours,
-            created_at, updated_at
-        FROM tbl_aa_job
+            jop.TxnId_i AS op_id,
+            jot.CreateDate_dt AS plan_date,
+            jot.TargetDate_dd AS lcd_date,
+            jot.DocRef_v AS job,
+            jop.Task_v AS process_code,
+            '' AS rsc_location,
+            jop.Machine_v AS rsc_code,
+            1 AS job_dependency,
+            jop.ManCount_i AS number_operator,
+            jot.JoQty_d AS job_quantity,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jop.CapQty_d * 60 
+                 ELSE NULL END AS expect_output_per_hour,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jot.JoQty_d / (jop.CapQty_d * 60) 
+                 ELSE NULL END AS hours_need,
+            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                 THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
+                 WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 
+                 THEN jop.LeadTime_d 
+                 ELSE NULL END AS day_need,
+            jop.SetupTime_d AS setting_hours,
+            1 AS break_hours,
+            8 AS no_prod,
+            3 AS priority,
+            jot.MaterialDate_dd AS material_arrival,
+            '' AS start_date,
+            0 AS reduce_operation_hours,
+            jot.CreateDate_dt AS created_at,
+            jot.UpdateDate_dt AS updated_at
+        FROM tbl_jo_process AS jop 
+        INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+        WHERE jot.Void_c != 1 
+            AND jot.DocStatus_c != 'CP' 
+            AND jop.QtyStatus_c != 'FF' 
+            AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
         """
     
     @staticmethod
     def get_all_jobs_query(limit: Optional[int] = None, offset: Optional[int] = None) -> str:
         """Query to get all jobs with optional pagination."""
         query = ProductionJobQueries.get_base_select_query()
-        query += " ORDER BY created_at DESC, op_id DESC"
+        query += " ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i DESC"
         
         if limit:
             query += f" LIMIT {limit}"
@@ -55,41 +85,22 @@ class ProductionJobQueries:
     @staticmethod
     def get_job_by_id_query() -> str:
         """Query to get a specific job by ID."""
-        return ProductionJobQueries.get_base_select_query() + " WHERE op_id = %s"
+        return ProductionJobQueries.get_base_select_query() + " AND jop.TxnId_i = %s"
     
     @staticmethod
     def insert_job_query() -> str:
-        """Query to insert a new production job."""
-        return """
-        INSERT INTO tbl_aa_job (
-            lcd_date, job, process_code, rsc_location, rsc_code,
-            job_dependency, number_operator, job_quantity, expect_output_per_hour,
-            hours_need, day_need, setting_hours, break_hours, no_prod, priority,
-            material_arrival, start_date, reduce_operation_hours, created_at, updated_at
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-            %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
-        )
-        """
+        """Insert is not supported for the joined view - read-only data."""
+        raise NotImplementedError("Insert operations not supported for joined table view")
     
     @staticmethod
     def update_job_query() -> str:
-        """Query to update an existing production job."""
-        return """
-        UPDATE tbl_aa_job SET
-            lcd_date = %s, job = %s, process_code = %s, rsc_location = %s, rsc_code = %s,
-            job_dependency = %s, number_operator = %s, job_quantity = %s, 
-            expect_output_per_hour = %s, hours_need = %s, day_need = %s, 
-            setting_hours = %s, break_hours = %s, no_prod = %s, priority = %s,
-            material_arrival = %s, start_date = %s, reduce_operation_hours = %s,
-            updated_at = NOW()
-        WHERE op_id = %s
-        """
+        """Update is not supported for the joined view - read-only data."""
+        raise NotImplementedError("Update operations not supported for joined table view")
     
     @staticmethod
     def delete_job_query() -> str:
-        """Query to delete a production job."""
-        return "DELETE FROM tbl_aa_job WHERE op_id = %s"
+        """Delete is not supported for the joined view - read-only data."""
+        raise NotImplementedError("Delete operations not supported for joined table view")
 
 # Service Layer
 class ProductionJobService:
@@ -97,20 +108,15 @@ class ProductionJobService:
     
     @staticmethod
     def prepare_job_data(job_data: ProductionJobData) -> tuple:
-        """Prepare job data for database insertion/update."""
-        return (
-            job_data.lcd_date, job_data.job, job_data.process_code, 
-            job_data.rsc_location, job_data.rsc_code, job_data.job_dependency,
-            job_data.number_operator, job_data.job_quantity, job_data.expect_output_per_hour,
-            job_data.hours_need, job_data.day_need, job_data.setting_hours, 
-            job_data.break_hours, job_data.no_prod, job_data.priority,
-            job_data.material_arrival, job_data.start_date, job_data.reduce_operation_hours
-        )
+        """Prepare job data for database insertion/update - Not supported for joined view."""
+        raise NotImplementedError("Data modification not supported for joined table view")
     
     @staticmethod
     def validate_job_exists(cursor, job_id: int) -> bool:
-        """Check if a job exists in the database."""
-        cursor.execute("SELECT 1 FROM tbl_aa_job WHERE op_id = %s", (job_id,))
+        """Check if a job exists in the joined view."""
+        base_query = ProductionJobQueries.get_base_select_query()
+        check_query = f"SELECT 1 FROM ({base_query}) AS job_view WHERE op_id = %s"
+        cursor.execute(check_query, (job_id,))
         return cursor.fetchone() is not None
 
 # API Endpoints
@@ -243,7 +249,7 @@ async def get_production_schedule(
                 di.Qty_d AS ACCUMULATED_DAILY_OUTPUT, \
                 (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS BALANCE_QUANTITY, \
                 jop.TxnId_i,\
-                '' AS MATERIAL_ARRIVAL,\
+                jot.MaterialDate_dd AS MATERIAL_ARRIVAL,\
                 1 AS JOB_DEPENDENCY,\
                 3 AS PRIORITY,\
                 0 AS REDUCE_OPERATION_HOURS
@@ -255,7 +261,7 @@ async def get_production_schedule(
             base_where_clauses = """ \n            WHERE jot.Void_c != 1 \
                 AND jot.DocStatus_c != 'CP' \
                 AND jop.QtyStatus_c != 'FF' \
-                AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL 10 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+                AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
             """
 
             # Count query
@@ -298,6 +304,60 @@ async def get_production_schedule(
         finally:
             cursor.close()
 
+@router.get("/health", 
+           response_model=Dict[str, Any],
+           summary="Health check",
+           description="Check service and database health")
+async def health_check():
+    """Comprehensive health check with detailed diagnostics."""
+    health_data = {
+        "service": "ai_optimizer",
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "checks": {}
+    }
+    
+    # Database connectivity check
+    try:
+        with get_db_connection_from_pool() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 as health_check")
+            result = cursor.fetchone()
+            cursor.close()
+            
+            health_data["checks"]["database"] = {
+                "status": "healthy",
+                "response_time_ms": 0,  # Could add timing here
+                "result": result[0] if result else None
+            }
+    except Exception as e:
+        health_data["status"] = "unhealthy"
+        health_data["checks"]["database"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+    
+    # Connection pool status
+    try:
+        pool = get_connection_pool()
+        if pool:
+            health_data["checks"]["connection_pool"] = {
+                "status": "healthy",
+                "pool_size": pool.pool_size
+            }
+        else:
+            health_data["checks"]["connection_pool"] = {
+                "status": "not_configured"
+            }
+    except Exception as e:
+        health_data["checks"]["connection_pool"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    status_code = 200 if health_data["status"] == "healthy" else 503
+    return JSONResponse(content=health_data, status_code=status_code)
+
 @router.get("/{job_id}", 
            response_model=ProductionJobResponse,
            summary="Get production job by ID",
@@ -330,140 +390,38 @@ async def get_production_job(job_id: int):
 @router.post("/",
             response_model=APIResponse,
             summary="Create new production job",
-            description="Create a new production job with validation")
+            description="Create operation not supported for joined table view")
 @monitor_performance
 async def create_production_job(job_data: ProductionJobData = Body(...)):
-    """Create a new production job with comprehensive validation."""
-    with get_db_connection_from_pool() as conn:
-        cursor = conn.cursor()
-        
-        try:
-            # Check for duplicate job
-            cursor.execute(
-                "SELECT op_id FROM tbl_aa_job WHERE job = %s AND process_code = %s",
-                (job_data.job, job_data.process_code)
-            )
-            if cursor.fetchone():
-                raise HTTPException(
-                    status_code=409, 
-                    detail=f"Job {job_data.job} with process {job_data.process_code} already exists"
-                )
-            
-            # Insert new job
-            data = ProductionJobService.prepare_job_data(job_data)
-            cursor.execute(ProductionJobQueries.insert_job_query(), data)
-            conn.commit()
-            
-            new_job_id = cursor.lastrowid
-            logger.info(f"Successfully created job with ID: {new_job_id}")
-            
-            return APIResponse(
-                success=True,
-                message="Production job created successfully",
-                data={
-                    "job_id": new_job_id,
-                    "job": job_data.job,
-                    "process_code": job_data.process_code
-                }
-            )
-            
-        except mysql.connector.Error as e:
-            conn.rollback()
-            logger.error(f"Database error creating job: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create production job")
-        except HTTPException:
-            conn.rollback()
-            raise
-        finally:
-            cursor.close()
+    """Create operation not supported for joined table view."""
+    raise HTTPException(
+        status_code=501, 
+        detail="Create operations not supported for joined table view. This endpoint provides read-only access to production data."
+    )
 
 @router.put("/{job_id}", 
            response_model=ProductionJobResponse,
            summary="Update production job",
-           description="Update an existing production job")
+           description="Update operation not supported for joined table view")
 @monitor_performance
 async def update_production_job(job_id: int, job_data: ProductionJobData = Body(...)):
-    """Update an existing production job."""
-    if job_id <= 0:
-        raise HTTPException(status_code=400, detail="Job ID must be positive")
-    
-    with get_db_connection_from_pool() as conn:
-        cursor = conn.cursor(dictionary=True)
-        
-        try:
-            # Check if job exists
-            if not ProductionJobService.validate_job_exists(cursor, job_id):
-                raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
-            
-            # Update job
-            data = ProductionJobService.prepare_job_data(job_data) + (job_id,)
-            cursor.execute(ProductionJobQueries.update_job_query(), data)
-            conn.commit()
-            
-            logger.info(f"Successfully updated job with ID: {job_id}")
-            
-            # Fetch and return updated job
-            cursor.execute(ProductionJobQueries.get_job_by_id_query(), (job_id,))
-            updated_job_row = cursor.fetchone()
-            
-            if not updated_job_row:
-                raise HTTPException(status_code=500, detail="Failed to retrieve job after update")
-            
-            transformed_row = DataTransformer.transform_job_row(updated_job_row)
-            return ProductionJobResponse(**transformed_row)
-            
-        except mysql.connector.Error as e:
-            conn.rollback()
-            logger.error(f"Database error updating job {job_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to update production job")
-        except HTTPException:
-            conn.rollback()
-            raise
-        finally:
-            cursor.close()
+    """Update operation not supported for joined table view."""
+    raise HTTPException(
+        status_code=501, 
+        detail="Update operations not supported for joined table view. This endpoint provides read-only access to production data."
+    )
 
 @router.delete("/{job_id}",
               response_model=APIResponse,
               summary="Delete production job",
-              description="Delete a production job by ID")
+              description="Delete operation not supported for joined table view")
 @monitor_performance
 async def delete_production_job(job_id: int):
-    """Delete a production job by ID."""
-    if job_id <= 0:
-        raise HTTPException(status_code=400, detail="Job ID must be positive")
-    
-    with get_db_connection_from_pool() as conn:
-        cursor = conn.cursor()
-        
-        try:
-            # Check if job exists
-            if not ProductionJobService.validate_job_exists(cursor, job_id):
-                raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
-            
-            # Delete job
-            cursor.execute(ProductionJobQueries.delete_job_query(), (job_id,))
-            conn.commit()
-            
-            if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
-            
-            logger.info(f"Successfully deleted job with ID: {job_id}")
-            
-            return APIResponse(
-                success=True,
-                message=f"Production job {job_id} deleted successfully",
-                data={"deleted_job_id": job_id}
-            )
-            
-        except mysql.connector.Error as e:
-            conn.rollback()
-            logger.error(f"Database error deleting job {job_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to delete production job")
-        except HTTPException:
-            conn.rollback()
-            raise
-        finally:
-            cursor.close()
+    """Delete operation not supported for joined table view."""
+    raise HTTPException(
+        status_code=501, 
+        detail="Delete operations not supported for joined table view. This endpoint provides read-only access to production data."
+    )
 
 @router.get("/stats/summary",
            response_model=Dict[str, Any],
@@ -476,18 +434,25 @@ async def get_production_jobs_stats():
         cursor = conn.cursor(dictionary=True)
         
         try:
-            # Get various statistics in one query
+            # Get various statistics in one query using joined tables
             cursor.execute("""
                 SELECT 
                     COUNT(*) as total_jobs,
-                    COUNT(DISTINCT rsc_code) as unique_machines,
-                    AVG(hours_need) as avg_hours_needed,
-                    SUM(job_quantity) as total_quantity,
-                    COUNT(CASE WHEN priority = 1 THEN 1 END) as high_priority_jobs,
-                    COUNT(CASE WHEN priority >= 4 THEN 1 END) as low_priority_jobs,
-                    MIN(created_at) as oldest_job,
-                    MAX(created_at) as newest_job
-                FROM tbl_aa_job
+                    COUNT(DISTINCT jop.Machine_v) as unique_machines,
+                    AVG(CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                             THEN jot.JoQty_d / (jop.CapQty_d * 60) 
+                             ELSE NULL END) as avg_hours_needed,
+                    SUM(jot.JoQty_d) as total_quantity,
+                    COUNT(CASE WHEN 3 = 1 THEN 1 END) as high_priority_jobs,
+                    COUNT(CASE WHEN 3 >= 4 THEN 1 END) as low_priority_jobs,
+                    MIN(jot.CreateDate_dt) as oldest_job,
+                    MAX(jot.CreateDate_dt) as newest_job
+                FROM tbl_jo_process AS jop 
+                INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+                WHERE jot.Void_c != 1 
+                    AND jot.DocStatus_c != 'CP' 
+                    AND jop.QtyStatus_c != 'FF' 
+                    AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
             """)
             
             stats = cursor.fetchone()

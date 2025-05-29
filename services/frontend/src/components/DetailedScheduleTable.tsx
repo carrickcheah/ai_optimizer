@@ -29,6 +29,10 @@ interface ScheduleTableRow {
   op_id: string;
   job_id: string;
   lcd_date_str?: string;
+  LCD_DATE?: string;
+  lcd_date?: string;
+  due_date?: string;
+  target_date?: string;
   job?: string;
   process_code?: string;
   job_dependency?: string;
@@ -84,40 +88,43 @@ const formatDateTime = (dateTimeStr: string | undefined): React.ReactNode => {
 
 // Helper function specifically for LCD Date format (date + HH:MM)
 const formatLCDDate = (dateTimeStr: string | undefined): React.ReactNode => {
-  if (!dateTimeStr) return 'N/A';
+  if (!dateTimeStr || dateTimeStr === 'N/A') return 'N/A';
+
+  // The backend returns LCD date in format: "dd/mm/yy HH:MM"
+  // This should be displayed as-is or can be reformatted if needed
   
-  // Handle different date formats from backend
-  // Expected input: "20/06/25 10:00" (DD/MM/YY HH:MM)
-  const parts = dateTimeStr.split(' ');
-  if (parts.length !== 2) return dateTimeStr; // Return as is if not in expected format
-  
-  const datePart = parts[0]; // "20/06/25"
-  const timePart = parts[1]; // "10:00"
-  
-  // Convert DD/MM/YY to YYYY-MM-DD
-  const dateComponents = datePart.split('/');
-  if (dateComponents.length === 3) {
-    const day = dateComponents[0].padStart(2, '0');
-    const month = dateComponents[1].padStart(2, '0');
-    let year = dateComponents[2];
-    
-    // Convert YY to YYYY (assuming 20xx for years like 25 = 2025)
-    if (year.length === 2) {
-      year = '20' + year;
+  try {
+    // If it's already in the expected format (dd/mm/yy HH:MM), return as-is
+    if (/^\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(dateTimeStr)) {
+      return dateTimeStr;
     }
     
-    const formattedDate = `${year}-${month}-${day}`;
+    // Try to parse other possible formats and convert to dd/mm/yy HH:MM
+    let date: Date | null = null;
     
-    return (
-      <div className="date-time-display">
-        <div className="date-part">{formattedDate}</div>
-        <div className="time-part">{timePart}</div>
-      </div>
-    );
+    // Try parsing as ISO date string
+    if (dateTimeStr.includes('-') && (dateTimeStr.includes('T') || dateTimeStr.includes(' '))) {
+      date = new Date(dateTimeStr);
+    }
+    
+    if (date && !isNaN(date.getTime())) {
+      // Format as dd/mm/yy HH:MM
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const year = date.getFullYear().toString().slice(-2);
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      
+      return `${day}/${month}/${year} ${hours}:${minutes}`;
+    }
+    
+    // If all parsing fails, return the original value
+    return dateTimeStr;
+    
+  } catch (error) {
+    console.warn('Error formatting LCD date:', dateTimeStr, error);
+    return dateTimeStr;
   }
-  
-  // Fallback to original format if parsing fails
-  return dateTimeStr;
 };
 
 const columnHelper = createColumnHelper<ScheduleTableRow>();
@@ -141,7 +148,12 @@ const columns = [
   }),
   columnHelper.accessor('lcd_date_str', { 
     header: 'LCD Date', 
-    cell: info => formatLCDDate(info.getValue()) 
+    cell: info => {
+      const row = info.row.original;
+      // Try different field names that might contain LCD date
+      const lcdValue = row.lcd_date_str || row.LCD_DATE || row.lcd_date || row.due_date || row.target_date;
+      return formatLCDDate(lcdValue);
+    }
   }),
   columnHelper.accessor('start_date_input_str', { 
     header: 'Req. Start', 
@@ -192,15 +204,39 @@ const DetailedScheduleTable: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [pagination, setPagination] = useState<{
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    itemsPerPage: number;
+  }>({
+    currentPage: 1,
+    totalPages: 1,
+    totalItems: 0,
+    itemsPerPage: 50, // Default to 50
+  });
+
+  const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (currentPage = pagination.currentPage, itemsPerPage = pagination.itemsPerPage) => {
       setIsLoading(true);
       setError(null);
       try {
+        // Construct query parameters for pagination
+        const scheduleParams = new URLSearchParams({
+          page: currentPage.toString(),
+          page_size: itemsPerPage.toString(),
+          // Add other existing params like sort_field, sort_order if needed by this endpoint
+        });
+
+        // Assuming detailed-schedule endpoint supports pagination
+        const scheduleUrl = `${API_BASE_URL}/reports/detailed-schedule?${scheduleParams.toString()}`;
+        const overviewUrl = `${API_BASE_URL}/reports/schedule-overview`; // Assuming overview doesn't need pagination
+
         const [scheduleResponse, overviewResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/reports/detailed-schedule`),
-          fetch(`${API_BASE_URL}/reports/schedule-overview`)
+          fetch(scheduleUrl),
+          fetch(overviewUrl)
         ]);
         
         if (!scheduleResponse.ok) {
@@ -208,8 +244,21 @@ const DetailedScheduleTable: React.FC = () => {
           throw new Error(errorData.detail || `Failed to fetch table data: ${scheduleResponse.statusText}`);
         }
         
-        const fetchedData: ScheduleTableRow[] = await scheduleResponse.json();
-        setData(fetchedData);
+        // Assuming API returns pagination info along with items
+        const scheduleResult = await scheduleResponse.json(); 
+        const resultData = scheduleResult.items || scheduleResult;
+        
+        setData(resultData); // Handle if API returns array directly or object with items
+        
+        // Update pagination state from API response if available
+        // This part needs to be adapted based on the actual API response structure for this endpoint
+        setPagination(prev => ({
+          ...prev,
+          currentPage: scheduleResult.page || currentPage,
+          totalPages: scheduleResult.total_pages || Math.ceil((scheduleResult.total_items || (scheduleResult.items || scheduleResult).length) / itemsPerPage),
+          totalItems: scheduleResult.total_items || (scheduleResult.items || scheduleResult).length,
+          itemsPerPage: scheduleResult.page_size || itemsPerPage,
+        }));
         
         if (overviewResponse.ok) {
           const overviewData: ScheduleOverview = await overviewResponse.json();
@@ -226,7 +275,61 @@ const DetailedScheduleTable: React.FC = () => {
       setIsLoading(false);
     };
     fetchData();
-  }, []);
+  }, [pagination.currentPage, pagination.itemsPerPage]); // Re-fetch when page or itemsPerPage changes
+
+  const handleRowsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newItemsPerPage = parseInt(e.target.value);
+    // Call fetchData directly or update state to trigger useEffect
+    setPagination(prev => ({ ...prev, itemsPerPage: newItemsPerPage, currentPage: 1 })); 
+  };
+
+  const handlePageChange = (pageNumber: number) => {
+    if (pageNumber < 1 || pageNumber > pagination.totalPages) return;
+    setPagination(prev => ({ ...prev, currentPage: pageNumber }));
+  };
+
+  const renderTableInfo = () => {
+    const { currentPage, itemsPerPage, totalItems } = pagination;
+    const start = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+    const end = Math.min(start + itemsPerPage - 1, totalItems);
+    return `Showing ${start} to ${end} of ${totalItems} entries`;
+  };
+
+  const renderPaginationControls = () => {
+    const { currentPage, totalPages } = pagination;
+    const maxPagesToShow = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
+    let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+    startPage = Math.max(1, endPage - maxPagesToShow + 1);
+
+    const pages: React.ReactElement[] = [];
+    pages.push(
+      <li key="prev" className={`page-item ${currentPage === 1 ? 'disabled' : ''}`}>
+        <button className="page-link" onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1}>&laquo;</button>
+      </li>
+    );
+    if (startPage > 1) {
+      pages.push(<li key="1" className="page-item"><button className="page-link" onClick={() => handlePageChange(1)}>1</button></li>);
+      if (startPage > 2) pages.push(<li key="ellipsis1" className="page-item disabled"><span className="page-link">...</span></li>);
+    }
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(
+        <li key={i} className={`page-item ${i === currentPage ? 'active' : ''}`}>
+          <button className="page-link" onClick={() => handlePageChange(i)}>{i}</button>
+        </li>
+      );
+    }
+    if (endPage < totalPages) {
+      if (endPage < totalPages - 1) pages.push(<li key="ellipsis2" className="page-item disabled"><span className="page-link">...</span></li>);
+      pages.push(<li key={totalPages} className="page-item"><button className="page-link" onClick={() => handlePageChange(totalPages)}>{totalPages}</button></li>);
+    }
+    pages.push(
+      <li key="next" className={`page-item ${currentPage === totalPages ? 'disabled' : ''}`}>
+        <button className="page-link" onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages}>&raquo;</button>
+      </li>
+    );
+    return <ul className="pagination">{pages}</ul>;
+  };
 
   const table = useReactTable({
     data,
@@ -383,6 +486,29 @@ const DetailedScheduleTable: React.FC = () => {
           <h2>Detailed Production Schedule</h2>
         </div>
         <div className="card-body">
+          <div className="row mb-3">
+            <div className="col-md-6">
+              {/* Placeholder for any future search/filter controls */}
+            </div>
+            <div className="col-md-6 text-end">
+              <div className="d-flex justify-content-end align-items-center">
+                <label htmlFor="rowsPerPageDetailed" className="me-2 text-nowrap">Show</label>
+                <select 
+                  id="rowsPerPageDetailed" 
+                  className="form-select me-2" 
+                  style={{ width: 'auto' }}
+                  value={pagination.itemsPerPage}
+                  onChange={handleRowsPerPageChange}
+                >
+                  {rowOptions.map(option => (
+                    <option key={option} value={option}>{option} per page</option>
+                  ))}
+                </select>
+                <span>entries</span>
+              </div>
+            </div>
+          </div>
+
           <div className="table-responsive">
             <table className="table table-striped table-hover schedule-table">
               <thead>
@@ -416,6 +542,14 @@ const DetailedScheduleTable: React.FC = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination Controls */}
+          <div className="pagination-container">
+            <div id="tableInfoDetailed">{renderTableInfo()}</div>
+            <nav aria-label="Page navigation">
+              {renderPaginationControls()}
+            </nav>
           </div>
         </div>
       </div>

@@ -141,13 +141,46 @@ def greedy_schedule(
         """Check if a job can be scheduled at the given time"""
         processing_time = job.get('processing_time')
         if not processing_time:
-            if 'hours_need' in job and job['hours_need'] is not None:
+            # Priority logic: DAY_NEED takes precedence over HOURS_NEED
+            day_need = job.get('day_need') or job.get('DAY_NEED')
+            
+            if day_need is not None:
                 try:
-                    job['processing_time'] = float(job['hours_need']) * 3600
+                    day_need_val = float(day_need)
+                    if day_need_val > 0:
+                        # Convert days to hours, then to seconds
+                        job['processing_time'] = day_need_val * 24 * 3600
+                        logger.debug(f"Using DAY_NEED for job {job.get('job_id')}: {day_need_val} days = {job['processing_time']} seconds")
+                    else:
+                        # DAY_NEED is 0/negative, fall back to HOURS_NEED
+                        if 'hours_need' in job and job['hours_need'] is not None:
+                            try:
+                                job['processing_time'] = float(job['hours_need']) * 3600
+                                logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
+                            except (ValueError, TypeError):
+                                job['processing_time'] = 3600
+                        else:
+                            job['processing_time'] = 3600
                 except (ValueError, TypeError):
-                    job['processing_time'] = 3600
+                    # DAY_NEED is invalid, fall back to HOURS_NEED
+                    if 'hours_need' in job and job['hours_need'] is not None:
+                        try:
+                            job['processing_time'] = float(job['hours_need']) * 3600
+                            logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
+                        except (ValueError, TypeError):
+                            job['processing_time'] = 3600
+                    else:
+                        job['processing_time'] = 3600
             else:
-                job['processing_time'] = 3600
+                # No DAY_NEED, use HOURS_NEED
+                if 'hours_need' in job and job['hours_need'] is not None:
+                    try:
+                        job['processing_time'] = float(job['hours_need']) * 3600
+                        logger.debug(f"No DAY_NEED, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
+                    except (ValueError, TypeError):
+                        job['processing_time'] = 3600
+                else:
+                    job['processing_time'] = 3600
         
         # Validate start_time_epoch_val is a reasonable timestamp
         if not isinstance(start_time_epoch_val, (int, float)) or start_time_epoch_val < 1000:
@@ -279,13 +312,42 @@ def greedy_schedule(
         
         # Ensure processing_time is available
         if not job_item.get('processing_time'):
-            if 'hours_need' in job_item and job_item['hours_need'] is not None:
+            # Priority logic: DAY_NEED takes precedence over HOURS_NEED
+            day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
+            
+            if day_need is not None:
                 try:
-                    job_item['processing_time'] = float(job_item['hours_need']) * 3600
+                    day_need_val = float(day_need)
+                    if day_need_val > 0:
+                        # Convert days to hours, then to seconds
+                        job_item['processing_time'] = day_need_val * 24 * 3600
+                    else:
+                        # DAY_NEED is 0/negative, fall back to HOURS_NEED
+                        if 'hours_need' in job_item and job_item['hours_need'] is not None:
+                            try:
+                                job_item['processing_time'] = float(job_item['hours_need']) * 3600
+                            except (ValueError, TypeError):
+                                job_item['processing_time'] = 3600
+                        else:
+                            job_item['processing_time'] = 3600
                 except (ValueError, TypeError):
-                    job_item['processing_time'] = 3600
+                    # DAY_NEED is invalid, fall back to HOURS_NEED
+                    if 'hours_need' in job_item and job_item['hours_need'] is not None:
+                        try:
+                            job_item['processing_time'] = float(job_item['hours_need']) * 3600
+                        except (ValueError, TypeError):
+                            job_item['processing_time'] = 3600
+                    else:
+                        job_item['processing_time'] = 3600
             else:
-                job_item['processing_time'] = 3600
+                # No DAY_NEED, use HOURS_NEED
+                if 'hours_need' in job_item and job_item['hours_need'] is not None:
+                    try:
+                        job_item['processing_time'] = float(job_item['hours_need']) * 3600
+                    except (ValueError, TypeError):
+                        job_item['processing_time'] = 3600
+                else:
+                    job_item['processing_time'] = 3600
 
         # Attempt to schedule the job at the earliest possible time
         if can_schedule_job(job_item, machine_id, possible_start_time):

@@ -141,8 +141,7 @@
 ### Job Number Generation Logic
 
     1. Database Table Structure:
-        The system uses a tbl_aa_job table in MariaDB to store job information.
-        The primary key is op_id, which serves as the unique job number.
+        The system uses joined tables (`tbl_jo_process`, `tbl_jo_txn`, `tbl_daily_item`) in MariaDB to provide job information with calculated fields and real-time production data.
 
     2. Auto-incrementing Primary Key:
     The op_id is an auto-incrementing integer field in the database.

@@ -485,7 +485,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{formatDate(job.LCD_DATE)}</td>
                           <td className="text-center">{job.TxnId_i}</td>
                           <td className="text-center">{formatDateTimeMilliseconds(job.START_DATE)}</td>
-                          <td className="text-center">{job.MATERIAL_ARRIVAL || 'N/A'}</td>
+                          <td className="text-center">{formatDate(job.MATERIAL_ARRIVAL)}</td>
                           <td className="text-center">{job.JOB}</td>
                           <td className="text-center">{job.PROCESS_CODE}</td>
                           <td className="text-center">{job.RSC_LOCATION}</td>

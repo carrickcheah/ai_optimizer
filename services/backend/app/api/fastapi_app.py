@@ -20,7 +20,7 @@ except ImportError:
     try:
         from backend.app.data_ingestion.mariadb_parser import get_db_connection
     except ImportError:
-        from ...data_ingestion.mariadb_parser import get_db_connection
+        from ..data_ingestion.mariadb_parser import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -274,15 +274,20 @@ async def get_machines():
             # Primary query - get machines from jobs
             cursor.execute("""
                 SELECT DISTINCT 
-                    rsc_code as MachineName_v, 
-                    rsc_location,
+                    jop.Machine_v as MachineName_v, 
+                    '' as rsc_location,
                     'active' as status,
                     1 as capacity
-                FROM tbl_aa_job
-                WHERE rsc_code IS NOT NULL 
-                    AND rsc_code != '' 
-                    AND rsc_code != 'NULL'
-                ORDER BY rsc_code
+                FROM tbl_jo_process AS jop 
+                INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+                WHERE jot.Void_c != 1 
+                    AND jot.DocStatus_c != 'CP' 
+                    AND jop.QtyStatus_c != 'FF' 
+                    AND jop.Machine_v IS NOT NULL 
+                    AND jop.Machine_v != '' 
+                    AND jop.Machine_v != 'NULL'
+                    AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL 10 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+                ORDER BY jop.Machine_v
             """)
             
             machines = cursor.fetchall()
@@ -304,60 +309,6 @@ async def get_machines():
         finally:
             cursor.close()
 
-@router.get("/health", 
-           response_model=Dict[str, Any],
-           summary="Health check",
-           description="Check service and database health")
-async def health_check():
-    """Comprehensive health check with detailed diagnostics."""
-    health_data = {
-        "service": "ai_optimizer",
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "checks": {}
-    }
-    
-    # Database connectivity check
-    try:
-        with get_db_connection_from_pool() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 as health_check")
-            result = cursor.fetchone()
-            cursor.close()
-            
-            health_data["checks"]["database"] = {
-                "status": "healthy",
-                "response_time_ms": 0,  # Could add timing here
-                "result": result[0] if result else None
-            }
-    except Exception as e:
-        health_data["status"] = "unhealthy"
-        health_data["checks"]["database"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
-    
-    # Connection pool status
-    try:
-        pool = get_connection_pool()
-        if pool:
-            health_data["checks"]["connection_pool"] = {
-                "status": "healthy",
-                "pool_size": pool.pool_size
-            }
-        else:
-            health_data["checks"]["connection_pool"] = {
-                "status": "not_configured"
-            }
-    except Exception as e:
-        health_data["checks"]["connection_pool"] = {
-            "status": "error",
-            "error": str(e)
-        }
-    
-    status_code = 200 if health_data["status"] == "healthy" else 503
-    return JSONResponse(content=health_data, status_code=status_code)
-
 # Export components
 __all__ = ["router", "ProductionJobData", "ProductionJobResponse", "DataTransformer", 
-           "get_db_connection_from_pool", "monitor_performance"]
+           "get_db_connection_from_pool", "monitor_performance", "APIResponse"]

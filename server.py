@@ -9,7 +9,6 @@ from typing import Annotated, Dict
 from fastmcp import FastMCP
 from pydantic import Field
 
-# The log_level is necessary for Cline to work: https://github.com/jlowin/fastmcp/issues/81
 mcp = FastMCP("Interactive Feedback MCP")
 
 def launch_feedback_ui(project_directory: str, summary: str) -> dict[str, str]:
