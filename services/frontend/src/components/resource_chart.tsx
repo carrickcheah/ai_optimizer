@@ -111,6 +111,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
 
   const resourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort();
   
+  console.log('[ResourceChart] Sorted tasks:', sortedTasks.length);
+  console.log('[ResourceChart] Resource groups:', resourceGroups);
+  
   // Buffer status color mapping
   const bufferStatusColors: Record<string, string> = {
     'Late': '#f44336',      // Red
@@ -123,6 +126,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   
   resourceGroups.forEach(resource => {
     const resourceTasks = sortedTasks.filter(task => task.Resource === resource);
+    
+    console.log(`[ResourceChart] Resource ${resource}: ${resourceTasks.length} tasks`);
     
     plotData.push({
       type: 'bar',
@@ -156,6 +161,16 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       showlegend: false
     });
   });
+
+  console.log('[ResourceChart] Generated plotData:', plotData.length, 'series');
+  console.log('[ResourceChart] Sample plotData entry:', plotData[0]);
+  
+  // Debug the actual chart data values
+  if (plotData.length > 0 && plotData[0]) {
+    console.log('[ResourceChart] First series x values (durations):', plotData[0].x);
+    console.log('[ResourceChart] First series y values (resources):', plotData[0].y);
+    console.log('[ResourceChart] First series base values (start times):', plotData[0].base);
+  }
 
   const chartTitle = title || 'Production Planning System (by Resource)';
   
@@ -213,6 +228,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // If timeframe is 'all' or we have no tasks, return complete data
     if (timeRange === 'all' || sortedTasks.length === 0) {
       console.log('[ResourceChart] Using all tasks for "all" timeframe:', sortedTasks.length);
+      console.log('[ResourceChart] Returning plotData with', plotData.length, 'series');
       return plotData; // Return the default plotData
     }
     
@@ -248,7 +264,13 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     console.log('[ResourceChart] Filtering forward from today for timeRange:', timeRange);
     
     // Set end date based on timeframe (forward from today)
-    if (timeRange === '1w') {
+    if (timeRange === '1d') {
+      endDate.setDate(now.getDate() + 1);
+    } else if (timeRange === '2d') {
+      endDate.setDate(now.getDate() + 2);
+    } else if (timeRange === '3d') {
+      endDate.setDate(now.getDate() + 3);
+    } else if (timeRange === '1w') {
       endDate.setDate(now.getDate() + 7);
     } else if (timeRange === '2w') {
       endDate.setDate(now.getDate() + 14);
@@ -361,6 +383,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       gridwidth: 1,
       tickformat: '%b %d',
       dtick: 86400000 * 3,
+      // Force the range to show data from today to 7 days ahead for visibility
+      range: [new Date().toISOString(), new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
     },
     yaxis: {
       title: 'Machines', // Changed Y-axis title
@@ -449,7 +473,13 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     let endDate = new Date(now);
     
     // Set end date based on timeframe (forward from today)
-    if (timeRange === '1w') {
+    if (timeRange === '1d') {
+      endDate.setDate(now.getDate() + 1);
+    } else if (timeRange === '2d') {
+      endDate.setDate(now.getDate() + 2);
+    } else if (timeRange === '3d') {
+      endDate.setDate(now.getDate() + 3);
+    } else if (timeRange === '1w') {
       endDate.setDate(now.getDate() + 7);
     } else if (timeRange === '2w') {
       endDate.setDate(now.getDate() + 14);
@@ -530,6 +560,21 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       </button>
       <div className="flat-time-selector">
         <div className="flat-button-group">
+          <button 
+            className={timeRange === '1d' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('1d')}
+            style={{width: '55px'}}
+          >1d</button>
+          <button 
+            className={timeRange === '2d' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('2d')}
+            style={{width: '55px'}}
+          >2d</button>
+          <button 
+            className={timeRange === '3d' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('3d')}
+            style={{width: '55px'}}
+          >3d</button>
           <button 
             className={timeRange === '1w' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('1w')}

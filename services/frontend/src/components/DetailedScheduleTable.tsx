@@ -257,6 +257,7 @@ const DetailedScheduleTable: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [allData, setAllData] = useState<ScheduleTableRow[]>([]);
   const [pagination, setPagination] = useState<{
     currentPage: number;
     totalPages: number;
@@ -270,6 +271,20 @@ const DetailedScheduleTable: React.FC = () => {
   });
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
+
+  // Helper function to safely parse dates
+  const parseDateSafely = (dateStr: string | undefined): Date | null => {
+    if (!dateStr) return null;
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) {
+        return null;
+      }
+      return date;
+    } catch {
+      return null;
+    }
+  };
 
   // Data loading strategy parameters (for display only - reports endpoint uses its own config)
   const DATA_LOADING_CONFIG = {
@@ -301,10 +316,16 @@ const DetailedScheduleTable: React.FC = () => {
         const scheduleResult = await scheduleResponse.json(); 
         const resultData = Array.isArray(scheduleResult) ? scheduleResult : [];
         
-        // Apply client-side pagination since reports endpoint doesn't support server-side pagination
+        // Store all data for time filtering
+        setAllData(resultData);
+        
+        // Apply time filtering
+        const filteredData = resultData;
+        
+        // Apply client-side pagination to filtered data
         const startIndex = (currentPage - 1) * itemsPerPage;
         const endIndex = startIndex + itemsPerPage;
-        const paginatedData = resultData.slice(startIndex, endIndex);
+        const paginatedData = filteredData.slice(startIndex, endIndex);
         
         setData(paginatedData);
         setLastRefresh(new Date());
@@ -313,8 +334,8 @@ const DetailedScheduleTable: React.FC = () => {
         setPagination(prev => ({
           ...prev,
           currentPage: currentPage,
-          totalPages: Math.ceil(resultData.length / itemsPerPage),
-          totalItems: resultData.length,
+          totalPages: Math.ceil(filteredData.length / itemsPerPage),
+          totalItems: filteredData.length,
           itemsPerPage: itemsPerPage,
         }));
         
