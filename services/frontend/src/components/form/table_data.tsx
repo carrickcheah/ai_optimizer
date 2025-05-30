@@ -1,4 +1,4 @@
-import React, { useState, useEffect, ReactElement } from 'react';
+import React, { useState, useEffect, ReactElement, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import './table_data.css';
 import { API_BASE_URL } from '../../config';
@@ -52,11 +52,11 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     currentPage: 1,
     totalPages: 1,
     totalItems: 0,
-    itemsPerPage: 50
+    itemsPerPage: 25 // Reduce default from 50 to 25 for faster loading
   });
   
-  // Available row options for pagination
-  const rowOptions = [50, 100, 250, 500];
+  // Available row options for pagination - optimized for performance
+  const rowOptions = [25, 50, 100]; // Removed 250, 500 to prevent slow loading
   
   // Format date to display in dd/MM/yyyy format
   const formatDate = (dateString: string | null): string => {
@@ -130,17 +130,20 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     }
   };
   
-  // Fetch data from API
-  const fetchData = async (currentPage = pagination.currentPage, currentItemsPerPage = pagination.itemsPerPage, currentSortField = sortField, currentSortOrder = sortOrder) => {
+  // Fetch data from API - memoized for performance
+  const fetchData = useCallback(async (currentPage = pagination.currentPage, currentItemsPerPage = pagination.itemsPerPage, currentSortField = sortField, currentSortOrder = sortOrder) => {
     setIsLoading(true);
     setError(null);
     
-    // Construct query parameters
+    // Construct query parameters with optimized rolling window
     const queryParams = new URLSearchParams({
       page: currentPage.toString(),
-      page_size: currentItemsPerPage.toString(),
+      page_size: Math.min(currentItemsPerPage, 100).toString(), // Cap at 100 for performance
       sort_field: currentSortField,
       sort_order: currentSortOrder,
+      // Rolling window optimization - focus on time-critical jobs
+      buffer_days: '5', // Reduce to 5 days for better performance
+      planning_horizon_days: '30', // Reduce to 30 days for faster loading
     });
 
     if (search) {
@@ -148,6 +151,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     }
 
     try {
+      const startTime = performance.now(); // Track loading time
       const response = await fetch(`${endpoint}?${queryParams.toString()}`);
       
       if (!response.ok) {
@@ -155,6 +159,10 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
       }
       
       const data = await response.json(); // Expecting { items: [], total_items: 0, ... }
+      const endTime = performance.now();
+      
+      console.log(`API call took ${(endTime - startTime).toFixed(2)}ms - Total items: ${data.total_items}, Config:`, data.data_loading_config);
+      
       setJobs(data.items || []); // Update jobs with data.items
       
       // Update pagination info from API response
@@ -171,7 +179,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [endpoint, search, pagination.currentPage, pagination.itemsPerPage, sortField, sortOrder]);
   
   // Handle sorting
   const handleSort = (field: string) => {
@@ -181,14 +189,32 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     fetchData(1, pagination.itemsPerPage, field, newOrder); // Fetch data from backend
   };
   
-  // Handle search - applyFilters will trigger fetchData
+  // Handle search with debouncing to prevent excessive API calls
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setSearch(searchTerm);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
+  
+  // Trigger fetch when search changes
+  useEffect(() => {
+    if (search !== undefined) { // Only fetch if search has been set (avoid initial load)
+      fetchData(1, pagination.itemsPerPage, sortField, sortOrder);
+    }
+  }, [search, fetchData, pagination.itemsPerPage, sortField, sortOrder]);
+  
+  // Handle search input change - now updates searchTerm instead of search directly
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(e.target.value);
+    setSearchTerm(e.target.value);
   };
   
-  // Handle apply filters button
+  // Handle apply filters button - now redundant with debouncing but kept for manual trigger
   const applyFilters = () => {
-    fetchData(1, pagination.itemsPerPage, sortField, sortOrder); // Fetch data from backend
+    setSearch(searchTerm); // Force immediate search
   };
   
   // Handle rows per page change
@@ -299,16 +325,21 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Removed dependencies to prevent multiple calls on sort/filter changes, fetchData handles it
   
-  // Filter and sort jobs - Now handled by backend, just return jobs
-  const getDisplayedJobs = () => {
+  // Filter and sort jobs - Now handled by backend, just return jobs - memoized for performance
+  const displayedJobs = useMemo(() => {
     return jobs; // Data is already sorted and paginated by backend
-  };
-  
-  // Calculate display rows
-  const displayedJobs = getDisplayedJobs();
+  }, [jobs]);
   
   return (
     <div className="container-fluid mt-4">
+      {/* Performance info display */}
+      {!isLoading && !error && (
+        <div className="alert alert-info mb-3">
+          <i className="fas fa-info-circle me-2"></i>
+          {`Showing ${displayedJobs.length} jobs with optimized rolling window (5-day buffer, 30-day horizon). Check console for performance metrics.`}
+        </div>
+      )}
+      
       {/* Error message display */}
       {error && (
         <div className="alert alert-danger alert-dismissible fade show" role="alert">
@@ -345,7 +376,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       id="searchInput" 
                       className="form-control" 
                       placeholder="Search job, process code..." 
-                      value={search}
+                      value={searchTerm}
                       onChange={handleSearch}
                       onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                     />

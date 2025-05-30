@@ -46,25 +46,61 @@ def schedule_jobs(
     machines: List[str], 
     setup_times: Optional[Dict] = None, 
     enforce_sequence: bool = True, 
-    time_limit_seconds: int = 300, 
-    max_operators: Optional[int] = None
+    time_limit_seconds: int = 30,  # Reduced from 300 to 30 seconds
+    max_operators: Optional[int] = None,
+    max_jobs_limit: int = 200,  # New parameter to limit problem size
+    planning_horizon_days: int = 14  # New parameter to limit planning horizon
 ) -> Dict[str, Any]:
     """
-    Schedule jobs using Google's CP-SAT solver.
+    Schedule jobs using Google's CP-SAT solver with performance optimizations.
     
     Args:
         jobs: List of job dictionaries with job_id, rsc_code, hours_need, etc.
         machines: List of machine names or machine dictionaries with MachineName_v key
         setup_times: Optional setup times (not used in CP-SAT)
         enforce_sequence: Whether to enforce job sequence constraints
-        time_limit_seconds: Solver time limit in seconds
+        time_limit_seconds: Solver time limit in seconds (default: 30s for performance)
         max_operators: Maximum number of operators (optional)
+        max_jobs_limit: Maximum number of jobs to process for performance (default: 200)
+        planning_horizon_days: Planning horizon in days (default: 14 days)
         
     Returns:
         Schedule dictionary with results and metadata
     """
     logger.info(f"Using CP-SAT solver to schedule {len(jobs)} jobs on {len(machines)} machines")
     start_time = time.time()
+    
+    # Performance optimization: Filter and limit jobs
+    current_time_epoch = datetime_to_epoch(datetime.now())
+    horizon_cutoff_epoch = current_time_epoch + (planning_horizon_days * 24 * 3600)  # Convert days to seconds
+    
+    # Filter jobs by planning horizon and priority
+    filtered_jobs = []
+    for job in jobs:
+        # Include job if it's within planning horizon or high priority
+        lcd_date_epoch = job.get('lcd_date_epoch')
+        priority = job.get('priority', 5)  # Default to low priority
+        
+        include_job = True
+        
+        # Apply horizon filter for non-critical jobs
+        if lcd_date_epoch and priority > 2:  # Only filter low/medium priority jobs
+            if lcd_date_epoch > horizon_cutoff_epoch:
+                include_job = False
+                
+        if include_job:
+            filtered_jobs.append(job)
+    
+    # Limit total jobs for performance
+    if len(filtered_jobs) > max_jobs_limit:
+        # Prioritize by urgency and priority
+        filtered_jobs = sorted(filtered_jobs, key=lambda x: (
+            x.get('priority', 5),  # Lower priority number = higher priority
+            x.get('lcd_date_epoch', current_time_epoch + 999999)  # Earlier due date = higher priority
+        ))[:max_jobs_limit]
+        logger.warning(f"Limited to {max_jobs_limit} jobs for performance (from {len(jobs)} total)")
+    
+    logger.info(f"Performance filtering: {len(jobs)} → {len(filtered_jobs)} jobs (horizon: {planning_horizon_days} days, limit: {max_jobs_limit})")
     
     # Normalize machines list - handle both string and dictionary formats
     if machines and isinstance(machines[0], dict):
@@ -76,9 +112,9 @@ def schedule_jobs(
     # Initialize the CP-SAT model
     model = cp_model.CpModel()
     
-    # Filter valid jobs
+    # Filter valid jobs from the already filtered set
     valid_jobs = [
-        job for job in jobs 
+        job for job in filtered_jobs 
         if isinstance(job, dict) and job.get('job_id') and job.get('rsc_code')
     ]
     
@@ -545,47 +581,110 @@ def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_
     return objective_terms
 
 def _solve_model(model, time_limit_seconds, logger):
-    """Solve the CP-SAT model and return results."""
+    """Solve the CP-SAT model with performance optimizations."""
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = float(time_limit_seconds)
-    solver.parameters.log_search_progress = True
-    solver.parameters.num_search_workers = os.cpu_count() or 4
     
-    logger.info(f"Solver configured: time_limit={time_limit_seconds}s, workers={solver.parameters.num_search_workers}")
+    # Performance optimizations for faster solving
+    solver.parameters.max_time_in_seconds = float(time_limit_seconds)
+    
+    # CRITICAL: Disable verbose logging that was causing the flood
+    solver.parameters.log_search_progress = False
+    solver.parameters.log_to_stdout = False
+    
+    # Advanced solver parameters for better performance
+    solver.parameters.num_search_workers = min(os.cpu_count() or 4, 8)  # Cap workers at 8
+    solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH  # Better search strategy
+    solver.parameters.cp_model_presolve = True  # Enable preprocessing
+    solver.parameters.linearization_level = 2  # More aggressive linearization
+    
+    # Gap limits for early termination when solution is good enough
+    solver.parameters.relative_gap_limit = 0.02  # Stop at 2% gap
+    solver.parameters.absolute_gap_limit = 1000  # Or absolute gap of 1000
+    
+    # Performance monitoring
+    solver.parameters.cp_model_probing_level = 0  # Disable probing for speed
+    solver.parameters.symmetry_level = 1  # Reduce symmetry breaking overhead
+    
+    logger.info(f"Solver configured: time_limit={time_limit_seconds}s, workers={solver.parameters.num_search_workers}, "
+                f"gap_limits=[rel:2%, abs:1000], logging=disabled")
     
     start_solve_time = time.time()
     status = solver.Solve(model)
     solve_time = time.time() - start_solve_time
     
-    logger.info(f"Solver finished with status: {solver.StatusName(status)} in {solve_time:.2f} seconds")
+    # Enhanced logging with performance metrics
+    if status == cp_model.OPTIMAL:
+        logger.info(f"✅ OPTIMAL solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
+    elif status == cp_model.FEASIBLE:
+        logger.info(f"✅ FEASIBLE solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
+    elif status == cp_model.UNKNOWN:
+        logger.warning(f"⏱️  Solver timed out after {solve_time:.2f}s - may need problem size reduction")
+    elif status == cp_model.INFEASIBLE:
+        logger.error(f"❌ INFEASIBLE problem in {solve_time:.2f}s - constraints cannot be satisfied")
+    else:
+        logger.error(f"❌ Solver failed with status: {solver.StatusName(status)} in {solve_time:.2f}s")
+    
+    # Performance warnings
+    if solve_time > 25:
+        logger.warning(f"⚠️  Solver took {solve_time:.1f}s (>25s) - consider reducing problem size")
+    
+    # Log solver statistics for performance tuning
+    try:
+        stats = solver.ResponseStats()
+        logger.debug(f"Solver stats: {stats}")
+    except Exception as e:
+        logger.debug(f"Could not get solver stats: {e}")
     
     return {
         'solver': solver,
         'status': status,
         'solve_time': solve_time,
-        'model': model
+        'model': model,
+        'performance_warning': solve_time > 25
     }
 
 def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_dependencies, 
                           start_date_processes, jobs_with_due_dates, enforce_sequence, logger):
-    """Process the solver results and create the final schedule."""
+    """Process the solver results and create the final schedule with performance metrics."""
     solver = solver_result['solver']
     status = solver_result['status']
     solve_time = solver_result['solve_time']
+    performance_warning = solver_result.get('performance_warning', False)
     
-    # Prepare results
-    results = {
-        '_metadata': {
-            'status': solver.StatusName(status),
-            'solver_time': solve_time,
-            'objective_value': solver.ObjectiveValue() if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
-            'reference_time_epoch': reference_time_epoch,
-            'job_dependencies': job_dependencies,
-            'start_date_constraints': start_date_processes,
-            'due_dates_considered': jobs_with_due_dates,
-            'solver_stats': solver.ResponseStats()
+    # Enhanced metadata with performance tracking
+    metadata = {
+        'status': solver.StatusName(status),
+        'solver_time': solve_time,
+        'objective_value': solver.ObjectiveValue() if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
+        'reference_time_epoch': reference_time_epoch,
+        'job_dependencies': job_dependencies,
+        'start_date_constraints': start_date_processes,
+        'due_dates_considered': jobs_with_due_dates,
+        'solver_stats': solver.ResponseStats(),
+        'performance_metrics': {
+            'solve_time_seconds': solve_time,
+            'is_optimal': status == cp_model.OPTIMAL,
+            'is_feasible': status in [cp_model.OPTIMAL, cp_model.FEASIBLE],
+            'timed_out': status == cp_model.UNKNOWN,
+            'performance_warning': performance_warning,
+            'num_jobs_processed': len(all_tasks),
+            'solver_efficiency': 'FAST' if solve_time < 10 else 'MEDIUM' if solve_time < 25 else 'SLOW'
         }
     }
+    
+    # Add performance recommendations
+    recommendations = []
+    if performance_warning:
+        recommendations.append("Consider reducing planning horizon or job limit for faster solving")
+    if status == cp_model.UNKNOWN:
+        recommendations.append("Solver timed out - try smaller problem size or longer time limit")
+    if solve_time < 5 and len(all_tasks) < 50:
+        recommendations.append("Problem size is small - could increase planning horizon")
+        
+    metadata['recommendations'] = recommendations
+    
+    # Prepare results
+    results = {'_metadata': metadata}
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         logger.info(f"Solution found. Objective value: {solver.ObjectiveValue()}")

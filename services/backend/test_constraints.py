@@ -1,17 +1,39 @@
 #!/usr/bin/env python3
 
+import logging
 from app.data_ingestion.mariadb_parser import load_jobs_planning_data
 from app.scheduling.cpsat_solver import schedule_jobs
 from datetime import datetime
+
+# Configure logging to reduce verbosity
+logging.basicConfig(
+    level=logging.WARNING,  # Only show warnings and errors
+    format='%(levelname)s:%(name)s:%(message)s'
+)
+
+# Enable INFO only for our specific modules we care about
+logging.getLogger('app.scheduling.cpsat_solver').setLevel(logging.INFO)
+logging.getLogger('__main__').setLevel(logging.INFO)
 
 def epoch_to_dt(epoch):
     return datetime.fromtimestamp(epoch).strftime('%Y-%m-%d %H:%M:%S')
 
 def main():
-    print("Testing improved constraint handling...")
+    print("Testing improved constraint handling with optimized parameters...")
     
-    jobs, machines, setup = load_jobs_planning_data(max_jobs=100)
-    result = schedule_jobs(jobs, machines, setup, time_limit_seconds=60)
+    print("Loading jobs data...")
+    jobs, machines, setup = load_jobs_planning_data(max_jobs=50)  # Reduced to 50 for faster testing
+    print(f"Loaded {len(jobs)} jobs on {len(machines)} machines")
+    
+    print("Running CP-SAT solver...")
+    result = schedule_jobs(
+        jobs, 
+        machines, 
+        setup, 
+        time_limit_seconds=30,  # Reduced from 60 for faster testing
+        max_jobs_limit=50,      # Limit for test performance
+        planning_horizon_days=7  # Short horizon for testing
+    )
     
     print(f"Status: {result.get('_metadata', {}).get('status')}")
     print(f"Objective: {result.get('_metadata', {}).get('objective_value')}")

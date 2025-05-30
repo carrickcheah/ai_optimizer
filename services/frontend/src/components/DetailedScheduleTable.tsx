@@ -28,6 +28,7 @@ const formatColumnHeader = (header: any): React.ReactNode => {
 interface ScheduleTableRow {
   op_id: string;
   job_id: string;
+  plan_date?: string;  // New field for plan date
   lcd_date_str?: string;
   LCD_DATE?: string;
   lcd_date?: string;
@@ -36,7 +37,7 @@ interface ScheduleTableRow {
   job?: string;
   process_code?: string;
   job_dependency?: string;
-  rsc_location?: string;
+  rsc_location?: string;  // Will not be displayed but keep in interface
   rsc_code?: string;
   number_operator?: number;
   job_quantity?: number;
@@ -127,6 +128,52 @@ const formatLCDDate = (dateTimeStr: string | undefined): React.ReactNode => {
   }
 };
 
+// Helper function specifically for LCD Date and Req Start format (YYYY-MM-DD \n HH:MM)
+const formatDateTimeSpecial = (dateTimeStr: string | undefined): React.ReactNode => {
+  if (!dateTimeStr || dateTimeStr === 'N/A') return 'N/A';
+  
+  try {
+    let date: Date | null = null;
+    
+    // Try parsing different possible formats
+    if (dateTimeStr.includes('/')) {
+      // Handle dd/mm/yy HH:MM format
+      const match = dateTimeStr.match(/^(\d{2})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/);
+      if (match) {
+        const [, day, month, year, hours, minutes] = match;
+        const fullYear = 2000 + parseInt(year); // Convert yy to yyyy
+        date = new Date(fullYear, parseInt(month) - 1, parseInt(day), parseInt(hours), parseInt(minutes));
+      }
+    } else if (dateTimeStr.includes('-')) {
+      // Handle YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM format
+      date = new Date(dateTimeStr);
+    }
+    
+    if (date && !isNaN(date.getTime())) {
+      // Format as YYYY-MM-DD on top line, HH:MM on bottom line
+      const dateStr = date.getFullYear() + '-' + 
+                     (date.getMonth() + 1).toString().padStart(2, '0') + '-' + 
+                     date.getDate().toString().padStart(2, '0');
+      const timeStr = date.getHours().toString().padStart(2, '0') + ':' + 
+                     date.getMinutes().toString().padStart(2, '0');
+      
+      return (
+        <div className="date-time-display">
+          <div className="date-part">{dateStr}</div>
+          <div className="time-part">  {timeStr}</div>
+        </div>
+      );
+    }
+    
+    // If parsing fails, return the original value
+    return dateTimeStr;
+    
+  } catch (error) {
+    console.warn('Error formatting date:', dateTimeStr, error);
+    return dateTimeStr;
+  }
+};
+
 const columnHelper = createColumnHelper<ScheduleTableRow>();
 
 // Define columns based on chart_two.py's table structure and desired fields
@@ -137,7 +184,12 @@ const columns = [
     header: 'No',
     cell: ({ row }) => row.index + 1,
   },
-  columnHelper.accessor('job_id', { header: 'Job ID', cell: info => info.getValue() }),
+  // Add Plan Date column
+  columnHelper.accessor('plan_date', { 
+    header: 'Plan Date', 
+    cell: info => formatDateTime(info.getValue()) 
+  }),
+  // Removed Job ID column as requested
   columnHelper.accessor('scheduled_start_time_str', { 
     header: 'Start\nTime', 
     cell: info => formatDateTime(info.getValue()) 
@@ -152,12 +204,12 @@ const columns = [
       const row = info.row.original;
       // Try different field names that might contain LCD date
       const lcdValue = row.lcd_date_str || row.LCD_DATE || row.lcd_date || row.due_date || row.target_date;
-      return formatLCDDate(lcdValue);
+      return formatDateTimeSpecial(lcdValue);
     }
   }),
   columnHelper.accessor('start_date_input_str', { 
     header: 'Req. Start', 
-    cell: info => formatDateTime(info.getValue())
+    cell: info => formatDateTimeSpecial(info.getValue())
   }),
   columnHelper.accessor('job_dependency', { 
     header: 'Depend', 
@@ -173,7 +225,7 @@ const columns = [
   columnHelper.accessor('job', { header: 'Job Name', cell: info => info.getValue() || 'N/A' }),
   columnHelper.accessor('process_code', { header: 'Process Code', cell: info => info.getValue() || 'N/A' }),
   columnHelper.accessor('rsc_code', { header: 'Resource\nCode', cell: info => info.getValue() || 'N/A' }),
-  columnHelper.accessor('rsc_location', { header: 'Location', cell: info => info.getValue() || 'N/A' }),
+  // Removed Location column as requested
   columnHelper.accessor('number_operator', { header: 'Opr', cell: info => info.getValue() }),
   columnHelper.accessor('job_quantity', { header: 'Job Qty', cell: info => info.getValue() }),
   columnHelper.accessor('expect_output_per_hour', { header: 'Output\nPer Hr', cell: info => info.getValue() }),
@@ -484,6 +536,9 @@ const DetailedScheduleTable: React.FC = () => {
       <div className="card">
         <div className="card-header">
           <h2>Detailed Production Schedule</h2>
+          <div className="schedule-subtitle">
+            Showing 50 jobs with optimized rolling window (7-day buffer, 30-day horizon)
+          </div>
         </div>
         <div className="card-body">
           <div className="row mb-3">

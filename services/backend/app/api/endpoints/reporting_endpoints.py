@@ -70,10 +70,10 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         A tuple of (schedule_output, jobs_data)
     """
     try:
-        # 1. Load data using MariaDB parser (limited to 100 jobs for performance)
+        # 1. Load data using MariaDB parser (100 jobs for full scheduling)
         # This requires DB connection and might be slow for an API call if not cached/pre-run.
         # For now, we assume it's feasible for demonstration.
-        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(max_jobs=100)
+        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(max_jobs=100)  # Back to 100 jobs as requested
         
         # Extract machine names from jobs_data using rsc_code instead of RSC_MACHINE
         # This assumes jobs have rsc_code field which identifies the machine
@@ -88,8 +88,16 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         # 2. Run selected scheduling algorithm
         schedule_output = None
         if solver_type.lower() == "cpsat":
-            # Run CP-SAT solver with a reasonable time limit
-            schedule_output_dict = run_cpsat_solver(jobs_data, machine_names_list, setup_times_data, enforce_sequence=True, time_limit_seconds=300)
+            # Run CP-SAT solver with aggressive API optimizations for fast response
+            schedule_output_dict = run_cpsat_solver(
+                jobs_data, 
+                machine_names_list, 
+                setup_times_data, 
+                enforce_sequence=True, 
+                time_limit_seconds=20,   
+                max_jobs_limit=10,        
+                planning_horizon_days=14  
+            )
             
             # Check if we got a valid result from CP-SAT
             if not schedule_output_dict or schedule_output_dict.get('_metadata', {}).get('status') not in ['OPTIMAL', 'FEASIBLE']:

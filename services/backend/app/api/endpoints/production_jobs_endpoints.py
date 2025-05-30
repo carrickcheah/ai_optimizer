@@ -169,21 +169,36 @@ async def get_production_jobs(
 @router.get("/production-schedule", 
            response_model=Dict[str, Any],
            summary="Get production schedule data",
-           description="Get production schedule from joined tables with pagination, sorting, and search")
+           description="Get production schedule from joined tables with rolling window based on LCD_DATE")
 @monitor_performance
 async def get_production_schedule(
     page: int = Query(1, ge=1, description="Page number for pagination"),
     page_size: int = Query(50, ge=1, le=500, description="Number of items per page"),
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by (e.g., LCD_DATE, JOB, PROCESS_CODE)"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
-    search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION")
+    search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION"),
+    buffer_days: int = Query(7, ge=1, le=30, description="Days before today for late jobs (default: 7)"),
+    planning_horizon_days: int = Query(60, ge=7, le=365, description="Days ahead for planning horizon (default: 60)")
 ):
-    """Get production schedule data with pagination, sorting, and search."""
+    """
+    Get production schedule data with intelligent rolling window based on LCD_DATE.
+    
+    Data Loading Strategy:
+    - Urgent/Late Jobs: lcd_date < TODAY (overdue jobs that need attention)
+    - Buffer Period: lcd_date BETWEEN (TODAY - buffer_days) AND TODAY (recently overdue)
+    - Planning Window: lcd_date BETWEEN TODAY AND (TODAY + planning_horizon_days)
+    
+    Excludes:
+    - Completed jobs (DocStatus_c = 'CP' or QtyStatus_c = 'FF')
+    - Very old jobs beyond buffer period
+    - Far future jobs beyond planning horizon
+    """
     with get_db_connection_from_pool() as conn:
         cursor = conn.cursor(dictionary=True)
         
         # Define allowed sortable columns to prevent SQL injection and map to SQL expressions if needed
         allowed_sort_fields = {
+            "PLAN_DATE": "jot.CreateDate_dt",
             "LCD_DATE": "jot.TargetDate_dd",
             "JOB": "jot.DocRef_v",
             "PROCESS_CODE": "jop.Task_v",
@@ -224,44 +239,52 @@ async def get_production_schedule(
             params.extend([search_term_like, search_term_like, search_term_like, search_term_like])
 
         try:
-            base_select_fields = """ \n                jot.TargetDate_dd AS LCD_DATE, \
-                jot.DocRef_v AS JOB, \
-                jop.Task_v AS PROCESS_CODE, \
-                '' AS RSC_LOCATION, \
-                jop.Machine_v AS RSC_CODE, \
-                jop.ManCount_i AS NUMBER_OPERATOR, \
-                jot.JoQty_d AS JOB_QUANTITY, \
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
-                     THEN jop.CapQty_d * 60 \
-                     ELSE NULL END AS EXPECT_OUTPUT_PER_HOUR,\
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
-                     THEN jot.JoQty_d / (jop.CapQty_d * 60) \
-                     ELSE NULL END AS HOURS_NEED,\
-                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 \
-                     THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)\
-                     WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 \
-                     THEN jop.LeadTime_d \
-                     ELSE NULL END AS DAY_NEED,\
-                jop.SetupTime_d AS SETTING_HOURS, \
-                1 AS BREAK_HOURS, \
-                8 AS NO_PROD, \
-                '' AS START_DATE, \
-                di.Qty_d AS ACCUMULATED_DAILY_OUTPUT, \
-                (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS BALANCE_QUANTITY, \
-                jop.TxnId_i,\
-                jot.MaterialDate_dd AS MATERIAL_ARRIVAL,\
-                1 AS JOB_DEPENDENCY,\
-                3 AS PRIORITY,\
+            base_select_fields = """ 
+                jot.CreateDate_dt AS plan_date,
+                jot.TargetDate_dd AS LCD_DATE, 
+                jot.DocRef_v AS JOB, 
+                jop.Task_v AS PROCESS_CODE, 
+                '' AS RSC_LOCATION, 
+                jop.Machine_v AS RSC_CODE, 
+                jop.ManCount_i AS NUMBER_OPERATOR, 
+                jot.JoQty_d AS JOB_QUANTITY, 
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                     THEN jop.CapQty_d * 60 
+                     ELSE NULL END AS EXPECT_OUTPUT_PER_HOUR,
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                     THEN jot.JoQty_d / (jop.CapQty_d * 60) 
+                     ELSE NULL END AS HOURS_NEED,
+                CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
+                     THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
+                     WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 
+                     THEN jop.LeadTime_d 
+                     ELSE NULL END AS DAY_NEED,
+                jop.SetupTime_d AS SETTING_HOURS, 
+                1 AS BREAK_HOURS, 
+                8 AS NO_PROD, 
+                '' AS START_DATE, 
+                di.Qty_d AS ACCUMULATED_DAILY_OUTPUT, 
+                (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS BALANCE_QUANTITY, 
+                jop.TxnId_i,
+                jot.MaterialDate_dd AS MATERIAL_ARRIVAL,
+                1 AS JOB_DEPENDENCY,
+                3 AS PRIORITY,
                 0 AS REDUCE_OPERATION_HOURS
             """
             from_join_clauses = """ \n            FROM tbl_jo_process AS jop \
             INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i \
             LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
             """
-            base_where_clauses = """ \n            WHERE jot.Void_c != 1 \
+            
+            # Intelligent Rolling Window Strategy based on LCD_DATE
+            base_where_clauses = f""" \n            WHERE jot.Void_c != 1 \
                 AND jot.DocStatus_c != 'CP' \
                 AND jop.QtyStatus_c != 'FF' \
-                AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+                AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL {buffer_days} DAY) AND DATE_ADD(CURDATE(), INTERVAL {planning_horizon_days} DAY) \
+                AND (
+                    (jot.TargetDate_dd < CURDATE() AND (jot.JoQty_d - COALESCE(di.Qty_d, 0)) > 0) \
+                    OR jot.TargetDate_dd >= CURDATE()
+                )
             """
 
             # Count query
@@ -288,14 +311,22 @@ async def get_production_schedule(
             cursor.execute(data_query, tuple(data_query_params))
             results = cursor.fetchall()
             
-            logger.info(f"Retrieved {len(results)} production schedule records for page {page}/{total_pages}, sort: {sql_sort_field} {sql_sort_order}, search: '{search}'")
+            logger.info(f"Retrieved {len(results)} production schedule records (buffer: {buffer_days}d, horizon: {planning_horizon_days}d) for page {page}/{total_pages}, sort: {sql_sort_field} {sql_sort_order}, search: '{search}'")
             
             return {
                 "items": results,
                 "total_items": total_items,
                 "page": page,
                 "page_size": page_size,
-                "total_pages": total_pages
+                "total_pages": total_pages,
+                "data_loading_config": {
+                    "buffer_days": buffer_days,
+                    "planning_horizon_days": planning_horizon_days,
+                    "date_range": {
+                        "start_date": f"TODAY - {buffer_days} days",
+                        "end_date": f"TODAY + {planning_horizon_days} days"
+                    }
+                }
             }
             
         except mysql.connector.Error as e:
@@ -472,5 +503,109 @@ async def get_production_jobs_stats():
         except mysql.connector.Error as e:
             logger.error(f"Database error fetching job statistics: {e}")
             raise HTTPException(status_code=500, detail="Failed to fetch job statistics")
+        finally:
+            cursor.close()
+
+@router.get("/data-loading-stats", 
+           response_model=Dict[str, Any],
+           summary="Get data loading statistics",
+           description="Get statistics and recommendations for adaptive horizon management")
+@monitor_performance
+async def get_data_loading_stats():
+    """
+    Get data loading statistics and adaptive horizon recommendations.
+    
+    Analyzes job patterns to suggest optimal buffer_days and planning_horizon_days
+    based on:
+    - Average job lead times
+    - Job distribution patterns
+    - System performance metrics
+    """
+    with get_db_connection_from_pool() as conn:
+        cursor = conn.cursor(dictionary=True)
+        
+        try:
+            # Calculate average lead time and job distribution
+            stats_query = """
+            SELECT 
+                COUNT(*) as total_jobs,
+                AVG(DATEDIFF(jot.TargetDate_dd, jot.CreateDate_dd)) as avg_lead_time_days,
+                MIN(jot.TargetDate_dd) as earliest_deadline,
+                MAX(jot.TargetDate_dd) as latest_deadline,
+                COUNT(CASE WHEN jot.TargetDate_dd < CURDATE() THEN 1 END) as overdue_jobs,
+                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as jobs_next_30_days,
+                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY) THEN 1 END) as jobs_next_60_days,
+                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) THEN 1 END) as jobs_next_90_days,
+                COUNT(CASE WHEN jot.DocStatus_c != 'CP' AND jop.QtyStatus_c != 'FF' THEN 1 END) as active_jobs
+            FROM tbl_jo_process AS jop 
+            INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+            WHERE jot.Void_c != 1
+            """
+            
+            cursor.execute(stats_query)
+            stats = cursor.fetchone()
+            
+            # Calculate recommendations based on statistics
+            avg_lead_time = stats['avg_lead_time_days'] or 14  # Default to 2 weeks if null
+            
+            # Adaptive horizon logic (as per requirements)
+            if avg_lead_time <= 14:  # 2 weeks
+                recommended_horizon = 42  # 6 weeks
+            elif avg_lead_time <= 28:  # 4 weeks  
+                recommended_horizon = 84  # 12 weeks
+            else:
+                recommended_horizon = 112  # 16 weeks
+                
+            # Buffer days recommendation (should cover most urgent overdue jobs)
+            recommended_buffer = min(max(int(avg_lead_time * 0.3), 3), 14)  # 30% of lead time, min 3, max 14 days
+            
+            # Problem size estimation for OR-Tools
+            estimated_variables_per_job = 5  # Conservative estimate
+            estimated_or_tools_variables = stats['active_jobs'] * estimated_variables_per_job
+            
+            performance_warnings = []
+            if estimated_or_tools_variables > 10000:
+                performance_warnings.append("High variable count may impact OR-Tools performance")
+            if stats['overdue_jobs'] > 100:
+                performance_warnings.append("High number of overdue jobs detected")
+            if avg_lead_time > 60:
+                performance_warnings.append("Very long average lead times detected")
+            
+            return {
+                "statistics": {
+                    "total_jobs": stats['total_jobs'],
+                    "active_jobs": stats['active_jobs'],
+                    "overdue_jobs": stats['overdue_jobs'],
+                    "avg_lead_time_days": round(avg_lead_time, 1),
+                    "job_distribution": {
+                        "next_30_days": stats['jobs_next_30_days'],
+                        "next_60_days": stats['jobs_next_60_days'], 
+                        "next_90_days": stats['jobs_next_90_days']
+                    },
+                    "date_range": {
+                        "earliest_deadline": stats['earliest_deadline'],
+                        "latest_deadline": stats['latest_deadline']
+                    }
+                },
+                "recommendations": {
+                    "buffer_days": recommended_buffer,
+                    "planning_horizon_days": recommended_horizon,
+                    "reasoning": {
+                        "buffer_logic": f"Based on {recommended_buffer/avg_lead_time*100:.0f}% of average lead time",
+                        "horizon_logic": f"Based on {avg_lead_time} day average lead time"
+                    }
+                },
+                "or_tools_optimization": {
+                    "estimated_variables": estimated_or_tools_variables,
+                    "performance_level": "optimal" if estimated_or_tools_variables < 5000 else "good" if estimated_or_tools_variables < 10000 else "warning",
+                    "solver_time_estimate": "< 30 seconds" if estimated_or_tools_variables < 5000 else "30-120 seconds" if estimated_or_tools_variables < 10000 else "> 2 minutes"
+                },
+                "warnings": performance_warnings,
+                "last_updated": datetime.now().isoformat()
+            }
+            
+        except mysql.connector.Error as e:
+            logger.error(f"Database error fetching data loading stats: {e}")
+            raise HTTPException(status_code=500, detail="Failed to fetch data loading statistics")
         finally:
             cursor.close() 

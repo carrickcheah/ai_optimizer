@@ -356,6 +356,7 @@ def prepare_detailed_schedule_table_data(schedule: Dict[str, Any], jobs_input_da
         
         row = {
             'job_id': job_id,
+            'plan_date': format_display_date(job.get('plan_date'), '%Y-%m-%d %H:%M:%S'),  # Use raw plan_date directly
             'scheduled_start_time_str': start_time_str,
             'scheduled_end_time_str': end_time_str,
             'lcd_date_str': format_display_date(job.get('lcd_date_epoch'), '%d/%m/%y %H:%M'),

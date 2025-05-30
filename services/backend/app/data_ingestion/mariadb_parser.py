@@ -104,7 +104,7 @@ def convert_datetime_to_epoch(dt_value):
         return int(sg_dt.timestamp())
         
     except Exception as e:
-        logger.error(f"Error converting datetime to epoch: {e} for value {dt_value}")
+        logger.debug(f"Error converting datetime to epoch: {e} for value {dt_value}")
         return None
         
 def load_jobs_planning_data(max_jobs: int = 100):
@@ -137,6 +137,7 @@ def load_jobs_planning_data(max_jobs: int = 100):
         # New complex SQL query joining three tables
         jobs_query = """
         SELECT
+            jot.CreateDate_dt AS plan_date,
             jot.TargetDate_dd AS lcd_date,
             jop.TxnId_i AS op_id,
             jot.DocRef_v AS job,
@@ -205,14 +206,18 @@ def load_jobs_planning_data(max_jobs: int = 100):
                 "job": job_value if job_value else composite_job_id
             }
             
+            # Handle plan_date directly without epoch conversion
+            if 'plan_date' in job_row and job_row['plan_date'] is not None:
+                job['plan_date'] = job_row['plan_date']  # Store raw datetime value
+            
             # Handle date field conversions
             for date_field in date_fields:
                 if date_field in job_row and job_row[date_field] is not None:
-                    # Debug: Log the raw value from database
-                    logger.info(f"Processing {date_field} for job {composite_job_id}: raw value = {job_row[date_field]}, type = {type(job_row[date_field])}")
+                    # Debug: Log the raw value from database (reduced verbosity)
+                    logger.debug(f"Processing {date_field} for job {composite_job_id}: raw value = {job_row[date_field]}, type = {type(job_row[date_field])}")
                     
                     epoch_value = convert_datetime_to_epoch(job_row[date_field])
-                    logger.info(f"Converted {date_field} to epoch: {epoch_value}")
+                    logger.debug(f"Converted {date_field} to epoch: {epoch_value}")
                     
                     if epoch_value is not None:
                         job[f"{date_field}_epoch"] = epoch_value
@@ -239,7 +244,7 @@ def load_jobs_planning_data(max_jobs: int = 100):
                             job['start_date_input_epoch'] = epoch_value
                             logger.debug(f"Set START_DATE constraint for job {composite_job_id}: {epoch_value}")
                     else:
-                        logger.warning(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")
+                        logger.debug(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")  # Reduced from WARNING to DEBUG for empty values
             
             # Handle resource code
             job["rsc_code"] = job_row.get("rsc_code", "DEFAULT") or "DEFAULT"
