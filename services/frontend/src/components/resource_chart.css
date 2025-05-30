@@ -170,6 +170,8 @@
   border: none;
   background: none;
   padding: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .flat-button-group button {
@@ -182,6 +184,8 @@
   margin: 0;
   border-radius: 0;
   text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .flat-button-group button.flat-active {
