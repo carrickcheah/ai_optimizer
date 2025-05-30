@@ -434,9 +434,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       tickformat: '%b %d',
-      dtick: 86400000 * 3,
-      // Force the range to show data from today to 7 days ahead for visibility
-      range: [new Date().toISOString(), new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+      dtick: 86400000,
+      tickangle: -45,
+      automargin: true,
     },
     yaxis: {
       title: 'Resource Code', 
@@ -498,12 +498,25 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         return intA - intB; // Numeric sort
       });
       
+      // Calculate the actual data range for 'all' timeframe
+      const allValidDates = sortedTasks
+        .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
+        .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+      
+      let xAxisRange: [string, string] | undefined = undefined;
+      if (allValidDates.length > 0) {
+        const allTimestamps = allValidDates.flatMap(([start, end]) => [start.getTime(), end.getTime()]);
+        const minDate = new Date(Math.min(...allTimestamps));
+        const maxDate = new Date(Math.max(...allTimestamps));
+        xAxisRange = [minDate.toISOString(), maxDate.toISOString()];
+      }
+      
       return {
         ...layout,
         height: Math.max(700, allResourceGroups.length * 50 + 200),
         xaxis: {
           ...layout.xaxis,
-          range: undefined // Don't restrict the range for 'all'
+          range: xAxisRange, // Set the actual data range
         },
         yaxis: {
           ...layout.yaxis,
@@ -629,7 +642,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       height: Math.max(700, filteredResourceGroups.length * 50 + 200),
       xaxis: {
         ...layout.xaxis,
-        range: xAxisRange
+        range: xAxisRange,
       },
       yaxis: {
         ...layout.yaxis,

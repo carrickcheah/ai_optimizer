@@ -277,3 +277,18 @@
   font-weight: 500;
   color: #495057;
 }
+
+/* X-axis date label styling */
+:global(.js-plotly-plot .plotly .xtick text) {
+  font-size: 12px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+:global(.js-plotly-plot .plotly .xaxislayer-above text) {
+  font-size: 12px !important;
+}
+
+/* Ensure proper spacing for angled text */
+:global(.js-plotly-plot .plotly .xtitle) {
+  font-size: 14px !important;
+}
