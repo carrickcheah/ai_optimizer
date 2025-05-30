@@ -356,7 +356,9 @@ const GanttChartDisplay: React.FC = () => {
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       tickformat: '%b %d',
-      dtick: 86400000 * 3, // 3 days between ticks
+      dtick: 86400000,
+      tickangle: -45,
+      automargin: true,
     },
     yaxis: {
       title: 'Jobs',
@@ -374,16 +376,47 @@ const GanttChartDisplay: React.FC = () => {
 
   // Calculate layout based on filtered tasks
   const calculateFilteredLayout = () => {
-    // For "all" timeframe, we can just use all tasks
+    // For "all" timeframe, calculate actual data range
     if (timeRange === 'all') {
+      // Calculate the actual data range for 'all' timeframe
+      const allValidDates = sortedTasks
+        .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
+        .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+      
+      let xAxisConfig;
+      if (allValidDates.length > 0) {
+        const allTimestamps = allValidDates.flatMap(([start, end]) => [start.getTime(), end.getTime()]);
+        const minDate = new Date(Math.min(...allTimestamps));
+        const maxDate = new Date(Math.max(...allTimestamps));
+        const xAxisRange = [minDate.toISOString(), maxDate.toISOString()];
+        
+        // Check if data spans less than 2 days, use hour format
+        const timeSpanHours = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60);
+        if (timeSpanHours <= 48) {
+          xAxisConfig = {
+            ...layout.xaxis,
+            range: xAxisRange,
+            tickformat: '%H:%M', // Show hours like "08:00"
+            dtick: 3600000 * 2, // 2-hour intervals for short data
+          };
+        } else {
+          xAxisConfig = {
+            ...layout.xaxis,
+            range: xAxisRange,
+            tickformat: '%b %d', // Show dates like "May 30"
+            dtick: 86400000, // Daily intervals
+          };
+        }
+      } else {
+        xAxisConfig = {
+          ...layout.xaxis,
+        };
+      }
+      
       return {
         ...layout,
         height: Math.max(700, sortedTasks.length * 30 + 150),
-        xaxis: {
-          ...layout.xaxis,
-          // Don't set a range for 'all' to show the entire dataset
-          range: undefined 
-        },
+        xaxis: xAxisConfig,
         shapes: [{
           type: 'line',
           x0: new Date().toISOString(),
@@ -478,13 +511,30 @@ const GanttChartDisplay: React.FC = () => {
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
     
+    // Configure x-axis format based on timeframe
+    let xAxisConfig;
+    if (['1d', '2d', '3d'].includes(timeRange)) {
+      // For short timeframes, show hours
+      xAxisConfig = {
+        ...layout.xaxis,
+        range: xAxisRange,
+        tickformat: '%H:%M', // Show hours like "08:00"
+        dtick: 3600000 * 4, // 4-hour intervals
+      };
+    } else {
+      // For longer timeframes, show dates
+      xAxisConfig = {
+        ...layout.xaxis,
+        range: xAxisRange,
+        tickformat: '%b %d', // Show dates like "May 30"
+        dtick: 86400000, // Daily intervals
+      };
+    }
+    
     return {
       ...layout,
       height: adjustedHeight,
-      xaxis: {
-        ...layout.xaxis,
-        range: xAxisRange
-      },
+      xaxis: xAxisConfig,
       shapes: [{
         type: 'line',
         x0: new Date().toISOString(),
