@@ -503,21 +503,40 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
         .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
       
-      let xAxisRange: [string, string] | undefined = undefined;
+      let xAxisConfig;
       if (allValidDates.length > 0) {
         const allTimestamps = allValidDates.flatMap(([start, end]) => [start.getTime(), end.getTime()]);
         const minDate = new Date(Math.min(...allTimestamps));
         const maxDate = new Date(Math.max(...allTimestamps));
-        xAxisRange = [minDate.toISOString(), maxDate.toISOString()];
+        const xAxisRange = [minDate.toISOString(), maxDate.toISOString()];
+        
+        // Check if data spans less than 2 days, use hour format
+        const timeSpanHours = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60);
+        if (timeSpanHours <= 48) {
+          xAxisConfig = {
+            ...layout.xaxis,
+            range: xAxisRange,
+            tickformat: '%H:%M', // Show hours like "08:00"
+            dtick: 3600000 * 2, // 2-hour intervals for short data
+          };
+        } else {
+          xAxisConfig = {
+            ...layout.xaxis,
+            range: xAxisRange,
+            tickformat: '%b %d', // Show dates like "May 30"
+            dtick: 86400000, // Daily intervals
+          };
+        }
+      } else {
+        xAxisConfig = {
+          ...layout.xaxis,
+        };
       }
       
       return {
         ...layout,
         height: Math.max(700, allResourceGroups.length * 50 + 200),
-        xaxis: {
-          ...layout.xaxis,
-          range: xAxisRange, // Set the actual data range
-        },
+        xaxis: xAxisConfig,
         yaxis: {
           ...layout.yaxis,
           type: 'category',
@@ -637,13 +656,30 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
     
+    // Configure x-axis format based on timeframe
+    let xAxisConfig;
+    if (['1d', '2d', '3d'].includes(timeRange)) {
+      // For short timeframes, show hours
+      xAxisConfig = {
+        ...layout.xaxis,
+        range: xAxisRange,
+        tickformat: '%H:%M', // Show hours like "08:00"
+        dtick: 3600000 * 4, // 4-hour intervals
+      };
+    } else {
+      // For longer timeframes, show dates
+      xAxisConfig = {
+        ...layout.xaxis,
+        range: xAxisRange,
+        tickformat: '%b %d', // Show dates like "May 30"
+        dtick: 86400000, // Daily intervals
+      };
+    }
+    
     return {
       ...layout,
       height: Math.max(700, filteredResourceGroups.length * 50 + 200),
-      xaxis: {
-        ...layout.xaxis,
-        range: xAxisRange,
-      },
+      xaxis: xAxisConfig,
       yaxis: {
         ...layout.yaxis,
         type: 'category',
