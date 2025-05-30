@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file at project root
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../../../../.env'))
 
 # Get database configuration from environment variables
 DB_HOST = os.getenv("MARIADB_HOST")
@@ -107,12 +107,14 @@ def convert_datetime_to_epoch(dt_value):
         logger.debug(f"Error converting datetime to epoch: {e} for value {dt_value}")
         return None
         
-def load_jobs_planning_data(max_jobs: int = 100):
+def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning_horizon_days: int = 60):
     """
     Load job data for production planning from MariaDB using joined tables.
     
     Args:
-        max_jobs: Maximum number of jobs to load (default: 100)
+        max_jobs: Maximum number of jobs to load (default: 1000)
+        buffer_days: Days before today for late jobs (default: 7)
+        planning_horizon_days: Days ahead for planning horizon (default: 60)
         
     Returns:
         Tuple of (jobs_list, machines_list, setup_times_dict) where:
@@ -175,12 +177,12 @@ def load_jobs_planning_data(max_jobs: int = 100):
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c != 'CP' 
             AND jop.QtyStatus_c != 'FF' 
-            AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+            AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL %s DAY) AND DATE_ADD(CURDATE(), INTERVAL %s DAY)
         ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
         LIMIT %s
         """
         
-        cursor.execute(jobs_query, (max_jobs,))
+        cursor.execute(jobs_query, (buffer_days, planning_horizon_days, max_jobs))
         raw_jobs = cursor.fetchall()
         logger.info(f"Fetched {len(raw_jobs)} raw job records from joined tables (requested max: {max_jobs}).")
         
@@ -341,7 +343,7 @@ if __name__ == '__main__':
     logger.info("Testing mariadb_parser.py directly")
     
     try:
-        jobs, machines, setup_times = load_jobs_planning_data(max_jobs=100)
+        jobs, machines, setup_times = load_jobs_planning_data(max_jobs=1000, buffer_days=7, planning_horizon_days=60)
         
         if jobs:
             print(f"Loaded {len(jobs)} jobs.")

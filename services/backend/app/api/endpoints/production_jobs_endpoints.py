@@ -177,8 +177,8 @@ async def get_production_schedule(
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by (e.g., LCD_DATE, JOB, PROCESS_CODE)"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
     search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION"),
-    buffer_days: int = Query(30, ge=1, le=30, description="Days before today for late jobs (default: 30)"),
-    planning_horizon_days: int = Query(60, ge=7, le=365, description="Days ahead for planning horizon (default: 60)")
+    buffer_days: int = Query(7, ge=1, le=30, description="Days before today for late jobs (default: 7)"),
+    planning_horizon_days: int = Query(30, ge=7, le=365, description="Days ahead for planning horizon (default: 30)")
 ):
     """
     Get production schedule data with intelligent rolling window based on LCD_DATE.

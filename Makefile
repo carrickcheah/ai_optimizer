@@ -1,14 +1,14 @@
 # Main development command
 start:
-	@echo "🚀 Starting AI Optimizer..."
+	@echo "🚀 Starting AI Optimizer (no auto-reload)..."
 	@make -j2 backend frontend
 
-# Individual services - Updated to use virtual environment
+# Individual services
 backend:
-	@echo "Starting backend on port 8000..."
+	@echo "Starting backend on port 8000 (no reload)..."
 	@cd services/backend && \
 	source ../../.venv/bin/activate && \
-	python -m uvicorn app.main:app --reload --port 8000
+	python -m uvicorn app.main:app --port 8000
 
 frontend:
 	@echo "Starting frontend on port 3000..."
@@ -16,12 +16,27 @@ frontend:
 
 # Stop all services
 stop:
+	@echo "🛑 Stopping all services..."
 	@pkill -f "uvicorn app.main:app" || true
 	@pkill -f "vite" || true
+	@pkill -f "node.*vite" || true
 
-llm:
-	@echo "🚀🚀🚀 yahooo on board now! We fly together..."
-	uv run services/sql_agent/src/sql_agent/models/llm.py
+# Reset services
+reset:
+	@echo "🔄 Resetting AI Optimizer..."
+	@make stop
+	@sleep 3
+	@make start
 
+# Alternative: start with reload for development
+start-dev:
+	@echo "🚀 Starting AI Optimizer (with auto-reload)..."
+	@make -j2 backend-dev frontend
 
-.PHONY: start backend frontend stop
+backend-dev:
+	@echo "Starting backend on port 8000 (with reload)..."
+	@cd services/backend && \
+	source ../../.venv/bin/activate && \
+	python -m uvicorn app.main:app --reload --port 8000
+
+.PHONY: start backend frontend stop reset start-dev backend-dev

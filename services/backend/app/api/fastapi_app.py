@@ -12,6 +12,8 @@ from contextlib import contextmanager
 import asyncio
 import time
 from functools import wraps
+import os
+from dotenv import load_dotenv
 
 try:
     from app.data_ingestion.mariadb_parser import get_db_connection
@@ -35,23 +37,25 @@ def get_connection_pool():
     global DB_POOL
     if DB_POOL is None:
         try:
-            # Get a sample connection to extract parameters
-            sample_conn = get_db_connection()
+            # Load environment variables from project root
+            load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../../../.env'))
             
-            # Extract connection parameters from the sample connection
+            # Use environment variables directly for connection pool
             config = {
-                'host': sample_conn.server_host,
-                'port': sample_conn.server_port,
-                'user': sample_conn.user,
-                'database': sample_conn.database,
+                'host': os.getenv("MARIADB_HOST", "localhost"),
+                'port': int(os.getenv("MARIADB_PORT", "3306")),
+                'user': os.getenv("MARIADB_USERNAME"),
+                'password': os.getenv("MARIADB_PASSWORD"),
+                'database': os.getenv("MARIADB_DATABASE"),
                 'charset': 'utf8mb4',
                 'collation': 'utf8mb4_unicode_ci',
                 'use_unicode': True,
                 'autocommit': False
             }
             
-            # Close sample connection
-            sample_conn.close()
+            # Validate required parameters
+            if not all([config['user'], config['password'], config['database']]):
+                raise ValueError("Missing required database credentials in environment variables")
             
             # Create connection pool
             DB_POOL = pooling.MySQLConnectionPool(

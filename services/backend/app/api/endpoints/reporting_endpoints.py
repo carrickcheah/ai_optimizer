@@ -73,7 +73,11 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         # 1. Load data using MariaDB parser (100 jobs for full scheduling)
         # This requires DB connection and might be slow for an API call if not cached/pre-run.
         # For now, we assume it's feasible for demonstration.
-        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(max_jobs=100)  # Back to 100 jobs as requested
+        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(
+            max_jobs=1000, 
+            buffer_days=7, 
+            planning_horizon_days=60
+        )  # Use 7-day buffer and 60-day horizon
         
         # Extract machine names from jobs_data using rsc_code instead of RSC_MACHINE
         # This assumes jobs have rsc_code field which identifies the machine

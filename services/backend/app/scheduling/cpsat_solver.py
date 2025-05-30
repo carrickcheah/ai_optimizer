@@ -48,8 +48,8 @@ def schedule_jobs(
     enforce_sequence: bool = True, 
     time_limit_seconds: int = 30,  # Reduced from 300 to 30 seconds
     max_operators: Optional[int] = None,
-    max_jobs_limit: int = 200,  # New parameter to limit problem size
-    planning_horizon_days: int = 14,  # New parameter to limit planning horizon
+    max_jobs_limit: int = 1000,  # New parameter to limit problem size
+    planning_horizon_days: int = 60,  # New parameter to limit planning horizon
     enforce_deadlines: bool = True  # New parameter to enable/disable deadline constraints
 ) -> Dict[str, Any]:
     """
@@ -62,8 +62,8 @@ def schedule_jobs(
         enforce_sequence: Whether to enforce job sequence constraints
         time_limit_seconds: Solver time limit in seconds (default: 30s for performance)
         max_operators: Maximum number of operators (optional)
-        max_jobs_limit: Maximum number of jobs to process for performance (default: 200)
-        planning_horizon_days: Planning horizon in days (default: 14 days)
+        max_jobs_limit: Maximum number of jobs to process for performance (default: 1000)
+        planning_horizon_days: Planning horizon in days (default: 60 days)
         enforce_deadlines: Whether to enforce deadline constraints (default: True)
         
     Returns:

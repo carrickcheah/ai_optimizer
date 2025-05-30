@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The Plan Date column shows jobs filtered by **CreateDate_dt** (when jobs were created) using an **auto-moving 30-day window** that dynamically adjusts around today's date.
+The Plan Date column shows jobs filtered by **CreateDate_dt** (when jobs were created) using an **auto-moving 67-day window** that dynamically adjusts around today's date (7 days back + 60 days forward).
 
 ## Technical Analysis
 
@@ -23,10 +23,10 @@ INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i
 WHERE jot.Void_c != 1 
     AND jot.DocStatus_c != 'CP' 
     AND jop.QtyStatus_c != 'FF' 
-    AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+    AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
 ```
 
-**Key Change**: The filter now uses an **auto-moving 30-day window** (30 days back + 30 days forward from today).
+**Key Change**: The filter now uses an **auto-moving 7-day window** (7 days back + 60 days forward from today).
 
 ### 3. Why 2025-05-05 Appears as First Result (Today: May 30, 2025)
 
@@ -38,9 +38,9 @@ ORDER BY jot.CreateDate_dt DESC
 
 #### Date Range Calculation
 - **Today**: May 30, 2025
-- **30 days ago**: April 30, 2025  
-- **30 days ahead**: June 29, 2025
-- **Filter window**: April 30, 2025 → June 29, 2025 (auto-moving 60-day total window)
+- **7 days ago**: May 23, 2025
+- **60 days ahead**: July 29, 2025
+- **Filter window**: May 23, 2025 → July 29, 2025 (auto-moving 67-day total window)
 - **Sort order**: Newest creation date first (DESC)
 
 #### Why 2025-05-05 15:08:22 Appears First
@@ -126,38 +126,8 @@ This indicates:
 ### Current Configuration
 ```typescript
 const DATA_LOADING_CONFIG = {
-  bufferDays: 7,           // Load jobs from 7 days ago (late jobs)
+  bufferDays: 7,            // Load jobs from 7 days ago (late jobs)
   planningHorizonDays: 60,  // Load jobs up to 60 days ahead
   refreshIntervalMinutes: 60 // Refresh every 60 minutes
 };
 ```
-
-### Filter Effect
-- **Buffer Period**: Shows late jobs (LCD date < today)
-- **Planning Window**: Shows upcoming jobs (LCD date ≤ today+60)
-- **Natural Selection**: Only jobs with relevant deadlines appear
-- **Result**: Plan dates cluster around specific creation periods
-
-## Conclusion
-
-The appearance of 2025-03-10 as the dominant Plan Date is **logical and expected** behavior resulting from:
-
-1. **Lead time patterns** in the manufacturing process
-2. **Filtering logic** that focuses on relevant deadlines
-3. **Bulk job creation** practices in the ERP system
-4. **Business cycles** that create jobs with similar timelines
-
-This is not a bug but a reflection of actual business operations where jobs planned ~3 months ago are now due for execution.
-
-## Frontend Implementation
-
-The `DetailedScheduleTable.tsx` correctly displays this data using:
-
-```typescript
-columnHelper.accessor('plan_date', { 
-  header: 'Plan Date', 
-  cell: info => formatDateTime(info.getValue()) 
-})
-```
-
-The frontend simply renders what the backend provides - no manipulation or default values are applied at the UI layer.

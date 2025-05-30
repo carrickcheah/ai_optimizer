@@ -273,8 +273,8 @@ const DetailedScheduleTable: React.FC = () => {
 
   // Data loading strategy parameters (for display only - reports endpoint uses its own config)
   const DATA_LOADING_CONFIG = {
-    bufferDays: 30,           // Display: Buffer jobs from 30 days ago 
-    planningHorizonDays: 30,  // Display: Auto-moving 30-day window forward 
+    bufferDays: 7,            // Display: Buffer jobs from 7 days ago 
+    planningHorizonDays: 60,  // Display: Auto-moving 60-day window forward 
     refreshIntervalMinutes: 60 // Refresh every 60 minutes
   };
 
