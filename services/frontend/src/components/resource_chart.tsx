@@ -30,6 +30,22 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
 
+  // Helper function to extract numeric part from resource codes
+  const extractResourceNumber = (resourceCode: string): string => {
+    // Handle special cases
+    if (resourceCode === 'DEFAULT') return 'DEFAULT';
+    
+    // Extract numbers from resource code
+    const numbers = resourceCode.match(/\d+/g);
+    if (numbers && numbers.length > 0) {
+      // For comma-separated codes like "43,94" or "57,64,65,66,74", return the first number
+      // This gives a more consistent grouping
+      return parseInt(numbers[0], 10).toString();
+    }
+    // If no numbers found, return the original code
+    return resourceCode;
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
@@ -109,7 +125,25 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     return new Date(a.Start).getTime() - new Date(b.Start).getTime();
   });
 
-  const resourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort();
+  const resourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort((a, b) => {
+    const numA = extractResourceNumber(a);
+    const numB = extractResourceNumber(b);
+    
+    // Handle non-numeric values (like DEFAULT)
+    if (numA === 'DEFAULT' && numB === 'DEFAULT') return 0;
+    if (numA === 'DEFAULT') return 1; // Put DEFAULT at the end
+    if (numB === 'DEFAULT') return -1;
+    
+    // Numeric comparison
+    const intA = parseInt(numA, 10);
+    const intB = parseInt(numB, 10);
+    
+    if (isNaN(intA) && isNaN(intB)) return a.localeCompare(b); // Both non-numeric, use string sort
+    if (isNaN(intA)) return 1; // a is non-numeric, put it after numeric
+    if (isNaN(intB)) return -1; // b is non-numeric, put it after numeric
+    
+    return intA - intB; // Numeric sort
+  });
   
   console.log('[ResourceChart] Sorted tasks:', sortedTasks.length);
   console.log('[ResourceChart] Resource groups:', resourceGroups);
@@ -137,7 +171,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         const end = new Date(task.Finish);
         return end.getTime() - start.getTime(); // Duration in milliseconds
       }),
-      y: resourceTasks.map(() => resource), // Y-value is the machine name for all tasks of this machine
+      y: resourceTasks.map(() => {
+        const numericCode = extractResourceNumber(resource);
+        return numericCode === 'DEFAULT' ? 141 : parseInt(numericCode, 10); // DEFAULT goes above 140
+      }), // Y-value is the numeric position on 0-140 scale
       base: resourceTasks.map(task => new Date(task.Start).getTime()),
       orientation: 'h',
       marker: {
@@ -329,7 +366,25 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const filteredPlotData: Partial<PlotData>[] = [];
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = [...new Set(filteredTasks.map(task => task.Resource))].sort();
+    const filteredResourceGroups = [...new Set(filteredTasks.map(task => task.Resource))].sort((a, b) => {
+      const numA = extractResourceNumber(a);
+      const numB = extractResourceNumber(b);
+      
+      // Handle non-numeric values (like DEFAULT)
+      if (numA === 'DEFAULT' && numB === 'DEFAULT') return 0;
+      if (numA === 'DEFAULT') return 1; // Put DEFAULT at the end
+      if (numB === 'DEFAULT') return -1;
+      
+      // Numeric comparison
+      const intA = parseInt(numA, 10);
+      const intB = parseInt(numB, 10);
+      
+      if (isNaN(intA) && isNaN(intB)) return a.localeCompare(b); // Both non-numeric, use string sort
+      if (isNaN(intA)) return 1; // a is non-numeric, put it after numeric
+      if (isNaN(intB)) return -1; // b is non-numeric, put it after numeric
+      
+      return intA - intB; // Numeric sort
+    });
     
     filteredResourceGroups.forEach(resource => {
       const resourceTasks = filteredTasks.filter(task => task.Resource === resource);
@@ -343,7 +398,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             const end = new Date(task.Finish);
             return end.getTime() - start.getTime(); // Duration in milliseconds
           }),
-          y: resourceTasks.map(() => resource), // Y-value is the machine name for all tasks of this machine
+          y: resourceTasks.map(() => {
+            const numericCode = extractResourceNumber(resource);
+            return numericCode === 'DEFAULT' ? 141 : parseInt(numericCode, 10); // DEFAULT goes above 140
+          }), // Y-value is the numeric position on 0-140 scale
           base: resourceTasks.map(task => new Date(task.Start).getTime()),
           orientation: 'h',
           marker: {
@@ -387,13 +445,13 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       range: [new Date().toISOString(), new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
     },
     yaxis: {
-      title: 'Machines', // Changed Y-axis title
+      title: 'Resource Code', 
       automargin: true,
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
-      autorange: 'reversed' as const, // Order machines top-to-bottom
-      categoryorder: 'array' as const, // Use the order from categoryarray
-      categoryarray: resourceGroups, // Ensures machines are sorted A-Z if resourceGroups is sorted
+      categoryorder: 'array' as const,
+      categoryarray: resourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').sort((a, b) => parseInt(a, 10) - parseInt(b, 10)),
+      autorange: 'reversed' as const,
     },
     autosize: true,
     margin: { l: 180, r: 50, t: 50, b: 100 },
@@ -406,7 +464,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       xanchor: 'right' as const,
     },
     barmode: 'stack' as const, // Stack bars for the same machine if they overlap (though base should prevent this for distinct tasks)
-    shapes: [] as any[],
+    shapes: [{
+      type: 'line',
+      x0: new Date().toISOString(),
+      y0: 0,
+      x1: new Date().toISOString(),
+      y1: 140,
+      line: {
+        color: 'red',
+        width: 2,
+        dash: 'dash'
+      }
+    }]
   };
 
   // Calculate layout based on filtered tasks
@@ -414,7 +483,25 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // For "all" timeframe, we can just use all tasks
     if (timeRange === 'all') {
       // Get all unique resources for the y-axis
-      const allResourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort();
+      const allResourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort((a, b) => {
+        const numA = extractResourceNumber(a);
+        const numB = extractResourceNumber(b);
+        
+        // Handle non-numeric values (like DEFAULT)
+        if (numA === 'DEFAULT' && numB === 'DEFAULT') return 0;
+        if (numA === 'DEFAULT') return 1; // Put DEFAULT at the end
+        if (numB === 'DEFAULT') return -1;
+        
+        // Numeric comparison
+        const intA = parseInt(numA, 10);
+        const intB = parseInt(numB, 10);
+        
+        if (isNaN(intA) && isNaN(intB)) return a.localeCompare(b); // Both non-numeric, use string sort
+        if (isNaN(intA)) return 1; // a is non-numeric, put it after numeric
+        if (isNaN(intB)) return -1; // b is non-numeric, put it after numeric
+        
+        return intA - intB; // Numeric sort
+      });
       
       return {
         ...layout,
@@ -425,14 +512,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         },
         yaxis: {
           ...layout.yaxis,
-          categoryarray: allResourceGroups
+          range: [0, 140], // Fixed range from 0 to 140
+          tickvals: allResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b),
+          ticktext: allResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b).map(String),
+          tickmode: 'array',
+          autorange: false,
         },
         shapes: [{
           type: 'line',
           x0: new Date().toISOString(),
-          y0: -0.5,
+          y0: 0,
           x1: new Date().toISOString(),
-          y1: allResourceGroups.length > 0 ? allResourceGroups.length - 0.5 : 0,
+          y1: 140,
           line: {
             color: 'red',
             width: 2,
@@ -456,9 +547,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         shapes: [{
           type: 'line',
           x0: new Date().toISOString(),
-          y0: -0.5,
+          y0: 0,
           x1: new Date().toISOString(),
-          y1: 0,
+          y1: 140,
           line: {
             color: 'red',
             width: 2,
@@ -516,7 +607,25 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     });
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = [...new Set(filteredTasksForLayout.map(task => task.Resource))].sort();
+    const filteredResourceGroups = [...new Set(filteredTasksForLayout.map(task => task.Resource))].sort((a, b) => {
+      const numA = extractResourceNumber(a);
+      const numB = extractResourceNumber(b);
+      
+      // Handle non-numeric values (like DEFAULT)
+      if (numA === 'DEFAULT' && numB === 'DEFAULT') return 0;
+      if (numA === 'DEFAULT') return 1; // Put DEFAULT at the end
+      if (numB === 'DEFAULT') return -1;
+      
+      // Numeric comparison
+      const intA = parseInt(numA, 10);
+      const intB = parseInt(numB, 10);
+      
+      if (isNaN(intA) && isNaN(intB)) return a.localeCompare(b); // Both non-numeric, use string sort
+      if (isNaN(intA)) return 1; // a is non-numeric, put it after numeric
+      if (isNaN(intB)) return -1; // b is non-numeric, put it after numeric
+      
+      return intA - intB; // Numeric sort
+    });
     
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
@@ -530,14 +639,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       },
       yaxis: {
         ...layout.yaxis,
-        categoryarray: filteredResourceGroups
+        range: [0, 140], // Fixed range from 0 to 140
+        tickvals: filteredResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b),
+        ticktext: filteredResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b).map(String),
+        tickmode: 'array',
+        autorange: false,
       },
       shapes: [{
         type: 'line',
         x0: new Date().toISOString(),
-        y0: -0.5,
+        y0: 0,
         x1: new Date().toISOString(),
-        y1: filteredResourceGroups.length > 0 ? filteredResourceGroups.length - 0.5 : 0,
+        y1: 140,
         line: {
           color: 'red',
           width: 2,
