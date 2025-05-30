@@ -172,7 +172,7 @@ def greedy_schedule(
                     else:
                         job['processing_time'] = 3600
             else:
-                # No DAY_NEED, use HOURS_NEED
+                # No DAY_NEED, use HOURS_NEED directly
                 if 'hours_need' in job and job['hours_need'] is not None:
                     try:
                         job['processing_time'] = float(job['hours_need']) * 3600
@@ -340,7 +340,7 @@ def greedy_schedule(
                     else:
                         job_item['processing_time'] = 3600
             else:
-                # No DAY_NEED, use HOURS_NEED
+                # No DAY_NEED, use HOURS_NEED directly
                 if 'hours_need' in job_item and job_item['hours_need'] is not None:
                     try:
                         job_item['processing_time'] = float(job_item['hours_need']) * 3600

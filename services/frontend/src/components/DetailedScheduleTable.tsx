@@ -256,6 +256,7 @@ const DetailedScheduleTable: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [pagination, setPagination] = useState<{
     currentPage: number;
     totalPages: number;
@@ -269,6 +270,13 @@ const DetailedScheduleTable: React.FC = () => {
   });
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
+
+  // Data loading strategy parameters
+  const DATA_LOADING_CONFIG = {
+    bufferDays: 30,           // Load jobs from 30 days ago (late jobs)
+    planningHorizonDays: 60,  // Load jobs up to 60 days ahead
+    refreshIntervalMinutes: 60 // Refresh every 60 minutes
+  };
 
   useEffect(() => {
     const fetchData = async (currentPage = pagination.currentPage, itemsPerPage = pagination.itemsPerPage) => {
@@ -536,9 +544,6 @@ const DetailedScheduleTable: React.FC = () => {
       <div className="card">
         <div className="card-header">
           <h2>Detailed Production Schedule</h2>
-          <div className="schedule-subtitle">
-            Showing 50 jobs with optimized rolling window (7-day buffer, 30-day horizon)
-          </div>
         </div>
         <div className="card-body">
           <div className="row mb-3">

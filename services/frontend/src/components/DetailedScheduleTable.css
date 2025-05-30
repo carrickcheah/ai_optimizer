@@ -256,14 +256,6 @@ body {
   font-size: 18px;
 }
 
-.schedule-subtitle {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.9);
-  font-weight: 400;
-  margin-top: 4px;
-  font-style: italic;
-}
-
 .table {
   border-collapse: separate;
   border-spacing: 0;

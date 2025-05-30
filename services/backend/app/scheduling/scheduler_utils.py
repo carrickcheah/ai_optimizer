@@ -475,4 +475,4 @@ def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> Dict[str, An
         'average_utilization': avg_utilization,
         'machine_utilization': machine_utilization,
         'earliest_start': earliest_start,
-    }
+    } 
