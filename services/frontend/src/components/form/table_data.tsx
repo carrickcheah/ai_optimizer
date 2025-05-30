@@ -52,11 +52,11 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
     currentPage: 1,
     totalPages: 1,
     totalItems: 0,
-    itemsPerPage: 25 // Reduce default from 50 to 25 for faster loading
+    itemsPerPage: 50 // Changed from 25 to 50 to match DetailedScheduleTable style
   });
   
-  // Available row options for pagination - optimized for performance
-  const rowOptions = [25, 50, 100]; // Removed 250, 500 to prevent slow loading
+  // Available row options for pagination - updated to match user requirements
+  const rowOptions = [50, 100, 150, 200];
   
   // Format date to display in dd/MM/yyyy format
   const formatDate = (dateString: string | null): string => {
@@ -332,14 +332,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
   
   return (
     <div className="container-fluid mt-4">
-      {/* Performance info display */}
-      {!isLoading && !error && (
-        <div className="alert alert-info mb-3">
-          <i className="fas fa-info-circle me-2"></i>
-          {`Showing ${displayedJobs.length} jobs with optimized rolling window (5-day buffer, 30-day horizon). Check console for performance metrics.`}
-        </div>
-      )}
-      
       {/* Error message display */}
       {error && (
         <div className="alert alert-danger alert-dismissible fade show" role="alert">
@@ -350,17 +342,15 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
       
       <div className="row">
         <div className="col-12">
+          <button 
+            className="back-button" 
+            onClick={() => window.history.back()}
+          >
+            <i className="fas fa-arrow-left"></i> Back
+          </button>
           <div className="card">
             <div className="card-header">
-              <div>
-                <Link to="/page/ai_optimizer" className="back-btn">
-                  <i className="fas fa-arrow-left"></i>Back
-                </Link>
-                <span className="fs-5">Production Jobs</span>
-              </div>
-              <Link to="/input" className="btn btn-light btn-sm">
-                <i className="fas fa-plus me-1"></i>Add New Job
-              </Link>
+              <span className="fs-5">Production Jobs</span>
             </div>
             
             <div className="card-body">
@@ -437,10 +427,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('PROCESS_CODE')}>
                         PROCESS<br/>CODE
                       </th>
-                      <th className={`text-center sortable ${sortField === 'RSC_LOCATION' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('RSC_LOCATION')}>
-                        RSC<br/>LOCATION
-                      </th>
                       <th className={`text-center sortable ${sortField === 'RSC_CODE' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('RSC_CODE')}>
                         RSC<br/>CODE
@@ -499,7 +485,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                   <tbody id="jobsTableBody">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={21} className="text-center py-4">
+                        <td colSpan={20} className="text-center py-4">
                           <div className="spinner-border text-primary" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
@@ -508,7 +494,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                        <td colSpan={21} className="text-center">No production schedule found</td>
+                        <td colSpan={20} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
@@ -519,7 +505,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{formatDate(job.MATERIAL_ARRIVAL)}</td>
                           <td className="text-center">{job.JOB}</td>
                           <td className="text-center">{job.PROCESS_CODE}</td>
-                          <td className="text-center">{job.RSC_LOCATION}</td>
                           <td className="text-center">{job.RSC_CODE}</td>
                           <td className="text-center">{job.JOB_DEPENDENCY ? 'Yes' : 'No'}</td>
                           <td className="text-center">{job.NUMBER_OPERATOR}</td>
