@@ -171,10 +171,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         const end = new Date(task.Finish);
         return end.getTime() - start.getTime(); // Duration in milliseconds
       }),
-      y: resourceTasks.map(() => {
-        const numericCode = extractResourceNumber(resource);
-        return numericCode === 'DEFAULT' ? 141 : parseInt(numericCode, 10); // DEFAULT goes above 140
-      }), // Y-value is the numeric position on 0-140 scale
+      y: resourceTasks.map(() => extractResourceNumber(resource)), // Y-value is the numeric resource code
       base: resourceTasks.map(task => new Date(task.Start).getTime()),
       orientation: 'h',
       marker: {
@@ -398,10 +395,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             const end = new Date(task.Finish);
             return end.getTime() - start.getTime(); // Duration in milliseconds
           }),
-          y: resourceTasks.map(() => {
-            const numericCode = extractResourceNumber(resource);
-            return numericCode === 'DEFAULT' ? 141 : parseInt(numericCode, 10); // DEFAULT goes above 140
-          }), // Y-value is the numeric position on 0-140 scale
+          y: resourceTasks.map(() => extractResourceNumber(resource)), // Y-value is the numeric resource code
           base: resourceTasks.map(task => new Date(task.Start).getTime()),
           orientation: 'h',
           marker: {
@@ -446,6 +440,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     },
     yaxis: {
       title: 'Resource Code', 
+      type: 'category',
       automargin: true,
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
@@ -467,9 +462,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     shapes: [{
       type: 'line',
       x0: new Date().toISOString(),
-      y0: 0,
+      y0: -0.5,
       x1: new Date().toISOString(),
-      y1: 140,
+      y1: resourceGroups.length - 0.5,
       line: {
         color: 'red',
         width: 2,
@@ -512,18 +507,17 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         },
         yaxis: {
           ...layout.yaxis,
-          range: [0, 140], // Fixed range from 0 to 140
-          tickvals: allResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b),
-          ticktext: allResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b).map(String),
-          tickmode: 'array',
-          autorange: false,
+          type: 'category',
+          categoryorder: 'array' as const,
+          categoryarray: allResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').sort((a, b) => parseInt(a, 10) - parseInt(b, 10)),
+          autorange: 'reversed' as const,
         },
         shapes: [{
           type: 'line',
           x0: new Date().toISOString(),
-          y0: 0,
+          y0: -0.5,
           x1: new Date().toISOString(),
-          y1: 140,
+          y1: allResourceGroups.length - 0.5,
           line: {
             color: 'red',
             width: 2,
@@ -547,9 +541,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         shapes: [{
           type: 'line',
           x0: new Date().toISOString(),
-          y0: 0,
+          y0: -0.5,
           x1: new Date().toISOString(),
-          y1: 140,
+          y1: resourceGroups.length - 0.5,
           line: {
             color: 'red',
             width: 2,
@@ -639,18 +633,17 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       },
       yaxis: {
         ...layout.yaxis,
-        range: [0, 140], // Fixed range from 0 to 140
-        tickvals: filteredResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b),
-        ticktext: filteredResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').map(num => parseInt(num, 10)).sort((a, b) => a - b).map(String),
-        tickmode: 'array',
-        autorange: false,
+        type: 'category',
+        categoryorder: 'array' as const,
+        categoryarray: filteredResourceGroups.map(extractResourceNumber).filter(num => num !== 'DEFAULT').sort((a, b) => parseInt(a, 10) - parseInt(b, 10)),
+        autorange: 'reversed' as const,
       },
       shapes: [{
         type: 'line',
         x0: new Date().toISOString(),
-        y0: 0,
+        y0: -0.5,
         x1: new Date().toISOString(),
-        y1: 140,
+        y1: filteredResourceGroups.length - 0.5,
         line: {
           color: 'red',
           width: 2,
