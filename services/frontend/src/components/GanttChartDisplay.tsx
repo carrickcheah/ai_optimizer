@@ -51,6 +51,15 @@ const GanttChartDisplay: React.FC = () => {
   const [timeRange, setTimeRange] = useState<string>('all');
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [chartTitle, setChartTitle] = useState<string>('Production Planning System');
+  const [overview, setOverview] = useState<{
+    total_jobs: number;
+    buffer_status_counts: {
+      Late: number;
+      Warning: number;
+      Caution: number;
+      OK: number;
+    };
+  } | null>(null);
 
   // Buffer status color mapping
   const bufferStatusColors: Record<string, string> = {
@@ -66,11 +75,16 @@ const GanttChartDisplay: React.FC = () => {
       setError(null);
       try {
         console.log('[GanttChart] Fetching task data from API...');
-        const response = await fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        const [ganttResponse, overviewResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}`),
+          fetch(`${API_BASE_URL}/reports/schedule-overview?solver=${solver}`)
+        ]);
+        
+        if (!ganttResponse.ok) {
+          throw new Error(`HTTP error! status: ${ganttResponse.status}`);
         }
-        const data = await response.json();
+        
+        const data = await ganttResponse.json();
         console.log('[GanttChart] API response data:', data.length, 'tasks');
         
         if (data.length > 0) {
@@ -97,6 +111,12 @@ const GanttChartDisplay: React.FC = () => {
         }
         
         setTasks(data);
+        
+        // Handle overview response
+        if (overviewResponse.ok) {
+          const overviewData = await overviewResponse.json();
+          setOverview(overviewData);
+        }
       } catch (e) {
         setError(`Failed to fetch task data: ${e instanceof Error ? e.message : String(e)}`);
         console.error('[GanttChart] Error fetching tasks:', e);
@@ -628,7 +648,64 @@ const GanttChartDisplay: React.FC = () => {
         </div>
       </div>
       
-
+      {overview && (
+        <div className="overview-section">
+          <div className="overview-right">
+            <h3>Buffer Status</h3>
+            <div className="buffer-overview">
+              <div className="buffer-rows">
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-late">Late</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-late" 
+                      style={{ width: `${(overview.buffer_status_counts.Late / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Late} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-warning">Warning</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-warning" 
+                      style={{ width: `${(overview.buffer_status_counts.Warning / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Warning} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-caution">Caution</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-caution" 
+                      style={{ width: `${(overview.buffer_status_counts.Caution / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Caution} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-ok">OK</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-ok" 
+                      style={{ width: `${(overview.buffer_status_counts.OK / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.OK} jobs</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="priority-legend">
         <div className="priority-item">

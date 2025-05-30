@@ -29,6 +29,15 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const [timeRange, setTimeRange] = useState<string>('all');
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
+  const [overview, setOverview] = useState<{
+    total_jobs: number;
+    buffer_status_counts: {
+      Late: number;
+      Warning: number;
+      Caution: number;
+      OK: number;
+    };
+  } | null>(null);
 
   // Helper function to extract numeric part from resource codes
   const extractResourceNumber = (resourceCode: string): string => {
@@ -50,17 +59,23 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const fetchData = async () => {
       setIsLoading(true);
       setError(null);
-      const endpoint = `${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}`;
+      const ganttEndpoint = `${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}`;
+      const overviewEndpoint = `${API_BASE_URL}/reports/schedule-overview?solver=${solver}`;
       
-      console.log('[ResourceChart] Fetching data from API:', endpoint);
+      console.log('[ResourceChart] Fetching data from API:', ganttEndpoint);
 
       try {
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.detail || `Failed to fetch chart data: ${response.statusText}`);
+        const [ganttResponse, overviewResponse] = await Promise.all([
+          fetch(ganttEndpoint),
+          fetch(overviewEndpoint)
+        ]);
+        
+        if (!ganttResponse.ok) {
+          const errorData = await ganttResponse.json();
+          throw new Error(errorData.detail || `Failed to fetch chart data: ${ganttResponse.statusText}`);
         }
-        const data: TaskData[] = await response.json();
+        
+        const data: TaskData[] = await ganttResponse.json();
         console.log('[ResourceChart] API response data:', data.length, 'tasks');
         
         if (data.length === 0) {
@@ -103,6 +118,12 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           }
         }
         setTasks(data);
+        
+        // Handle overview response
+        if (overviewResponse.ok) {
+          const overviewData = await overviewResponse.json();
+          setOverview(overviewData);
+        }
       } catch (err) {
         if (err instanceof Error) {
             setError(err.message);
@@ -772,6 +793,65 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           >all</button>
         </div>
       </div>
+
+      {overview && (
+        <div className="overview-section">
+          <div className="overview-right">
+            <h3>Buffer Status</h3>
+            <div className="buffer-overview">
+              <div className="buffer-rows">
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-late">Late</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-late" 
+                      style={{ width: `${(overview.buffer_status_counts.Late / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Late} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-warning">Warning</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-warning" 
+                      style={{ width: `${(overview.buffer_status_counts.Warning / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Warning} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-caution">Caution</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-caution" 
+                      style={{ width: `${(overview.buffer_status_counts.Caution / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.Caution} jobs</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="buffer-row">
+                  <div className="buffer-label buffer-label-ok">OK</div>
+                  <div className="buffer-bar-container">
+                    <div 
+                      className="buffer-bar-fill buffer-ok" 
+                      style={{ width: `${(overview.buffer_status_counts.OK / overview.total_jobs) * 100}%` }}
+                    >
+                      <span className="buffer-count">{overview.buffer_status_counts.OK} jobs</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="priority-legend">
         <div className="priority-item">
