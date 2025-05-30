@@ -14,11 +14,8 @@ interface TaskData {
   Color?: string;       // Color for the task bar
   Description?: string; // HTML string for hover tooltip
   JobFamily?: string;
-  Job_Family?: string;  // API returns Job_Family
   ProcessNumber?: number;
-  Process_Number?: number; // API returns Process_Number
   BufferStatusLabel?: string;
-  Priority?: number;
   // Add any other fields that come from the backend and might be useful
 }
 
@@ -111,21 +108,24 @@ const GanttChartDisplay: React.FC = () => {
     fetchTasks();
   }, [solver]);
 
-  // Sort tasks by Resource Code for consistency (grouping by machine/resource)
+  // Sort tasks by job ID for consistency
   const sortedTasks = [...tasks].sort((a, b) => {
-    // First, compare by Resource (machine/resource code) alphabetically ascending
-    const resourceCompare = a.Resource.localeCompare(b.Resource);
-    if (resourceCompare !== 0) {
-      return resourceCompare;
+    const partsA = getTaskParts(a.Task);
+    const partsB = getTaskParts(b.Task);
+
+    // First, compare by jobGroup alphabetically ascending
+    const jobCompare = partsA.jobGroup.localeCompare(partsB.jobGroup);
+    if (jobCompare !== 0) {
+      return jobCompare;
     }
 
-    // If resources are the same, sort by task name for consistent ordering
-    return a.Task.localeCompare(b.Task);
+    // If jobGroups are the same, sort by processNum descending
+    // This makes P1 (smaller number) appear visually above P2 (larger number)
+    // because Plotly puts higher index items at the top for horizontal bars.
+    // So, if P1 should be "first" (top), it needs a higher effective sort order for this part.
+    // partsB.processNum - partsA.processNum: if B(P1) num is 1, A(P2) num is 2 -> 1-2 = -1. A comes before B (P2, P1). This is correct.
+    return partsB.processNum - partsA.processNum;
   });
-
-  console.log('[GanttChart] Sorted tasks:', sortedTasks.length);
-  console.log('[GanttChart] First few tasks:', sortedTasks.slice(0, 3));
-  console.log('[GanttChart] Unique resources:', [...new Set(sortedTasks.map(task => task.Resource))]);
 
   const taskTraces: Partial<PlotData>[] = [{
     type: 'bar',
@@ -134,7 +134,7 @@ const GanttChartDisplay: React.FC = () => {
       const end = new Date(task.Finish);
       return end.getTime() - start.getTime(); // Duration in milliseconds
     }),
-    y: sortedTasks.map((task, index) => `${task.Resource}-${index}`), // Create unique y-value for each task
+    y: sortedTasks.map(task => task.Task),
     base: sortedTasks.map(task => new Date(task.Start).getTime()),
     orientation: 'h',
     marker: {
@@ -153,8 +153,8 @@ const GanttChartDisplay: React.FC = () => {
         `<b>Resource:</b> ${task.Resource}`,
         `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
       ];
-      if (task.Job_Family) {
-        tooltipParts.push(`<b>Job Family:</b> ${task.Job_Family}`);
+      if (task.JobFamily) {
+        tooltipParts.push(`<b>Job Family:</b> ${task.JobFamily}`);
       }
       return tooltipParts.join('<br>');
     }),
@@ -180,17 +180,17 @@ const GanttChartDisplay: React.FC = () => {
   const getTimeFilteredData = () => {
     // Use original data for all timeframes to avoid filtering issues
     if (timeRange === 'all' || sortedTasks.length === 0) {
-      console.log('[GanttChart] Using all tasks for "all" timeframe:', sortedTasks.length);
+      console.log('Using all tasks for "all" timeframe:', sortedTasks.length);
       
       // Even with "all", let's return a new array to avoid reference issues
-      const allData = [{
+      return [{
         type: 'bar',
         x: sortedTasks.map(task => {
           const start = new Date(task.Start);
           const end = new Date(task.Finish);
           return end.getTime() - start.getTime(); // Duration in milliseconds
         }),
-        y: sortedTasks.map((task, index) => `${task.Resource}-${index}`), // Create unique y-value for each task
+        y: sortedTasks.map(task => task.Task),
         base: sortedTasks.map(task => new Date(task.Start).getTime()),
         orientation: 'h',
         marker: {
@@ -208,21 +208,14 @@ const GanttChartDisplay: React.FC = () => {
             `<b>Resource:</b> ${task.Resource}`,
             `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
           ];
-          if (task.Job_Family) {
-            tooltipParts.push(`<b>Job Family:</b> ${task.Job_Family}`);
+          if (task.JobFamily) {
+            tooltipParts.push(`<b>Job Family:</b> ${task.JobFamily}`);
           }
           return tooltipParts.join('<br>');
         }),
         hoverinfo: 'text',
         name: 'Tasks'
       }];
-      
-      console.log('[GanttChart] Returning all data:', allData[0].y.length, 'tasks');
-      console.log('[GanttChart] Sample y values:', allData[0].y.slice(0, 5));
-      console.log('[GanttChart] Sample x values:', allData[0].x.slice(0, 5));
-      console.log('[GanttChart] Sample base values:', allData[0].base.slice(0, 5));
-      
-      return allData;
     }
     
     const now = new Date();
@@ -325,15 +318,15 @@ const GanttChartDisplay: React.FC = () => {
         const end = new Date(task.Finish);
         return end.getTime() - start.getTime(); // Duration in milliseconds
       }),
-      y: filteredTasks.map((task, index) => `${task.Resource}-${index}`),
+      y: filteredTasks.map(task => task.Task),
       base: filteredTasks.map(task => new Date(task.Start).getTime()),
       orientation: 'h',
-      marker: {
-        color: filteredTasks.map(task => {
-          return task.Color || 
-                (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
-        })
-      },
+              marker: {
+          color: filteredTasks.map(task => {
+            return task.Color || 
+                  (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+          })
+        },
       text: filteredTasks.map(task => {
         const tooltipParts = [
           `<b>${task.Task}</b>`,
@@ -343,8 +336,8 @@ const GanttChartDisplay: React.FC = () => {
           `<b>Resource:</b> ${task.Resource}`,
           `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
         ];
-        if (task.Job_Family) {
-          tooltipParts.push(`<b>Job Family:</b> ${task.Job_Family}`);
+        if (task.JobFamily) {
+          tooltipParts.push(`<b>Job Family:</b> ${task.JobFamily}`);
         }
         return tooltipParts.join('<br>');
       }),
@@ -355,7 +348,7 @@ const GanttChartDisplay: React.FC = () => {
 
   const layout = {
     title: chartTitle,
-    height: Math.max(700, sortedTasks.length * 25 + 150), // Dynamic height based on number of tasks (25px per task)
+    height: Math.max(700, tasks.length * 30 + 150), // Dynamic height based on number of tasks
     width: window.innerWidth * 0.95, // Responsive width
     xaxis: {
       type: 'date' as const,
@@ -366,13 +359,13 @@ const GanttChartDisplay: React.FC = () => {
       dtick: 86400000 * 3, // 3 days between ticks
     },
     yaxis: {
-      title: 'Resource Code',
+      title: 'Jobs',
       automargin: true,
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
     },
     autosize: true,
-    margin: { l: 180, r: 50, t: 50, b: 100 }, // Increase left margin for resource codes
+    margin: { l: 180, r: 50, t: 50, b: 100 }, // Increase left margin for job IDs
     plot_bgcolor: 'rgb(255, 255, 255)',
     paper_bgcolor: 'rgb(255, 255, 255)',
     showlegend: false,
@@ -385,7 +378,7 @@ const GanttChartDisplay: React.FC = () => {
     if (timeRange === 'all') {
       return {
         ...layout,
-        height: Math.max(700, sortedTasks.length * 25 + 150),
+        height: Math.max(700, sortedTasks.length * 30 + 150),
         xaxis: {
           ...layout.xaxis,
           // Don't set a range for 'all' to show the entire dataset
@@ -480,7 +473,7 @@ const GanttChartDisplay: React.FC = () => {
     });
     
     // Ensure we have reasonable height even with few tasks
-    const adjustedHeight = Math.max(700, filteredTasksForLayout.length * 25 + 150);
+    const adjustedHeight = Math.max(700, filteredTasksForLayout.length * 30 + 150);
     
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
