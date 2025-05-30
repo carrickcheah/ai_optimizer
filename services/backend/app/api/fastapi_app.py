@@ -283,10 +283,7 @@ async def get_machines():
                 WHERE jot.Void_c != 1 
                     AND jot.DocStatus_c != 'CP' 
                     AND jop.QtyStatus_c != 'FF' 
-                    AND jop.Machine_v IS NOT NULL 
-                    AND jop.Machine_v != '' 
-                    AND jop.Machine_v != 'NULL'
-                    AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL 10 DAY) AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+                    AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
                 ORDER BY jop.Machine_v
             """)
             

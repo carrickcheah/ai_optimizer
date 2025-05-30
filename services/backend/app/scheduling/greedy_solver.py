@@ -206,6 +206,27 @@ def greedy_schedule(
                 if operators_in_use[hour] >= max_operators:
                     return False
         
+        # Check LCD date deadline constraints - job must complete before its deadline
+        if 'lcd_date_epoch' in job and job['lcd_date_epoch']:
+            lcd_deadline = job['lcd_date_epoch']
+            current_time = datetime_to_epoch(datetime.now())
+            grace_period_seconds = 12 * 3600  # 12-hour grace period for already late jobs
+            
+            # If job is already late, give it a grace period
+            if lcd_deadline < current_time:
+                adjusted_deadline = current_time + grace_period_seconds
+                if end_time_epoch_val > adjusted_deadline:
+                    logger.debug(f"Job {job.get('job_id')} would finish after grace period deadline: "
+                               f"end={format_datetime_for_display(epoch_to_datetime(end_time_epoch_val))}, "
+                               f"adjusted_deadline={format_datetime_for_display(epoch_to_datetime(adjusted_deadline))}")
+                    return False
+            else:
+                if end_time_epoch_val > lcd_deadline:
+                    logger.debug(f"Job {job.get('job_id')} would finish after LCD date deadline: "
+                               f"end={format_datetime_for_display(epoch_to_datetime(end_time_epoch_val))}, "
+                               f"deadline={format_datetime_for_display(epoch_to_datetime(lcd_deadline))}")
+                    return False
+        
         return True
     
     # First schedule START_DATE jobs since they have fixed start times
@@ -264,9 +285,16 @@ def greedy_schedule(
     for family, jobs_in_family in job_families.items():
         all_remaining_jobs.extend([(family, process_num, job_data) for process_num, job_id, job_data in jobs_in_family])
     
-    # Sort all jobs by priority first, then process number
-    all_remaining_jobs.sort(key=lambda x: (x[2]['priority'], x[1]))
-    logger.info(f"Processing {len(all_remaining_jobs)} jobs in priority order")
+    # Sort all jobs by LCD date deadline (urgency) first, then priority, then process number
+    def get_sort_key(job_tuple):
+        family, process_num, job_data = job_tuple
+        # Get LCD date for urgency sorting - jobs with earlier deadlines go first
+        lcd_date_epoch = job_data.get('lcd_date_epoch', float('inf'))  # No deadline = lowest priority
+        priority = job_data.get('priority', 3)  # Default to medium priority
+        return (lcd_date_epoch, priority, process_num)
+    
+    all_remaining_jobs.sort(key=get_sort_key)
+    logger.info(f"Processing {len(all_remaining_jobs)} jobs sorted by deadline urgency, then priority")
     
     # Process all jobs in priority order
     for family, process_num, job_item in all_remaining_jobs:
@@ -467,6 +495,21 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
             
             for hour in range(int(start_rel), int(end_rel) + 1):
                 if operators_in_use[hour] >= max_operators:
+                    return False
+        
+        # Check LCD date deadline constraints - job must complete before its deadline
+        if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
+            lcd_deadline = job_item['lcd_date_epoch']
+            current_time = datetime_to_epoch(datetime.now())
+            grace_period_seconds = 12 * 3600  # 12-hour grace period for already late jobs
+            
+            # If job is already late, give it a grace period
+            if lcd_deadline < current_time:
+                adjusted_deadline = current_time + grace_period_seconds
+                if end_time_val > adjusted_deadline:
+                    return False
+            else:
+                if end_time_val > lcd_deadline:
                     return False
         
         return True

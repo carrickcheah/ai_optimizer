@@ -66,7 +66,7 @@ class ProductionJobQueries:
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c != 'CP' 
             AND jop.QtyStatus_c != 'FF' 
-            AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+            AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
         """
     
     @staticmethod
@@ -177,7 +177,7 @@ async def get_production_schedule(
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by (e.g., LCD_DATE, JOB, PROCESS_CODE)"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
     search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION"),
-    buffer_days: int = Query(7, ge=1, le=30, description="Days before today for late jobs (default: 7)"),
+    buffer_days: int = Query(30, ge=1, le=30, description="Days before today for late jobs (default: 30)"),
     planning_horizon_days: int = Query(60, ge=7, le=365, description="Days ahead for planning horizon (default: 60)")
 ):
     """
@@ -218,7 +218,7 @@ async def get_production_schedule(
             "PRIORITY": "PRIORITY" #Alias
         }
 
-        sql_sort_field = allowed_sort_fields.get(sort_field, "jot.TargetDate_dd") # Default sort
+        sql_sort_field = allowed_sort_fields.get(sort_field, "jot.CreateDate_dt") # Default sort by plan date
         sql_sort_order = "DESC" if sort_order and sort_order.lower() == "desc" else "ASC"
 
         params = []
@@ -276,15 +276,12 @@ async def get_production_schedule(
             LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
             """
             
-            # Intelligent Rolling Window Strategy based on LCD_DATE
-            base_where_clauses = f""" \n            WHERE jot.Void_c != 1 \
-                AND jot.DocStatus_c != 'CP' \
-                AND jop.QtyStatus_c != 'FF' \
-                AND jot.TargetDate_dd BETWEEN DATE_SUB(CURDATE(), INTERVAL {buffer_days} DAY) AND DATE_ADD(CURDATE(), INTERVAL {planning_horizon_days} DAY) \
-                AND (
-                    (jot.TargetDate_dd < CURDATE() AND (jot.JoQty_d - COALESCE(di.Qty_d, 0)) > 0) \
-                    OR jot.TargetDate_dd >= CURDATE()
-                )
+            # Intelligent Rolling Window Strategy based on PLAN_DATE (CreateDate_dt)
+            base_where_clauses = f""" 
+            WHERE jot.Void_c != 1 
+                AND jot.DocStatus_c != 'CP' 
+                AND jop.QtyStatus_c != 'FF' 
+                AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
             """
 
             # Count query
@@ -483,7 +480,7 @@ async def get_production_jobs_stats():
                 WHERE jot.Void_c != 1 
                     AND jot.DocStatus_c != 'CP' 
                     AND jop.QtyStatus_c != 'FF' 
-                    AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+                    AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND CURDATE()
             """)
             
             stats = cursor.fetchone()
@@ -529,13 +526,13 @@ async def get_data_loading_stats():
             stats_query = """
             SELECT 
                 COUNT(*) as total_jobs,
-                AVG(DATEDIFF(jot.TargetDate_dd, jot.CreateDate_dd)) as avg_lead_time_days,
-                MIN(jot.TargetDate_dd) as earliest_deadline,
-                MAX(jot.TargetDate_dd) as latest_deadline,
-                COUNT(CASE WHEN jot.TargetDate_dd < CURDATE() THEN 1 END) as overdue_jobs,
-                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as jobs_next_30_days,
-                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY) THEN 1 END) as jobs_next_60_days,
-                COUNT(CASE WHEN jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) THEN 1 END) as jobs_next_90_days,
+                AVG(DATEDIFF(jot.TargetDate_dd, jot.CreateDate_dt)) as avg_lead_time_days,
+                MIN(jot.CreateDate_dt) as earliest_plan_date,
+                MAX(jot.CreateDate_dt) as latest_plan_date,
+                COUNT(CASE WHEN jot.CreateDate_dt < DATE_SUB(CURDATE(), INTERVAL 60 DAY) THEN 1 END) as old_jobs,
+                COUNT(CASE WHEN jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE() THEN 1 END) as jobs_last_30_days,
+                COUNT(CASE WHEN jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND CURDATE() THEN 1 END) as jobs_last_60_days,
+                COUNT(CASE WHEN jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND CURDATE() THEN 1 END) as jobs_last_90_days,
                 COUNT(CASE WHEN jot.DocStatus_c != 'CP' AND jop.QtyStatus_c != 'FF' THEN 1 END) as active_jobs
             FROM tbl_jo_process AS jop 
             INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
@@ -566,8 +563,8 @@ async def get_data_loading_stats():
             performance_warnings = []
             if estimated_or_tools_variables > 10000:
                 performance_warnings.append("High variable count may impact OR-Tools performance")
-            if stats['overdue_jobs'] > 100:
-                performance_warnings.append("High number of overdue jobs detected")
+            if stats['old_jobs'] > 100:
+                performance_warnings.append("High number of old jobs detected")
             if avg_lead_time > 60:
                 performance_warnings.append("Very long average lead times detected")
             
@@ -575,16 +572,16 @@ async def get_data_loading_stats():
                 "statistics": {
                     "total_jobs": stats['total_jobs'],
                     "active_jobs": stats['active_jobs'],
-                    "overdue_jobs": stats['overdue_jobs'],
+                    "old_jobs": stats['old_jobs'],
                     "avg_lead_time_days": round(avg_lead_time, 1),
                     "job_distribution": {
-                        "next_30_days": stats['jobs_next_30_days'],
-                        "next_60_days": stats['jobs_next_60_days'], 
-                        "next_90_days": stats['jobs_next_90_days']
+                        "last_30_days": stats['jobs_last_30_days'],
+                        "last_60_days": stats['jobs_last_60_days'], 
+                        "last_90_days": stats['jobs_last_90_days']
                     },
                     "date_range": {
-                        "earliest_deadline": stats['earliest_deadline'],
-                        "latest_deadline": stats['latest_deadline']
+                        "earliest_plan_date": stats['earliest_plan_date'],
+                        "latest_plan_date": stats['latest_plan_date']
                     }
                 },
                 "recommendations": {

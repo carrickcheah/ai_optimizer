@@ -49,7 +49,8 @@ def schedule_jobs(
     time_limit_seconds: int = 30,  # Reduced from 300 to 30 seconds
     max_operators: Optional[int] = None,
     max_jobs_limit: int = 200,  # New parameter to limit problem size
-    planning_horizon_days: int = 14  # New parameter to limit planning horizon
+    planning_horizon_days: int = 14,  # New parameter to limit planning horizon
+    enforce_deadlines: bool = True  # New parameter to enable/disable deadline constraints
 ) -> Dict[str, Any]:
     """
     Schedule jobs using Google's CP-SAT solver with performance optimizations.
@@ -63,6 +64,7 @@ def schedule_jobs(
         max_operators: Maximum number of operators (optional)
         max_jobs_limit: Maximum number of jobs to process for performance (default: 200)
         planning_horizon_days: Planning horizon in days (default: 14 days)
+        enforce_deadlines: Whether to enforce deadline constraints (default: True)
         
     Returns:
         Schedule dictionary with results and metadata
@@ -231,6 +233,9 @@ def schedule_jobs(
 
     # Add hard START_DATE constraints with priority-based conflict resolution
     _add_start_date_constraints(model, all_tasks, start_time_preferences, logger)
+    
+    # Add HARD LCD_DATE (deadline) constraints - jobs MUST complete before deadline
+    _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines)
 
     # Define objective function
     objective_terms = _create_objective_function(
@@ -520,6 +525,32 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                 model.Add(start_var >= start_date_rel_int)
                 logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
 
+def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines):
+    """Add hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline."""
+    if not enforce_deadlines:
+        logger.info("Deadline constraints disabled - skipping LCD_DATE constraints")
+        return
+        
+    logger.info("Adding hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline")
+    
+    current_time_rel = epoch_to_relative_hours(datetime_to_epoch(datetime.now()))
+    grace_period_hours = 24  # 24-hour grace period for already late jobs
+    
+    for job_id, due_date_rel_int in jobs_with_due_dates.items():
+        if job_id in all_tasks:
+            end_var = all_tasks[job_id]['end']
+            
+            # If the job's deadline is already in the past, give it a grace period
+            if due_date_rel_int < current_time_rel:
+                adjusted_deadline = current_time_rel + grace_period_hours
+                model.Add(end_var <= int(adjusted_deadline))
+                logger.debug(f"Added grace period LCD_DATE constraint for late job {job_id}: end <= {int(adjusted_deadline)} (original: {due_date_rel_int})")
+            else:
+                model.Add(end_var <= due_date_rel_int)
+                logger.debug(f"Added hard LCD_DATE constraint for job {job_id}: end <= {due_date_rel_int}")
+        else:
+            logger.warning(f"Job {job_id} has a due date but was not found in all_tasks")
+
 def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_preferences, all_tasks, horizon, logger):
     """Create the objective function for the model."""
     objective_terms = []
@@ -556,27 +587,9 @@ def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_
     model.AddMaxEquality(makespan, all_ends)
     objective_terms.append(makespan)
     
-    # 3. LCD_DATE Tardiness (due date violations)
-    tardiness_vars = []
-    for job_id, due_date_rel_int in jobs_with_due_dates.items():
-        if job_id in all_tasks:
-            end_var = all_tasks[job_id]['end']
-            tardiness_var = model.NewIntVar(0, horizon * 2, f'tardiness_{job_id}')
-            model.Add(tardiness_var >= 0)
-            model.Add(tardiness_var >= end_var - due_date_rel_int)
-            tardiness_vars.append(tardiness_var)
-        else:
-            logger.warning(f"Job {job_id} has a due date but was not found in all_tasks")
-
-    if tardiness_vars:
-        tardiness_weight = 50  # Higher weight than before but lower than priority
-        total_tardiness_var = model.NewIntVar(0, horizon * 2 * len(tardiness_vars), 'total_tardiness')
-        model.Add(total_tardiness_var == sum(tardiness_vars))
-        objective_terms.append(total_tardiness_var * tardiness_weight)
-        logger.debug(f"Added tardiness minimization for {len(tardiness_vars)} jobs with weight {tardiness_weight}")
-    
-    # Note: START_DATE constraints are now EXACT equality constraints (hard)
-    # Constraint priority order: START_DATE (exact) → Priority (weight 100) → LCD_DATE (weight 50) → Makespan (weight 1)
+    # Note: LCD_DATE constraints are now HARD constraints (jobs MUST complete before deadline)
+    # START_DATE constraints are EXACT equality constraints (hard)
+    # Constraint priority order: LCD_DATE (hard) → START_DATE (hard) → Priority (weight 100) → Makespan (weight 1)
     
     return objective_terms
 

@@ -271,10 +271,10 @@ const DetailedScheduleTable: React.FC = () => {
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
-  // Data loading strategy parameters
+  // Data loading strategy parameters (for display only - reports endpoint uses its own config)
   const DATA_LOADING_CONFIG = {
-    bufferDays: 30,           // Load jobs from 30 days ago (late jobs)
-    planningHorizonDays: 60,  // Load jobs up to 60 days ahead
+    bufferDays: 30,           // Display: Buffer jobs from 30 days ago 
+    planningHorizonDays: 30,  // Display: Auto-moving 30-day window forward 
     refreshIntervalMinutes: 60 // Refresh every 60 minutes
   };
 
@@ -283,16 +283,9 @@ const DetailedScheduleTable: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        // Construct query parameters for pagination
-        const scheduleParams = new URLSearchParams({
-          page: currentPage.toString(),
-          page_size: itemsPerPage.toString(),
-          // Add other existing params like sort_field, sort_order if needed by this endpoint
-        });
-
-        // Assuming detailed-schedule endpoint supports pagination
-        const scheduleUrl = `${API_BASE_URL}/reports/detailed-schedule?${scheduleParams.toString()}`;
-        const overviewUrl = `${API_BASE_URL}/reports/schedule-overview`; // Assuming overview doesn't need pagination
+        // Use the reports endpoint that has the correct field format with scheduling data
+        const scheduleUrl = `${API_BASE_URL}/reports/detailed-schedule`;
+        const overviewUrl = `${API_BASE_URL}/reports/schedule-overview`;
 
         const [scheduleResponse, overviewResponse] = await Promise.all([
           fetch(scheduleUrl),
@@ -304,20 +297,25 @@ const DetailedScheduleTable: React.FC = () => {
           throw new Error(errorData.detail || `Failed to fetch table data: ${scheduleResponse.statusText}`);
         }
         
-        // Assuming API returns pagination info along with items
+        // The reports endpoint returns an array directly, not paginated data
         const scheduleResult = await scheduleResponse.json(); 
-        const resultData = scheduleResult.items || scheduleResult;
+        const resultData = Array.isArray(scheduleResult) ? scheduleResult : [];
         
-        setData(resultData); // Handle if API returns array directly or object with items
+        // Apply client-side pagination since reports endpoint doesn't support server-side pagination
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const paginatedData = resultData.slice(startIndex, endIndex);
         
-        // Update pagination state from API response if available
-        // This part needs to be adapted based on the actual API response structure for this endpoint
+        setData(paginatedData);
+        setLastRefresh(new Date());
+        
+        // Update pagination state for client-side pagination
         setPagination(prev => ({
           ...prev,
-          currentPage: scheduleResult.page || currentPage,
-          totalPages: scheduleResult.total_pages || Math.ceil((scheduleResult.total_items || (scheduleResult.items || scheduleResult).length) / itemsPerPage),
-          totalItems: scheduleResult.total_items || (scheduleResult.items || scheduleResult).length,
-          itemsPerPage: scheduleResult.page_size || itemsPerPage,
+          currentPage: currentPage,
+          totalPages: Math.ceil(resultData.length / itemsPerPage),
+          totalItems: resultData.length,
+          itemsPerPage: itemsPerPage,
         }));
         
         if (overviewResponse.ok) {
@@ -334,7 +332,18 @@ const DetailedScheduleTable: React.FC = () => {
       }
       setIsLoading(false);
     };
+
+    // Initial fetch
     fetchData();
+
+    // Set up automatic refresh every 60 minutes
+    const refreshInterval = setInterval(() => {
+      console.log(`Auto-refreshing schedule data... (Buffer: ${DATA_LOADING_CONFIG.bufferDays} days, Horizon: ${DATA_LOADING_CONFIG.planningHorizonDays} days)`);
+      fetchData(pagination.currentPage, pagination.itemsPerPage);
+    }, DATA_LOADING_CONFIG.refreshIntervalMinutes * 60 * 1000); // Convert minutes to milliseconds
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(refreshInterval);
   }, [pagination.currentPage, pagination.itemsPerPage]); // Re-fetch when page or itemsPerPage changes
 
   const handleRowsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -544,6 +553,13 @@ const DetailedScheduleTable: React.FC = () => {
       <div className="card">
         <div className="card-header">
           <h2>Detailed Production Schedule</h2>
+          <div className="header-info">
+            <small className="text-light">
+              Auto-moving window: {DATA_LOADING_CONFIG.bufferDays} days back to {DATA_LOADING_CONFIG.planningHorizonDays} days ahead | 
+              Auto-refresh: {DATA_LOADING_CONFIG.refreshIntervalMinutes} min | 
+              Last refresh: {lastRefresh.toLocaleTimeString()}
+            </small>
+          </div>
         </div>
         <div className="card-body">
           <div className="row mb-3">

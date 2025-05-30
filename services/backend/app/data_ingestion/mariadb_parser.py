@@ -175,15 +175,15 @@ def load_jobs_planning_data(max_jobs: int = 100):
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c != 'CP' 
             AND jop.QtyStatus_c != 'FF' 
-            AND jot.TargetDate_dd BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)
-        ORDER BY jot.TargetDate_dd ASC, jop.TxnId_i ASC
+            AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
         LIMIT %s
         """
         
         cursor.execute(jobs_query, (max_jobs,))
         raw_jobs = cursor.fetchall()
         logger.info(f"Fetched {len(raw_jobs)} raw job records from joined tables (requested max: {max_jobs}).")
-
+        
         # Process the results
         date_fields = ['lcd_date', 'material_arrival', 'start_date']
 

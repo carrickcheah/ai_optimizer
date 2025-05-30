@@ -247,6 +247,8 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .card-header h2 {
@@ -254,6 +256,17 @@ body {
   font-weight: 600;
   color: white;
   font-size: 18px;
+  align-self: flex-start;
+}
+
+.header-info {
+  align-self: flex-start;
+  opacity: 0.9;
+}
+
+.header-info small {
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .table {
@@ -295,15 +308,15 @@ body {
 }
 
 /* Specific column widths - Total: 100% (22 columns) */
-.schedule-table th:nth-child(1), .schedule-table td:nth-child(1) { width: 3%; } /* No (sequence number) */
-.schedule-table th:nth-child(2), .schedule-table td:nth-child(2) { width: 6%; } /* Plan Date */
-.schedule-table th:nth-child(3), .schedule-table td:nth-child(3) { width: 6%; } /* Start Time */
-.schedule-table th:nth-child(4), .schedule-table td:nth-child(4) { width: 6%; } /* End Time */
-.schedule-table th:nth-child(5), .schedule-table td:nth-child(5) { width: 6%; } /* LCD Date */
-.schedule-table th:nth-child(6), .schedule-table td:nth-child(6) { width: 6%; } /* Req. Start */
+.schedule-table th:nth-child(1), .schedule-table td:nth-child(1) { width: 2%; } /* No (sequence number) */
+.schedule-table th:nth-child(2), .schedule-table td:nth-child(2) { width: 5%; } /* Plan Date */
+.schedule-table th:nth-child(3), .schedule-table td:nth-child(3) { width: 5%; } /* Start Time */
+.schedule-table th:nth-child(4), .schedule-table td:nth-child(4) { width: 5%; } /* End Time */
+.schedule-table th:nth-child(5), .schedule-table td:nth-child(5) { width: 5%; } /* LCD Date */
+.schedule-table th:nth-child(6), .schedule-table td:nth-child(6) { width: 5%; } /* Req. Start */
 .schedule-table th:nth-child(7), .schedule-table td:nth-child(7) { width: 4%; } /* Depend */
-.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 5%; } /* Job Name */
-.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 5%; } /* Process Code */
+.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 7%; } /* Job Name */
+.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 7%; } /* Process Code */
 .schedule-table th:nth-child(10), .schedule-table td:nth-child(10) { width: 5%; } /* Resource Code */
 .schedule-table th:nth-child(11), .schedule-table td:nth-child(11) { width: 3%; } /* Operator */
 .schedule-table th:nth-child(12), .schedule-table td:nth-child(12) { width: 5%; } /* Job Qty */
@@ -313,8 +326,8 @@ body {
 .schedule-table th:nth-child(16), .schedule-table td:nth-child(16) { width: 4%; } /* Setting Hr */
 .schedule-table th:nth-child(17), .schedule-table td:nth-child(17) { width: 4%; } /* Break Hr */
 .schedule-table th:nth-child(18), .schedule-table td:nth-child(18) { width: 4%; } /* No Prod Hr */
-.schedule-table th:nth-child(19), .schedule-table td:nth-child(19) { width: 4%; } /* Accum. Output */
-.schedule-table th:nth-child(20), .schedule-table td:nth-child(20) { width: 4%; } /* Bal. Qty */
+.schedule-table th:nth-child(19), .schedule-table td:nth-child(19) { width: 5%; } /* Accum. Output */
+.schedule-table th:nth-child(20), .schedule-table td:nth-child(20) { width: 5%; } /* Bal. Qty */
 .schedule-table th:nth-child(21), .schedule-table td:nth-child(21) { width: 4%; } /* Bal Hr */
 .schedule-table th:nth-child(22), .schedule-table td:nth-child(22) { width: 5%; } /* Buffer Status */
 
