@@ -53,6 +53,11 @@ def create_app() -> FastAPI:
     async def root():
         return {"message": "AI Optimizer API is running"}
     
+    # Add simple health endpoint
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy", "service": "ai-optimizer"}
+    
     return app
 
 # Create the FastAPI application
