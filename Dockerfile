@@ -1,12 +1,14 @@
 # Multi-stage build for AI Optimizer Full Stack
 # Stage 1: Build Frontend (React + Vite)
-FROM node:18-alpine as frontend-builder
+FROM node:20-alpine as frontend-builder
 
 WORKDIR /app/frontend
 
 # Copy frontend package files
 COPY services/frontend/package*.json ./
-RUN npm ci --only=production
+
+# Install ALL dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy frontend source and build
 COPY services/frontend/ ./
