@@ -50,7 +50,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=frontend-builder /app/frontend/dist /var/www/html
 
 # Copy backend application
-COPY services/backend/app /app/backend
+COPY services/backend/app /app/backend/app
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
