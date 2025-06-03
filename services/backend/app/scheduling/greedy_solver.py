@@ -4,6 +4,10 @@ from datetime import datetime
 from collections import defaultdict
 from typing import List, Dict, Any, Tuple, Optional
 import time
+import os
+import math
+
+from ortools.sat.python import cp_model
 
 from app.utils.time_utils import (
     epoch_to_datetime, 
@@ -20,6 +24,7 @@ from app.scheduling.scheduler_utils import (
     validate_job_data,
     group_jobs_by_family
 )
+from app.scheduling.time_availability import is_time_available, get_next_available_slot
 
 # Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
@@ -227,6 +232,13 @@ def greedy_schedule(
                                f"deadline={format_datetime_for_display(epoch_to_datetime(lcd_deadline))}")
                     return False
         
+        # Check time availability (working hours, holidays, break times)
+        if not is_time_available(start_time_epoch_val, end_time_epoch_val):
+            logger.debug(f"Job {job.get('job_id')} conflicts with non-working hours, holidays, or break times: "
+                       f"{format_datetime_for_display(epoch_to_datetime(start_time_epoch_val))} to "
+                       f"{format_datetime_for_display(epoch_to_datetime(end_time_epoch_val))}")
+            return False
+        
         return True
     
     # First schedule START_DATE jobs since they have fixed start times
@@ -383,13 +395,26 @@ def greedy_schedule(
                                 machine_available_time, operators_in_use, family_end_times, 
                                 process_end_times, family, process_num, max_operators)
         else:
-            # Try to find next available slot
-            found_slot = _find_next_available_slot(job_item, machine_id, possible_start_time, schedule, 
-                                                 scheduled_jobs, machine_available_time, operators_in_use, 
-                                                 family_end_times, process_end_times, family, process_num,
-                                                 max_operators, unscheduled_jobs_list)
-            if not found_slot:
-                logger.warning(f"Could not find a slot for job {job_id} on machine {machine_id}")
+            # Try to find next available slot using time availability checker
+            duration_hours = job_item['processing_time'] / 3600  # Convert seconds to hours
+            next_available = get_next_available_slot(possible_start_time, duration_hours)
+            
+            if next_available:
+                # Check if this slot works with other constraints
+                if can_schedule_job(job_item, machine_id, next_available):
+                    _schedule_job_at_time(job_item, machine_id, next_available, schedule, scheduled_jobs, 
+                                        machine_available_time, operators_in_use, family_end_times, 
+                                        process_end_times, family, process_num, max_operators)
+                else:
+                    # Fall back to original slot finding if time available slot doesn't work
+                    found_slot = _find_next_available_slot(job_item, machine_id, possible_start_time, schedule, 
+                                                         scheduled_jobs, machine_available_time, operators_in_use, 
+                                                         family_end_times, process_end_times, family, process_num,
+                                                         max_operators, unscheduled_jobs_list)
+                    if not found_slot:
+                        logger.warning(f"Could not find a slot for job {job_id} on machine {machine_id}")
+            else:
+                logger.warning(f"No available time slots found for job {job_id} within search window")
     
     # Handle jobs that couldn't be assigned to families
     if unassigned_jobs:
@@ -511,6 +536,13 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
             else:
                 if end_time_val > lcd_deadline:
                     return False
+        
+        # Check time availability (working hours, holidays, break times)
+        if not is_time_available(start_time_val, end_time_val):
+            logger.debug(f"Job {job_id} conflicts with non-working hours, holidays, or break times: "
+                       f"{format_datetime_for_display(epoch_to_datetime(start_time_val))} to "
+                       f"{format_datetime_for_display(epoch_to_datetime(end_time_val))}")
+            return False
         
         return True
 

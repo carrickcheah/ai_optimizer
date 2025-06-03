@@ -1,0 +1,48 @@
+[project]
+name = "ai-optimizer"
+version = "0.1.0"
+description = "Production-grade AI Optimizer service for intelligent resource optimization"
+readme = "readme.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Core web framework
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.2",
+    
+    # Database & data handling
+    "mysql-connector-python>=9.3.0",
+    "python-dotenv>=1.0.0",
+    "pytz>=2025.2",
+    "requests>=2.32.3",
+    
+    # System monitoring
+    "psutil>=7.0.0",
+    
+    # Optional: Lightweight ML (only if needed for optimization algorithms)
+    # "numpy>=1.24.0",  # Uncomment only if you need mathematical operations
+    # "ortools>=9.12.4544",  # Uncomment only if you use OR-Tools optimization
+    
+    # MCP framework
+    "fastmcp>=2.5.1",
+]
+
+[project.optional-dependencies]
+# Heavy ML dependencies - install only when needed
+ml = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "ortools>=9.12.4544",
+]
+
+# Visualization dependencies - for development/analysis only
+viz = [
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "plotly>=5.15.0",
+]
+
+# GUI dependencies - should not be in backend
+gui = [
+    "pyside6>=6.9.0",
+] 

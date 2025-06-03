@@ -33,6 +33,7 @@ from app.utils.time_utils import (
 )
 from app.scheduling.setup_buffer import get_start_date_epoch
 from app.scheduling.scheduler_utils import extract_process_number, extract_job_family, normalize_job_fields, validate_job_data
+from app.scheduling.time_availability import is_time_available, get_next_available_slot
 
 # Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
@@ -698,6 +699,7 @@ def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_
     
     # Prepare results
     results = {'_metadata': metadata}
+    time_adjusted_jobs = 0
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         logger.info(f"Solution found. Objective value: {solver.ObjectiveValue()}")
@@ -709,6 +711,28 @@ def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_
             # Convert relative start/end times back to epoch timestamps
             start_epoch = relative_hours_to_epoch(start_val_rel)
             end_epoch = relative_hours_to_epoch(end_val_rel)
+            
+            # Check time availability and adjust if necessary
+            if not is_time_available(start_epoch, end_epoch):
+                logger.debug(f"Job {job_id} scheduled outside working hours: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
+                
+                # Calculate job duration in hours
+                duration_hours = (end_epoch - start_epoch) / 3600
+                
+                # Find next available slot
+                next_available_start = get_next_available_slot(start_epoch, duration_hours)
+                
+                if next_available_start:
+                    new_start_epoch = next_available_start
+                    new_end_epoch = new_start_epoch + (end_epoch - start_epoch)  # Keep same duration
+                    
+                    logger.info(f"Moved job {job_id} from {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(new_start_epoch))} (working hours adjustment)")
+                    
+                    start_epoch = new_start_epoch
+                    end_epoch = new_end_epoch
+                    time_adjusted_jobs += 1
+                else:
+                    logger.warning(f"Could not find available time slot for job {job_id} - keeping original schedule")
             
             machine_val = task_info['machine']
             priority = task_info['job'].get('priority', 3)
@@ -727,6 +751,14 @@ def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_
             logger.debug(f"Scheduled {job_id} on {machine_val}: "
                         f"Start={format_datetime_for_display(epoch_to_datetime(start_epoch))}, "
                         f"End={format_datetime_for_display(epoch_to_datetime(end_epoch))}")
+
+        # Add time adjustment info to metadata
+        if time_adjusted_jobs > 0:
+            logger.info(f"Adjusted {time_adjusted_jobs} jobs to comply with working hours, holidays, and break times")
+            metadata['time_adjustments'] = {
+                'jobs_moved': time_adjusted_jobs,
+                'reason': 'Working hours, holidays, and break time compliance'
+            }
 
         # Validate sequence if enforced
         if enforce_sequence:
