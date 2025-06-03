@@ -1,0 +1,7 @@
+node_modules/
+.git/
+*.log
+.env
+__pycache__/
+.pytest_cache/
+.venv/
