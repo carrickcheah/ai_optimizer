@@ -796,6 +796,28 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
 
       {overview && (
         <div className="overview-section">
+          <div className="overview-left">
+            <h3>Schedule Overview</h3>
+            <div className="overview-stats">
+              <div className="stat-item">
+                <span className="stat-label">Total Jobs:</span>
+                <span className="stat-value">{overview.total_jobs}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Date Range:</span>
+                <span className="stat-value">N/A</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Total Duration:</span>
+                <span className="stat-value">0 hours</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Records Displayed:</span>
+                <span className="stat-value">{overview.total_jobs}</span>
+              </div>
+            </div>
+          </div>
+          
           <div className="overview-right">
             <h3>Buffer Status</h3>
             <div className="buffer-overview">

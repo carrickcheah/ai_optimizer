@@ -98,7 +98,7 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
                 machine_names_list, 
                 setup_times_data, 
                 enforce_sequence=True, 
-                time_limit_seconds=20,   
+                time_limit_seconds=120,   
                 max_jobs_limit=10,        
                 planning_horizon_days=14  
             )

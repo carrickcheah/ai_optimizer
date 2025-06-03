@@ -46,7 +46,7 @@ def schedule_jobs(
     machines: List[str], 
     setup_times: Optional[Dict] = None, 
     enforce_sequence: bool = True, 
-    time_limit_seconds: int = 30,  # Reduced from 300 to 30 seconds
+    time_limit_seconds: int = 120,  # Reduced from 300 to 30 seconds
     max_operators: Optional[int] = None,
     max_jobs_limit: int = 1000,  # New parameter to limit problem size
     planning_horizon_days: int = 60,  # New parameter to limit planning horizon
