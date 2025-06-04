@@ -20,11 +20,10 @@ FROM python:3.11-slim as backend-builder
 # Install uv for fast dependency management
 RUN pip install uv
 
-WORKDIR /app
+WORKDIR /app/backend
 
-# Copy root dependency files (where the actual dependencies are defined)
-COPY pyproject.toml ./
-COPY uv.lock* ./
+# Copy backend dependency files
+COPY services/backend/pyproject.toml ./
 
 # Install dependencies to virtual environment
 RUN uv venv /opt/venv
