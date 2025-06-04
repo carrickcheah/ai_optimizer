@@ -15,13 +15,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pytz>=2025.2",
     "requests>=2.32.3",
+    "pandas>=2.0.0",
     
     # System monitoring
     "psutil>=7.0.0",
     
-    # Optional: Lightweight ML (only if needed for optimization algorithms)
-    # "numpy>=1.24.0",  # Uncomment only if you need mathematical operations
-    # "ortools>=9.12.4544",  # Uncomment only if you use OR-Tools optimization
+    # ML & optimization (required by the code)
+    "numpy>=1.24.0",
+    "ortools>=9.12.4544",
+    "seaborn>=0.12.0",
+    "plotly>=5.15.0",
     
     # MCP framework
     "fastmcp>=2.5.1",
