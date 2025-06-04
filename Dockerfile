@@ -20,11 +20,11 @@ FROM python:3.11-slim as backend-builder
 # Install uv for fast dependency management
 RUN pip install uv
 
-WORKDIR /app/backend
+WORKDIR /app
 
-# Copy backend dependency files
-COPY services/backend/pyproject.toml ./
-COPY services/backend/uv.lock* ./
+# Copy root dependency files (where the actual dependencies are defined)
+COPY pyproject.toml ./
+COPY uv.lock* ./
 
 # Install dependencies to virtual environment
 RUN uv venv /opt/venv
@@ -49,8 +49,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy built frontend to nginx directory
 COPY --from=frontend-builder /app/frontend/dist /var/www/html
 
+# Set working directory for backend
+WORKDIR /app/backend
+
 # Copy backend application
-COPY services/backend/app /app/backend/app
+COPY services/backend/app ./app
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -60,7 +63,7 @@ RUN useradd --create-home --shell /bin/bash app
 
 # Setup directories and permissions
 RUN mkdir -p /app/logs && chown app:app /app/logs
-RUN mkdir -p /var/log/nginx && chown app:app /var/log/nginx
+RUN mkdir -p /var/log/nginx
 
 # Expose ports
 EXPOSE 80 8000
