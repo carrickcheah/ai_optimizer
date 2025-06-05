@@ -109,7 +109,7 @@ def reduce_non_productive_time(
                         else:
                             # DAY_NEED is 0/negative, reduce HOURS_NEED instead
                             if hours_need is not None:
-                                try:
+                    try:
                                     hours_need_val = float(hours_need)
                                     job['hours_need'] = max(0, hours_need_val - time_saved)
                                     logger.debug(f"DAY_NEED is 0/negative, reduced HOURS_NEED for job {job.get('job_id', 'unknown')}: "
@@ -208,7 +208,7 @@ def should_reschedule(jobs: List[Dict[str, Any]], reduction_percent: int) -> boo
             processing_time = float(processing_time) if processing_time is not None else 0
             
             if processing_time <= 0:
-                continue
+            continue
             
             setup_time = float(job.get('setup_time', 0) or 0)
             break_time = float(job.get('break_time', 0) or 0)

@@ -237,7 +237,7 @@ def schedule_jobs(
     
     # Add HARD LCD_DATE (deadline) constraints - jobs MUST complete before deadline
     _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines)
-    
+
     # Add working hours constraints to prevent midnight scheduling
     _add_working_hours_constraints(model, all_tasks, logger)
 

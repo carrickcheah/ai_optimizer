@@ -203,7 +203,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       if (searchTerm !== search) { // Only update if search actually changed
-        setSearch(searchTerm);
+      setSearch(searchTerm);
         fetchData(1, pagination.itemsPerPage, sortField, sortOrder, searchTerm);
       }
     }, 500); // 500ms debounce
