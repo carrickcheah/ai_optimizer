@@ -34,6 +34,7 @@ from app.utils.time_utils import (
 from app.scheduling.setup_buffer import get_start_date_epoch
 from app.scheduling.scheduler_utils import extract_process_number, extract_job_family, normalize_job_fields, validate_job_data
 from app.scheduling.time_availability import is_time_available, get_next_available_slot
+from app.config.scheduler_config import scheduler_config
 
 # Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
@@ -47,11 +48,11 @@ def schedule_jobs(
     machines: List[str], 
     setup_times: Optional[Dict] = None, 
     enforce_sequence: bool = True, 
-    time_limit_seconds: int = 120,  # Reduced from 300 to 30 seconds
+    time_limit_seconds: Optional[int] = None,
     max_operators: Optional[int] = None,
-    max_jobs_limit: int = 1000,  # New parameter to limit problem size
-    planning_horizon_days: int = 60,  # New parameter to limit planning horizon
-    enforce_deadlines: bool = True  # New parameter to enable/disable deadline constraints
+    max_jobs_limit: Optional[int] = None,
+    planning_horizon_days: Optional[int] = None,
+    enforce_deadlines: bool = True
 ) -> Dict[str, Any]:
     """
     Schedule jobs using Google's CP-SAT solver with performance optimizations.
@@ -61,16 +62,31 @@ def schedule_jobs(
         machines: List of machine names or machine dictionaries with MachineName_v key
         setup_times: Optional setup times (not used in CP-SAT)
         enforce_sequence: Whether to enforce job sequence constraints
-        time_limit_seconds: Solver time limit in seconds (default: 30s for performance)
+        time_limit_seconds: Solver time limit in seconds (uses config default if None)
         max_operators: Maximum number of operators (optional)
-        max_jobs_limit: Maximum number of jobs to process for performance (default: 1000)
-        planning_horizon_days: Planning horizon in days (default: 60 days)
+        max_jobs_limit: Maximum number of jobs to process (uses config default if None)
+        planning_horizon_days: Planning horizon in days (uses config default if None)
         enforce_deadlines: Whether to enforce deadline constraints (default: True)
         
     Returns:
         Schedule dictionary with results and metadata
     """
+    # Apply configuration defaults for None parameters
+    if time_limit_seconds is None:
+        time_limit_seconds = scheduler_config.solver_time_limit_seconds
+    if max_jobs_limit is None:
+        max_jobs_limit = scheduler_config.max_jobs_limit
+    if planning_horizon_days is None:
+        planning_horizon_days = scheduler_config.planning_horizon_days
+    
+    # Apply dynamic limits based on problem size
+    dynamic_limits = scheduler_config.get_dynamic_limits(len(jobs))
+    time_limit_seconds = dynamic_limits['time_limit_seconds']
+    planning_horizon_days = min(planning_horizon_days, dynamic_limits['planning_horizon_days'])
+    max_jobs_limit = min(max_jobs_limit, dynamic_limits['max_jobs_limit'])
+    
     logger.info(f"Using CP-SAT solver to schedule {len(jobs)} jobs on {len(machines)} machines")
+    logger.info(f"Configuration: time_limit={time_limit_seconds}s, max_jobs={max_jobs_limit}, horizon={planning_horizon_days}d")
     start_time = time.time()
     
     # Performance optimization: Filter and limit jobs
@@ -307,7 +323,7 @@ def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
         max_hours_need = 1
         
     horizon = int(max_hours_need * len(jobs) * 1.5) + 24
-    return max(horizon, 24*7)  # Minimum one week
+    return max(horizon, scheduler_config.minimum_horizon_hours)
 
 def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
     """Calculate total hours needed including non-working time components.
@@ -530,35 +546,86 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                 logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
 
 def _add_working_hours_constraints(model, all_tasks, logger):
-    """Add SIMPLE working hours constraints: jobs can only start between 8am-6pm each day."""
-    logger.info("Adding SIMPLE working hours constraints (8am-6pm daily)")
+    """Add working hours constraints using ai_arrangable_hour table configuration."""
+    from app.scheduling.time_availability import TimeAvailabilityChecker
     
-    # SIMPLE approach: For each job, constrain start time to working hours
-    # Working hours: 8am-6pm = hours 8-18 each day
+    time_checker = TimeAvailabilityChecker()
+    logger.info("Adding working hours constraints from ai_arrangable_hour table")
+    
+    # Force cache refresh to ensure we have latest data
+    time_checker._refresh_cache_if_needed()
+    
+    # Get working hours for each day of the week (1=Monday, 7=Sunday)
+    working_hours_by_day = {}
+    has_any_working_hours = False
+    
+    for day_of_week in range(1, 8):  # 1-7 for Monday-Sunday
+        # Get working periods for this day
+        periods = time_checker._arrangable_hours_cache.get(day_of_week, [])
+        if periods:
+            # Convert time objects to hours (assuming we want hour granularity)
+            day_periods = []
+            for period in periods:
+                start_time = period['start_time']  # Already converted to time object
+                end_time = period['end_time']
+                
+                # Convert time to hours since midnight
+                start_hour = start_time.hour + start_time.minute / 60.0
+                end_hour = end_time.hour + end_time.minute / 60.0
+                
+                # Handle overnight periods (end < start)
+                if end_hour < start_hour:
+                    # Split overnight period into two: start to midnight, midnight to end
+                    day_periods.append((start_hour, 24.0))
+                    day_periods.append((0.0, end_hour))
+                else:
+                    day_periods.append((start_hour, end_hour))
+            
+            working_hours_by_day[day_of_week] = day_periods
+            has_any_working_hours = True
+            logger.debug(f"Day {day_of_week} working hours: {day_periods}")
+        else:
+            working_hours_by_day[day_of_week] = []  # No working hours
+            logger.debug(f"Day {day_of_week}: No working hours")
+    
+    # Fallback to safe default if no working hours are loaded (e.g., database connection issues)
+    if not has_any_working_hours:
+        logger.warning("No working hours found in database! Using fallback: 6 AM - 6 PM Monday-Friday")
+        # Set reasonable defaults: 6 AM - 6 PM, Monday to Friday
+        for day_of_week in range(1, 6):  # Monday to Friday
+            working_hours_by_day[day_of_week] = [(6.0, 18.0)]  # 6 AM to 6 PM
+        # Saturday and Sunday: no working hours
+        working_hours_by_day[6] = []
+        working_hours_by_day[7] = []
+        has_any_working_hours = True
+    
     constraints_added = 0
     
     for job_id, task_info in all_tasks.items():
         start_var = task_info['start']
         job_duration = task_info['hours']
         
-        # Simple constraint: For any day, job can only start between 8am-6pm
-        # and must finish by 6pm (so start <= 18 - duration)
-        
         # Create constraint for each possible day (up to 7 days)
         valid_slots = []
         
         for day in range(7):  # Look at first 7 days only
-            # Calculate working hours for this day
-            day_start = day * 24 + 8   # 8am on day N
-            day_end = day * 24 + 18    # 6pm on day N
+            # Get day of week (Monday = 0 maps to day_of_week = 1)
+            day_of_week = (day % 7) + 1
             
-            # Latest possible start time (job must finish by 6pm)
-            latest_start = day_end - job_duration
+            periods = working_hours_by_day.get(day_of_week, [])
             
-            if latest_start >= day_start:
-                # Valid time slot exists for this day
-                valid_slots.append((day_start, latest_start))
-                logger.debug(f"Job {job_id} Day {day}: Can start between {day_start}-{latest_start} hours")
+            for start_hour, end_hour in periods:
+                # Calculate absolute hours from reference time
+                day_start = day * 24 + start_hour
+                day_end = day * 24 + end_hour
+                
+                # Latest possible start time (job must finish within working hours)
+                latest_start = day_end - job_duration
+                
+                if latest_start >= day_start:
+                    # Valid time slot exists for this period
+                    valid_slots.append((int(day_start), int(latest_start)))
+                    logger.debug(f"Job {job_id} Day {day} (DoW {day_of_week}): Can start between {day_start:.1f}-{latest_start:.1f} hours")
         
         if valid_slots:
             # Create constraint: start_var must be in one of the valid slots
@@ -584,9 +651,12 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             else:
                 logger.warning(f"No valid time slots for job {job_id} (duration {job_duration}h too long)")
         else:
-            logger.warning(f"Job {job_id} cannot fit in any working day (duration: {job_duration}h)")
+            # Emergency fallback: if no working hours found, at least prevent midnight starts
+            logger.warning(f"Job {job_id} has no working hours - applying emergency constraint (start >= {scheduler_config.emergency_minimum_start_hour})")
+            model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
+            constraints_added += 1
     
-    logger.info(f"Added SIMPLE working hours constraints for {constraints_added} jobs")
+    logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
 
 
 def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines):
@@ -598,7 +668,7 @@ def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enf
     logger.info("Adding hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline")
     
     current_time_rel = epoch_to_relative_hours(datetime_to_epoch(datetime.now()))
-    grace_period_hours = 24  # 24-hour grace period for already late jobs
+    grace_period_hours = scheduler_config.grace_period_hours
     
     for job_id, due_date_rel_int in jobs_with_due_dates.items():
         if job_id in all_tasks:
@@ -640,7 +710,7 @@ def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_
             priority_penalty_vars.append(priority_penalty)
     
     if priority_penalty_vars:
-        priority_weight = 100  # High weight to prioritize this constraint
+        priority_weight = scheduler_config.priority_weight
         total_priority_penalty = model.NewIntVar(0, horizon * len(priority_penalty_vars) * 30, 'total_priority_penalty')
         model.Add(total_priority_penalty == sum(priority_penalty_vars))
         objective_terms.append(total_priority_penalty * priority_weight)
@@ -669,21 +739,21 @@ def _solve_model(model, time_limit_seconds, logger):
     solver.parameters.log_to_stdout = False
     
     # Advanced solver parameters for better performance
-    solver.parameters.num_search_workers = min(os.cpu_count() or 4, 8)  # Cap workers at 8
+    solver.parameters.num_search_workers = min(os.cpu_count() or 4, scheduler_config.max_workers_limit)
     solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH  # Better search strategy
     solver.parameters.cp_model_presolve = True  # Enable preprocessing
     solver.parameters.linearization_level = 2  # More aggressive linearization
     
     # Gap limits for early termination when solution is good enough
-    solver.parameters.relative_gap_limit = 0.02  # Stop at 2% gap
-    solver.parameters.absolute_gap_limit = 1000  # Or absolute gap of 1000
+    solver.parameters.relative_gap_limit = scheduler_config.relative_gap_limit
+    solver.parameters.absolute_gap_limit = scheduler_config.absolute_gap_limit
     
     # Performance monitoring
     solver.parameters.cp_model_probing_level = 0  # Disable probing for speed
     solver.parameters.symmetry_level = 1  # Reduce symmetry breaking overhead
     
     logger.info(f"Solver configured: time_limit={time_limit_seconds}s, workers={solver.parameters.num_search_workers}, "
-                f"gap_limits=[rel:2%, abs:1000], logging=disabled")
+                f"gap_limits=[rel:{scheduler_config.relative_gap_limit*100:.1f}%, abs:{scheduler_config.absolute_gap_limit}], logging=disabled")
     
     start_solve_time = time.time()
     status = solver.Solve(model)

@@ -542,7 +542,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             ...layout.xaxis,
             range: xAxisRange,
             tickformat: '%H:%M', // Show hours like "08:00"
-            dtick: 3600000 * 2, // 2-hour intervals for short data
+            dtick: 3600000, // 1-hour intervals (every hour)
             timezone: 'Asia/Singapore',
           };
         } else {
@@ -688,12 +688,12 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // Configure x-axis format based on timeframe
     let xAxisConfig;
     if (['1d', '2d', '3d', '4d', '5d'].includes(timeRange)) {
-      // For short timeframes, show hours
+      // For short timeframes, show hours from 01:00 to 23:59
       xAxisConfig = {
         ...layout.xaxis,
         range: xAxisRange,
         tickformat: '%H:%M', // Show hours like "08:00"
-        dtick: 3600000 * 4, // 4-hour intervals
+        dtick: 3600000, // 1-hour intervals (every hour)
         timezone: 'Asia/Singapore',
       };
     } else {

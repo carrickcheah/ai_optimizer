@@ -51,12 +51,10 @@ class TimeAvailabilityChecker:
     def _load_holidays(self):
         """Load holiday data from ai_holidays table."""
         try:
-            conn = get_db_connection()
-            if not conn:
-                logger.error("Could not get database connection for holidays")
-                return
-                
-            cursor = conn.cursor(dictionary=True)
+            from app.api.fastapi_app import get_db_connection_from_pool
+            
+            with get_db_connection_from_pool() as conn:
+                cursor = conn.cursor(dictionary=True)
             
             # Load holidays from ai_holidays table
             query = """
@@ -100,9 +98,7 @@ class TimeAvailabilityChecker:
                         logger.warning(f"Invalid month_day format for holiday {holiday['name']}: {holiday['month_day']}")
             
             logger.info(f"Loaded {len(self._holidays_cache)} holiday entries from ai_holidays")
-            
             cursor.close()
-            conn.close()
                 
         except Exception as e:
             logger.error(f"Error loading holidays from ai_holidays: {e}")
@@ -111,39 +107,35 @@ class TimeAvailabilityChecker:
     def _load_arrangable_hours(self):
         """Load working hours from ai_arrangable_hour table."""
         try:
-            conn = get_db_connection()
-            if not conn:
-                logger.error("Could not get database connection for arrangable hours")
-                return
+            from app.api.fastapi_app import get_db_connection_from_pool
+            
+            with get_db_connection_from_pool() as conn:
+                cursor = conn.cursor(dictionary=True)
                 
-            cursor = conn.cursor(dictionary=True)
-            
-            query = """
-            SELECT id, arrange_day, start_time, end_time, is_working, created_at, updated_at
-            FROM ai_arrangable_hour 
-            WHERE is_working = 1
-            ORDER BY arrange_day, start_time
-            """
-            
-            cursor.execute(query)
-            hours = cursor.fetchall()
-            
-            self._arrangable_hours_cache = {}
-            for hour in hours:
-                day = hour['arrange_day']  # 1=Monday, 2=Tuesday, ..., 7=Sunday
-                if day not in self._arrangable_hours_cache:
-                    self._arrangable_hours_cache[day] = []
+                query = """
+                SELECT id, arrange_day, start_time, end_time, is_working, created_at, updated_at
+                FROM ai_arrangable_hour 
+                WHERE is_working = 1
+                ORDER BY arrange_day, start_time
+                """
                 
-                self._arrangable_hours_cache[day].append({
-                    'start_time': timedelta_to_time(hour['start_time']),
-                    'end_time': timedelta_to_time(hour['end_time']),
-                    'is_working': hour['is_working']
-                })
-            
-            logger.info(f"Loaded arrangable hours for {len(self._arrangable_hours_cache)} days from ai_arrangable_hour")
-            
-            cursor.close()
-            conn.close()
+                cursor.execute(query)
+                hours = cursor.fetchall()
+                
+                self._arrangable_hours_cache = {}
+                for hour in hours:
+                    day = hour['arrange_day']  # 1=Monday, 2=Tuesday, ..., 7=Sunday
+                    if day not in self._arrangable_hours_cache:
+                        self._arrangable_hours_cache[day] = []
+                    
+                    self._arrangable_hours_cache[day].append({
+                        'start_time': timedelta_to_time(hour['start_time']),
+                        'end_time': timedelta_to_time(hour['end_time']),
+                        'is_working': hour['is_working']
+                    })
+                
+                logger.info(f"Loaded arrangable hours for {len(self._arrangable_hours_cache)} days from ai_arrangable_hour")
+                cursor.close()
                 
         except Exception as e:
             logger.error(f"Error loading arrangable hours from ai_arrangable_hour: {e}")
@@ -152,12 +144,10 @@ class TimeAvailabilityChecker:
     def _load_breaktimes(self):
         """Load break times from ai_breaktimes table."""
         try:
-            conn = get_db_connection()
-            if not conn:
-                logger.error("Could not get database connection for breaktimes")
-                return
-                
-            cursor = conn.cursor(dictionary=True)
+            from app.api.fastapi_app import get_db_connection_from_pool
+            
+            with get_db_connection_from_pool() as conn:
+                cursor = conn.cursor(dictionary=True)
             
             query = """
             SELECT id, name, description, start_time, end_time, duration_minutes, 
@@ -183,9 +173,7 @@ class TimeAvailabilityChecker:
                 })
             
             logger.info(f"Loaded {len(self._breaktimes_cache)} active breaktimes from ai_breaktimes")
-            
             cursor.close()
-            conn.close()
                 
         except Exception as e:
             logger.error(f"Error loading breaktimes from ai_breaktimes: {e}")

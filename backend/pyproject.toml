@@ -24,6 +24,8 @@ dependencies = [
     "plotly>=5.15.0",
     # MCP framework
     "fastmcp>=2.5.1",
+    "pydantic>=2.11.5",
+    "pydantic-settings>=2.9.1",
 ]
 
 [project.optional-dependencies]

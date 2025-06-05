@@ -11,9 +11,18 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    # Load environment variables from project root  
-    dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    load_dotenv(dotenv_path)
+    # Load environment variables - try backend directory first, then project root
+    backend_env = os.path.join(os.path.dirname(__file__), '.env')
+    project_root_env = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    
+    if os.path.exists(backend_env):
+        load_dotenv(backend_env)
+        logger.info(f"Loaded .env from backend directory: {backend_env}")
+    elif os.path.exists(project_root_env):
+        load_dotenv(project_root_env)
+        logger.info(f"Loaded .env from project root: {project_root_env}")
+    else:
+        logger.warning("No .env file found in backend directory or project root")
     
     # Initialize FastAPI app
     app = FastAPI(
