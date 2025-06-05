@@ -109,7 +109,7 @@
 }
 
 .buffer-label-ok {
-  background-color: #c8e6c9;
+  background-color: #7FFF00;
   color: #1b5e20;
 }
 
@@ -156,7 +156,7 @@
 }
 
 .buffer-ok {
-  background-color: #4caf50;
+  background-color: #7FFF00;
 }
 
 @media (max-width: 768px) {

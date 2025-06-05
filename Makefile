@@ -23,7 +23,7 @@ dev:
 backend-dev:
 	@cd backend && \
 	source .venv/bin/activate && \
-	uvicorn app.main:app --host $${BACKEND_HOST:-127.0.0.1} --port $${BACKEND_PORT:-8000}
+	uvicorn main:app --host $${BACKEND_HOST:-127.0.0.1} --port $${BACKEND_PORT:-8000}
 
 # Frontend development server  
 frontend-dev:
@@ -33,7 +33,7 @@ frontend-dev:
 # Stop all services
 stop:
 	@echo "🛑 Stopping all services..."
-	@pkill -f "uvicorn app.main:app" || true
+	@pkill -f "uvicorn main:app" || true
 	@pkill -f "vite" || true
 	@pkill -f "node.*vite" || true
 

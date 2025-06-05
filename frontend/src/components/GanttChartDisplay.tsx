@@ -48,7 +48,7 @@ const GanttChartDisplay: React.FC = () => {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('all');
+  const [timeRange, setTimeRange] = useState<string>('2d');
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [chartTitle, setChartTitle] = useState<string>('Production Planning System');
   const [overview, setOverview] = useState<{
@@ -66,7 +66,7 @@ const GanttChartDisplay: React.FC = () => {
     'Late': '#f44336',      // Red
     'Warning': '#ff9800',   // Orange
     'Caution': '#9c27b0',   // Purple
-    'OK': '#4caf50'         // Green
+    'OK': '#7FFF00'         // Bright lime green
   };
 
   useEffect(() => {
@@ -752,7 +752,7 @@ const GanttChartDisplay: React.FC = () => {
           <span className="priority-label">Caution (&lt;72h)</span>
         </div>
         <div className="priority-item">
-          <span className="priority-color" style={{ backgroundColor: '#4caf50' }}></span>
+                          <span className="priority-color" style={{ backgroundColor: '#7FFF00' }}></span>
           <span className="priority-label">OK (&gt;72h)</span>
         </div>
       </div>

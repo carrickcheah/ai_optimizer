@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    # Load environment variables
+    # Load environment variables from project root  
     dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
     load_dotenv(dotenv_path)
     
@@ -66,4 +66,4 @@ app = create_app()
 if __name__ == "__main__":
     server_port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting Uvicorn server on port {server_port}")
-    uvicorn.run("app.main:app", host="0.0.0.0", port=server_port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=server_port, reload=True) 

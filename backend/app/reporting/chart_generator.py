@@ -20,7 +20,7 @@ PRIORITY_COLORS = {
     'Priority 1 (Highest)': 'rgb(231, 76, 60)',   # Red
     'Priority 2 (High)': 'rgb(243, 156, 18)',     # Orange
     'Priority 3 (Medium)': 'rgb(41, 128, 185)',   # Blue
-    'Priority 4 (Normal)': 'rgb(46, 204, 113)',   # Green
+    'Priority 4 (Normal)': 'rgb(127, 255, 0)',    # Bright lime green
     'Priority 5 (Low)': 'rgb(149, 165, 166)'      # Gray
 }
 PRIORITY_LABELS_MAP = {
@@ -36,7 +36,7 @@ BUFFER_COLORS = {
     'Late': '#f44336',      # Red
     'Warning': '#ff9800',   # Orange
     'Caution': '#9c27b0',   # Purple
-    'OK': '#4caf50'         # Green
+    'OK': '#7FFF00'         # Bright lime green
 }
 
 def safe_timestamp_to_datetime(timestamp: Union[int, float, str], fallback_to_today: bool = True) -> Optional[datetime]:
