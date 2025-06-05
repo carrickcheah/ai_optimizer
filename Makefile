@@ -1,18 +1,34 @@
-# Main development command
-start:
-	@echo "🚀 Starting AI Optimizer (no auto-reload)..."
-	@make -j2 backend frontend
+# Quick development start (equivalent to dev-start.sh)
+dev:
+	@echo "🚀 Starting AI Optimizer Development Environment"
+	@echo "📁 Project structure:"
+	@echo "├── backend/    - FastAPI backend (Python)"
+	@echo "├── frontend/   - React + Vite frontend"
+	@echo "└── docker/     - Docker configurations"
+	@echo ""
+	@if [ ! -d "backend/.venv" ]; then echo "❌ Backend virtual environment not found. Run: cd backend && uv sync"; exit 1; fi
+	@if [ ! -d "frontend/node_modules" ]; then echo "❌ Frontend dependencies not found. Run: cd frontend && npm install"; exit 1; fi
+	@echo "🔧 Starting Backend (FastAPI)..."
+	@echo "🎨 Starting Frontend (React + Vite)..."
+	@echo ""
+	@make -j2 backend-dev frontend-dev
+	@echo "✅ Both services running..."
+	@echo "📊 Frontend: http://localhost:5173"
+	@echo "🔧 Backend API: http://localhost:8000"
+	@echo "📖 API Docs: http://localhost:8000/docs"
+	@echo ""
+	@echo "Press Ctrl+C to stop both services"
 
-# Individual services
-backend:
-	@echo "Starting backend on port 8000 (no reload)..."
-	@cd services/backend && \
-	source ../../.venv/bin/activate && \
-	python -m uvicorn app.main:app --port 8000
+# Backend development server
+backend-dev:
+	@cd backend && \
+	source .venv/bin/activate && \
+	uvicorn app.main:app --host $${BACKEND_HOST:-127.0.0.1} --port $${BACKEND_PORT:-8000}
 
-frontend:
-	@echo "Starting frontend on port 3000..."
-	@npm run dev --prefix services/frontend
+# Frontend development server  
+frontend-dev:
+	@cd frontend && \
+	npm run dev
 
 # Stop all services
 stop:
@@ -21,22 +37,4 @@ stop:
 	@pkill -f "vite" || true
 	@pkill -f "node.*vite" || true
 
-# Reset services
-reset:
-	@echo "🔄 Resetting AI Optimizer..."
-	@make stop
-	@sleep 3
-	@make start
-
-# Alternative: start with reload for development
-start-dev:
-	@echo "🚀 Starting AI Optimizer (with auto-reload)..."
-	@make -j2 backend-dev frontend
-
-backend-dev:
-	@echo "Starting backend on port 8000 (with reload)..."
-	@cd services/backend && \
-	source ../../.venv/bin/activate && \
-	python -m uvicorn app.main:app --reload --port 8000
-
-.PHONY: start backend frontend stop reset start-dev backend-dev
+.PHONY: dev backend-dev frontend-dev stop
