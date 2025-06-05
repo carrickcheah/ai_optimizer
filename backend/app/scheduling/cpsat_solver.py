@@ -711,19 +711,45 @@ def _add_working_hours_constraints(model, all_tasks, logger):
         start_var = task_info['start']
         job_duration = task_info['hours']
         
+        # Get job priority for smart OT calculation
+        job_priority = task_info['job'].get('priority', 3)
+        try:
+            job_priority = int(job_priority)
+        except (ValueError, TypeError):
+            job_priority = 3
+        
+        # Calculate smart daily hours for this specific job
+        smart_daily_hours = scheduler_config.get_smart_daily_hours(job_duration, job_priority)
+        logger.debug(f"Job {job_id} (priority {job_priority}, {job_duration}h): using {smart_daily_hours:.1f}h daily limit")
+        
         # Create constraint for each possible day (up to 7 days)
         valid_slots = []
         
-        for day in range(7):  # Look at first 7 days only
+        for day in range(14):  # Look at first 14 days (2 weeks) to handle Sunday gaps
             # Get day of week (Monday = 0 maps to day_of_week = 1)
             day_of_week = (day % 7) + 1
             
             periods = working_hours_by_day.get(day_of_week, [])
             
+            # Skip non-working days (like Sunday)
+            if not periods:
+                logger.debug(f"Job {job_id} Day {day} (DoW {day_of_week}): Skipping non-working day")
+                continue
+            
             for start_hour, end_hour in periods:
                 # Calculate absolute hours from reference time
                 day_start = day * 24 + start_hour
-                day_end = day * 24 + end_hour
+                base_day_end = day * 24 + end_hour
+                
+                # Extend working hours if job needs OT and priority allows it
+                normal_hours = end_hour - start_hour
+                if normal_hours < smart_daily_hours and job_duration > normal_hours:
+                    # Extend the working day for OT (max 22h from 6:30 AM = until 4:30 AM next day)
+                    ot_extension = min(smart_daily_hours - normal_hours, 24 - normal_hours)
+                    day_end = base_day_end + ot_extension
+                    logger.debug(f"Job {job_id} Day {day}: Extended working hours by {ot_extension:.1f}h (total: {normal_hours + ot_extension:.1f}h)")
+                else:
+                    day_end = base_day_end
                 
                 # Latest possible start time (job must finish within working hours)
                 latest_start = day_end - job_duration
@@ -734,6 +760,7 @@ def _add_working_hours_constraints(model, all_tasks, logger):
                     logger.debug(f"Job {job_id} Day {day} (DoW {day_of_week}): Can start between {day_start:.1f}-{latest_start:.1f} hours")
         
         if valid_slots:
+            logger.debug(f"Job {job_id}: Found {len(valid_slots)} valid slots: {valid_slots}")
             # Create constraint: start_var must be in one of the valid slots
             slot_bools = []
             
@@ -757,16 +784,76 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             else:
                 logger.warning(f"No valid time slots for job {job_id} (duration {job_duration}h too long)")
         else:
-            # No valid working hours for this job - strict mode
-            if scheduler_config.emergency_minimum_start_hour == -1:
-                error_msg = f"CRITICAL: Job {job_id} has no valid working hours (duration {job_duration}h). Check ai_arrangable_hour table configuration."
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+            # No valid working hours for this job - try flexible scheduling
+            logger.warning(f"Job {job_id}: No valid slots found for {job_duration}h job with {smart_daily_hours:.1f}h daily limit")
+            
+            # Flexible approach: Split the job further or extend horizon
+            if job_duration > smart_daily_hours:
+                # Job is too long - this should have been split already
+                logger.warning(f"Job {job_id}: {job_duration}h exceeds daily limit {smart_daily_hours:.1f}h - applying emergency constraint")
+                if scheduler_config.emergency_minimum_start_hour == -1:
+                    # Use minimum constraint instead of failing
+                    model.Add(start_var >= 6)  # At least start after 6 AM
+                    constraints_added += 1
+                    logger.info(f"Applied emergency constraint for oversized job {job_id}")
+                else:
+                    model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
+                    constraints_added += 1
             else:
-                # Emergency fallback mode (deprecated)
-                logger.warning(f"Job {job_id} has no working hours - applying emergency constraint (start >= {scheduler_config.emergency_minimum_start_hour})")
-                model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
-                constraints_added += 1
+                # Job fits but no slots due to holidays/breaks - extend search to next week
+                logger.info(f"Job {job_id}: Extending search horizon for holiday/break conflicts")
+                
+                # Look at next 2 weeks (days 14-28) for availability
+                extended_valid_slots = []
+                for day in range(14, 28):  # Next 2 weeks
+                    day_of_week = (day % 7) + 1
+                    periods = working_hours_by_day.get(day_of_week, [])
+                    
+                    if not periods:  # Skip non-working days
+                        continue
+                        
+                    for start_hour, end_hour in periods:
+                        day_start = day * 24 + start_hour
+                        base_day_end = day * 24 + end_hour
+                        
+                        # Apply same OT extension logic
+                        normal_hours = end_hour - start_hour
+                        if normal_hours < smart_daily_hours and job_duration > normal_hours:
+                            ot_extension = min(smart_daily_hours - normal_hours, 24 - normal_hours)
+                            day_end = base_day_end + ot_extension
+                        else:
+                            day_end = base_day_end
+                        
+                        latest_start = day_end - job_duration
+                        if latest_start >= day_start:
+                            extended_valid_slots.append((int(day_start), int(latest_start)))
+                            logger.debug(f"Job {job_id} Extended Day {day}: Found slot {day_start:.1f}-{latest_start:.1f}")
+                
+                if extended_valid_slots:
+                    # Create constraints for extended slots
+                    slot_bools = []
+                    for slot_start, slot_end in extended_valid_slots[:5]:  # Limit to first 5 slots
+                        if slot_start <= slot_end:
+                            day_num = slot_start // 24
+                            slot_bool = model.NewBoolVar(f'ext_slot_{job_id}_day{day_num}')
+                            model.Add(start_var >= slot_start).OnlyEnforceIf(slot_bool)
+                            model.Add(start_var <= slot_end).OnlyEnforceIf(slot_bool)
+                            slot_bools.append(slot_bool)
+                    
+                    if slot_bools:
+                        model.AddExactlyOne(slot_bools)
+                        constraints_added += 1
+                        logger.info(f"Added extended horizon constraint for {job_id}: {len(slot_bools)} slots in weeks 3-4")
+                    else:
+                        # Still no slots - apply basic constraint
+                        model.Add(start_var >= 6)
+                        constraints_added += 1
+                        logger.warning(f"Applied basic constraint for {job_id} - no extended slots found")
+                else:
+                    # No extended slots - apply basic constraint  
+                    model.Add(start_var >= 6)
+                    constraints_added += 1
+                    logger.warning(f"Applied basic constraint for {job_id} - no slots in extended horizon")
     
     logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
 
