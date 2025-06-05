@@ -82,12 +82,32 @@ class SchedulerConfig(BaseSettings):
         description="Weight for priority optimization"
     )
     
+    # Job Splitting Settings - Smart OT Extension
+    normal_working_hours: float = Field(
+        default=17.5,
+        gt=0,
+        le=24,
+        description="Normal working hours per day (6:30AM-11:59PM = 17.5h)"
+    )
+    ot_working_hours: float = Field(
+        default=19.5,
+        gt=0,
+        le=24,
+        description="Working hours with normal OT (6:30AM-2:00AM = 19.5h)"
+    )
+    emergency_ot_hours: float = Field(
+        default=22.0,
+        gt=0,
+        le=24,
+        description="Maximum working hours with emergency OT (6:30AM-4:30AM = 22h)"
+    )
+    
     # Emergency Fallback Times
     emergency_minimum_start_hour: int = Field(
-        default=6,
-        ge=0,
+        default=-1,
+        ge=-1,
         le=23,
-        description="Emergency minimum start hour (6 AM)"
+        description="Emergency minimum start hour (-1 = disabled, fail fast)"
     )
     
     class Config:
@@ -102,6 +122,26 @@ class SchedulerConfig(BaseSettings):
             return self.same_machine_setup_time
         else:
             return self.different_machine_setup_time
+    
+    def get_smart_daily_hours(self, job_hours: float, priority: int = 3) -> float:
+        """Smart demand-based working hours extension."""
+        # Priority 1-2: Emergency jobs can use full 22h
+        if priority <= 2:
+            max_hours = self.emergency_ot_hours
+        # Priority 3-4: Normal jobs can use OT (19.5h)  
+        elif priority <= 4:
+            max_hours = self.ot_working_hours
+        # Priority 5+: Low priority limited to normal hours
+        else:
+            max_hours = self.normal_working_hours
+            
+        # Smart extension based on job size
+        if job_hours <= self.normal_working_hours:
+            return self.normal_working_hours  # No OT needed
+        elif job_hours <= self.ot_working_hours:
+            return self.ot_working_hours      # Normal OT
+        else:
+            return max_hours                  # Use priority-based limit
     
     def get_dynamic_limits(self, job_count: int) -> Dict[str, Any]:
         """Calculate dynamic limits based on problem size."""
@@ -135,6 +175,7 @@ class SchedulerConfig(BaseSettings):
         print(f"Min Horizon: {self.minimum_horizon_hours}h")
         print(f"Setup Times: Same={self.same_machine_setup_time}h, Different={self.different_machine_setup_time}h")
         print(f"Gap Limits: Relative={self.relative_gap_limit}, Absolute={self.absolute_gap_limit}")
+        print(f"Smart OT: Normal={self.normal_working_hours}h, OT={self.ot_working_hours}h, Emergency={self.emergency_ot_hours}h")
         print("==========================================")
 
 

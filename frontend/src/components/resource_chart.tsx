@@ -55,6 +55,22 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     return resourceCode;
   };
 
+  // Helper function to format datetime for display
+  const formatDateTime = (dateTimeString: string): string => {
+    try {
+      const date = new Date(dateTimeString);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} | ${hours}:${minutes}`;
+    } catch (error) {
+      return dateTimeString; // Fallback to original if parsing fails
+    }
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
@@ -206,8 +222,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         const tooltipParts = [
           `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
           `<b>Machine:</b> ${task.Resource}`,
-          `<b>Start:</b> ${task.Start}`,
-          `<b>End:</b> ${task.Finish}`,
+          `<b>Start:</b> ${formatDateTime(task.Start)}`,
+          `<b>End:</b> ${formatDateTime(task.Finish)}`,
           `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
         ];
         return tooltipParts.join('<br>');
@@ -432,8 +448,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             const tooltipParts = [
               `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
               `<b>Machine:</b> ${task.Resource}`,
-              `<b>Start:</b> ${task.Start}`,
-              `<b>End:</b> ${task.Finish}`,
+              `<b>Start:</b> ${formatDateTime(task.Start)}`,
+              `<b>End:</b> ${formatDateTime(task.Finish)}`,
               `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
             ];
             return tooltipParts.join('<br>');

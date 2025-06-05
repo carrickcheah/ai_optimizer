@@ -181,7 +181,94 @@ def schedule_jobs(
             logger.warning(f"Job {job_id} has zero or negative duration, setting to 1 hour")
             total_hours = 1
 
-        # Convert hours to integer for solver (round up to ensure we don't underestimate)
+        # Smart demand-based OT: determine working hours needed for this job
+        job_priority = job_item.get('priority', 3)
+        try:
+            job_priority = int(job_priority)
+        except (ValueError, TypeError):
+            job_priority = 3
+            
+        max_daily_hours = scheduler_config.get_smart_daily_hours(total_hours, job_priority)
+        logger.debug(f"Job {job_id} (priority {job_priority}): {total_hours:.1f}h job, using {max_daily_hours:.1f}h daily limit")
+        
+        # Check if job needs to be split across multiple days
+        if total_hours > max_daily_hours:
+            # Split job into chunks that fit within daily working hours
+            job_chunks = _split_job_into_chunks(job_item, total_hours, max_daily_hours, logger)
+            logger.info(f"Job {job_id} ({total_hours:.1f}h) split into {len(job_chunks)} chunks")
+            
+            # Create variables for each chunk
+            for chunk_idx, chunk in enumerate(job_chunks):
+                chunk_job_id = f"{job_id}_chunk_{chunk_idx + 1}"
+                chunk_hours = int(math.ceil(chunk['hours']))
+                
+                # Handle due dates
+                if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
+                    due_date_rel = epoch_to_relative_hours(job_item['lcd_date_epoch'])
+                    due_date_rel_int = int(due_date_rel)
+                    jobs_with_due_dates[chunk_job_id] = due_date_rel_int
+                    logger.debug(f"Added due date for chunk {chunk_job_id}: {due_date_rel_int} relative hours")
+                
+                # Handle START_DATE constraints (only for first chunk)
+                if chunk_idx == 0:
+                    job_start_date_epoch_val = get_start_date_epoch(job_item)
+                    if job_start_date_epoch_val:
+                        start_date_rel = epoch_to_relative_hours(job_start_date_epoch_val)
+                        start_date_rel_int = int(start_date_rel)
+                        start_time_preferences[chunk_job_id] = start_date_rel_int
+                        start_date_processes[chunk_job_id] = job_start_date_epoch_val
+                        logger.debug(f"Added start time preference for first chunk {chunk_job_id}: {start_date_rel_int} relative hours")
+                
+                # Create start and end variables for chunk
+                start_var = model.NewIntVar(0, horizon, f'start_{chunk_job_id}')
+                end_var = model.NewIntVar(0, horizon + chunk_hours, f'end_{chunk_job_id}')
+                
+                # Record all start and end variables
+                all_starts.append(start_var)
+                all_ends.append(end_var)
+                
+                # Create interval variable
+                interval_var = model.NewIntervalVar(
+                    start_var, chunk_hours, end_var, f'interval_{chunk_job_id}'
+                )
+                
+                # Record the interval
+                all_intervals.append(interval_var)
+                
+                # Store task info
+                chunk_job_item = job_item.copy()
+                chunk_job_item['job_id'] = chunk_job_id
+                chunk_job_item['original_job_id'] = job_id
+                chunk_job_item['chunk_index'] = chunk_idx
+                chunk_job_item['total_chunks'] = len(job_chunks)
+                # Keep original job_id for family extraction (without _chunk suffix)
+                chunk_job_item['job'] = job_item.get('job', job_id)
+                
+                all_tasks[chunk_job_id] = {
+                    'start': start_var,
+                    'end': end_var,
+                    'interval': interval_var,
+                    'machine': machine,
+                    'hours': chunk_hours,
+                    'job': chunk_job_item
+                }
+                
+                # Add to machine-specific list
+                jobs_on_machine[machine].append(interval_var)
+                
+                # Add precedence constraint: chunk N must complete before chunk N+1 starts
+                if chunk_idx > 0:
+                    prev_chunk_job_id = f"{job_id}_chunk_{chunk_idx}"
+                    if prev_chunk_job_id in all_tasks:
+                        prev_end = all_tasks[prev_chunk_job_id]['end']
+                        curr_start = all_tasks[chunk_job_id]['start']
+                        model.Add(prev_end <= curr_start)
+                        job_dependencies[chunk_job_id].append(prev_chunk_job_id)
+                        logger.debug(f"Added chunk sequence constraint: {prev_chunk_job_id} before {chunk_job_id}")
+            
+            continue  # Skip normal processing for split jobs
+        
+        # Normal job processing (fits within daily working hours)
         hours_need = int(math.ceil(total_hours))
         logger.debug(f"Job {job_id}: Total hours with non-working time={total_hours:.2f}, solver hours={hours_need}")
         
@@ -324,6 +411,30 @@ def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
         
     horizon = int(max_hours_need * len(jobs) * 1.5) + 24
     return max(horizon, scheduler_config.minimum_horizon_hours)
+
+def _split_job_into_chunks(job_item: Dict[str, Any], total_hours: float, max_daily_hours: float, logger) -> List[Dict[str, Any]]:
+    """Split a long job into chunks that fit within daily working hours."""
+    chunks = []
+    remaining_hours = total_hours
+    chunk_index = 0
+    
+    while remaining_hours > 0:
+        # Calculate chunk size (don't exceed max daily hours)
+        chunk_hours = min(remaining_hours, max_daily_hours)
+        
+        chunks.append({
+            'hours': chunk_hours,
+            'chunk_index': chunk_index,
+            'remaining_hours': remaining_hours - chunk_hours
+        })
+        
+        remaining_hours -= chunk_hours
+        chunk_index += 1
+        
+        logger.debug(f"Created chunk {chunk_index}: {chunk_hours:.1f}h (remaining: {remaining_hours:.1f}h)")
+    
+    logger.info(f"Split {total_hours:.1f}h job into {len(chunks)} chunks of max {max_daily_hours}h each")
+    return chunks
 
 def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
     """Calculate total hours needed including non-working time components.
@@ -588,16 +699,11 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             working_hours_by_day[day_of_week] = []  # No working hours
             logger.debug(f"Day {day_of_week}: No working hours")
     
-    # Fallback to safe default if no working hours are loaded (e.g., database connection issues)
+    # Strict mode: Fail fast if no working hours are loaded from database
     if not has_any_working_hours:
-        logger.warning("No working hours found in database! Using fallback: 6 AM - 6 PM Monday-Friday")
-        # Set reasonable defaults: 6 AM - 6 PM, Monday to Friday
-        for day_of_week in range(1, 6):  # Monday to Friday
-            working_hours_by_day[day_of_week] = [(6.0, 18.0)]  # 6 AM to 6 PM
-        # Saturday and Sunday: no working hours
-        working_hours_by_day[6] = []
-        working_hours_by_day[7] = []
-        has_any_working_hours = True
+        error_msg = "CRITICAL: No working hours loaded from ai_arrangable_hour table. Check database connection and table data."
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
     
     constraints_added = 0
     
@@ -651,10 +757,16 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             else:
                 logger.warning(f"No valid time slots for job {job_id} (duration {job_duration}h too long)")
         else:
-            # Emergency fallback: if no working hours found, at least prevent midnight starts
-            logger.warning(f"Job {job_id} has no working hours - applying emergency constraint (start >= {scheduler_config.emergency_minimum_start_hour})")
-            model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
-            constraints_added += 1
+            # No valid working hours for this job - strict mode
+            if scheduler_config.emergency_minimum_start_hour == -1:
+                error_msg = f"CRITICAL: Job {job_id} has no valid working hours (duration {job_duration}h). Check ai_arrangable_hour table configuration."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            else:
+                # Emergency fallback mode (deprecated)
+                logger.warning(f"Job {job_id} has no working hours - applying emergency constraint (start >= {scheduler_config.emergency_minimum_start_hour})")
+                model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
+                constraints_added += 1
     
     logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
 
