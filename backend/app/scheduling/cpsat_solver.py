@@ -169,8 +169,12 @@ def schedule_jobs(
         job_id = job_item['job_id']
         
         # Check if the job has a machine assignment
-        if not job_item.get('MachineName_v') or job_item['MachineName_v'] not in machine_names:
-            logger.warning(f"Job {job_id} has no valid machine assignment, skipping: {job_item.get('MachineName_v')}")
+        machine_name = job_item.get('MachineName_v')
+        if not machine_name or machine_name not in machine_names:
+            if machine_name == "NOT_ASSIGN":
+                logger.warning(f"Job {job_id} has NOT_ASSIGN machine - skipping (no machine assigned in database)")
+            else:
+                logger.warning(f"Job {job_id} has invalid machine assignment, skipping: {machine_name}")
             continue
             
         machine = job_item['MachineName_v']

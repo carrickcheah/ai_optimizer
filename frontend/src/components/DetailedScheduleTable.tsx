@@ -39,6 +39,7 @@ interface ScheduleTableRow {
   job_dependency?: string;
   rsc_location?: string;  // Will not be displayed but keep in interface
   rsc_code?: string;
+  MachineName_v?: string;  // Machine name field
   number_operator?: number;
   job_quantity?: number;
   expect_output_per_hour?: number;
@@ -224,7 +225,7 @@ const columns = [
   }),
   columnHelper.accessor('job', { header: 'Job Name', cell: info => info.getValue() || 'N/A' }),
   columnHelper.accessor('process_code', { header: 'Process Code', cell: info => info.getValue() || 'N/A' }),
-  columnHelper.accessor('rsc_code', { header: 'Resource\nCode', cell: info => info.getValue() || 'N/A' }),
+  columnHelper.accessor('MachineName_v', { header: 'Machine Name', cell: info => info.getValue() || 'N/A' }),
   // Removed Location column as requested
   columnHelper.accessor('number_operator', { header: 'Opr', cell: info => info.getValue() }),
   columnHelper.accessor('job_quantity', { header: 'Job Qty', cell: info => info.getValue() }),
@@ -476,19 +477,45 @@ const DetailedScheduleTable: React.FC = () => {
             <div className="overview-stats">
               <div className="stat-item">
                 <span className="stat-label">Total Jobs:</span>
-                <span className="stat-value">{overview.total_jobs}</span>
+                <span className="stat-value">{data.length}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Date Range:</span>
-                <span className="stat-value">{overview.date_range}</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (data.length === 0) return 'N/A';
+                    const dates = data.map(task => [
+                      task.scheduled_start_time_str ? new Date(task.scheduled_start_time_str) : null,
+                      task.scheduled_end_time_str ? new Date(task.scheduled_end_time_str) : null
+                    ]).flat().filter(date => date && !isNaN(date.getTime()));
+                    if (dates.length === 0) return 'N/A';
+                    const earliest = new Date(Math.min(...dates.map(d => d!.getTime())));
+                    const latest = new Date(Math.max(...dates.map(d => d!.getTime())));
+                    const formatDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                    return `${formatDate(earliest)} to ${formatDate(latest)}`;
+                  })()
+                }</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Total Duration:</span>
-                <span className="stat-value">{overview.total_duration}</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (data.length === 0) return '0 hours';
+                    const totalDuration = data.reduce((total, task) => {
+                      if (!task.scheduled_start_time_str || !task.scheduled_end_time_str) return total;
+                      const start = new Date(task.scheduled_start_time_str);
+                      const end = new Date(task.scheduled_end_time_str);
+                      if (isNaN(start.getTime()) || isNaN(end.getTime())) return total;
+                      return total + (end.getTime() - start.getTime());
+                    }, 0);
+                    const totalHours = Math.round(totalDuration / (1000 * 60 * 60));
+                    return `${totalHours.toLocaleString()} hours`;
+                  })()
+                }</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Records Displayed:</span>
-                <span className="stat-value">{overview.records_displayed}</span>
+                <span className="stat-value">{data.length}</span>
               </div>
             </div>
           </div>
@@ -497,53 +524,68 @@ const DetailedScheduleTable: React.FC = () => {
              <h3>Buffer Status</h3>
              <div className="buffer-overview">
                <div className="buffer-rows">
-                 <div className="buffer-row">
-                   <div className="buffer-label buffer-label-late">Late</div>
-                   <div className="buffer-bar-container">
-                     <div 
-                       className="buffer-bar-fill buffer-late" 
-                       style={{ width: `${(overview.buffer_status_counts.Late / overview.total_jobs) * 100}%` }}
-                     >
-                       <span className="buffer-count">{overview.buffer_status_counts.Late} jobs</span>
-                     </div>
-                   </div>
-                 </div>
-                 
-                 <div className="buffer-row">
-                   <div className="buffer-label buffer-label-warning">Warning</div>
-                   <div className="buffer-bar-container">
-                     <div 
-                       className="buffer-bar-fill buffer-warning" 
-                       style={{ width: `${(overview.buffer_status_counts.Warning / overview.total_jobs) * 100}%` }}
-                     >
-                       <span className="buffer-count">{overview.buffer_status_counts.Warning} jobs</span>
-                     </div>
-                   </div>
-                 </div>
-                 
-                 <div className="buffer-row">
-                   <div className="buffer-label buffer-label-caution">Caution</div>
-                   <div className="buffer-bar-container">
-                     <div 
-                       className="buffer-bar-fill buffer-caution" 
-                       style={{ width: `${(overview.buffer_status_counts.Caution / overview.total_jobs) * 100}%` }}
-                     >
-                       <span className="buffer-count">{overview.buffer_status_counts.Caution} jobs</span>
-                     </div>
-                   </div>
-                 </div>
-                 
-                 <div className="buffer-row">
-                   <div className="buffer-label buffer-label-ok">OK</div>
-                   <div className="buffer-bar-container">
-                     <div 
-                       className="buffer-bar-fill buffer-ok" 
-                       style={{ width: `${(overview.buffer_status_counts.OK / overview.total_jobs) * 100}%` }}
-                     >
-                       <span className="buffer-count">{overview.buffer_status_counts.OK} jobs</span>
-                     </div>
-                   </div>
-                 </div>
+                 {(() => {
+                   // Calculate actual buffer status counts from data
+                   const bufferCounts = {
+                     Late: data.filter(task => task.buffer_status === 'Late').length,
+                     Warning: data.filter(task => task.buffer_status === 'Warning').length,
+                     Caution: data.filter(task => task.buffer_status === 'Caution').length,
+                     OK: data.filter(task => task.buffer_status === 'OK').length
+                   };
+                   const totalTasks = data.length || 1; // Avoid division by zero
+                   
+                   return (
+                     <>
+                       <div className="buffer-row">
+                         <div className="buffer-label buffer-label-late">Late</div>
+                         <div className="buffer-bar-container">
+                           <div 
+                             className="buffer-bar-fill buffer-late" 
+                             style={{ width: `${(bufferCounts.Late / totalTasks) * 100}%` }}
+                           >
+                             <span className="buffer-count">{bufferCounts.Late} jobs</span>
+                           </div>
+                         </div>
+                       </div>
+                       
+                       <div className="buffer-row">
+                         <div className="buffer-label buffer-label-warning">Warning</div>
+                         <div className="buffer-bar-container">
+                           <div 
+                             className="buffer-bar-fill buffer-warning" 
+                             style={{ width: `${(bufferCounts.Warning / totalTasks) * 100}%` }}
+                           >
+                             <span className="buffer-count">{bufferCounts.Warning} jobs</span>
+                           </div>
+                         </div>
+                       </div>
+                       
+                       <div className="buffer-row">
+                         <div className="buffer-label buffer-label-caution">Caution</div>
+                         <div className="buffer-bar-container">
+                           <div 
+                             className="buffer-bar-fill buffer-caution" 
+                             style={{ width: `${(bufferCounts.Caution / totalTasks) * 100}%` }}
+                           >
+                             <span className="buffer-count">{bufferCounts.Caution} jobs</span>
+                           </div>
+                         </div>
+                       </div>
+                       
+                       <div className="buffer-row">
+                         <div className="buffer-label buffer-label-ok">OK</div>
+                         <div className="buffer-bar-container">
+                           <div 
+                             className="buffer-bar-fill buffer-ok" 
+                             style={{ width: `${(bufferCounts.OK / totalTasks) * 100}%` }}
+                           >
+                             <span className="buffer-count">{bufferCounts.OK} jobs</span>
+                           </div>
+                         </div>
+                       </div>
+                     </>
+                   );
+                 })()}
                </div>
              </div>
            </div>

@@ -33,8 +33,12 @@ def find_best_machine(job: Dict[str, Any], machines: List[str], machine_availabl
     """Helper function to find the best machine for a job"""
     # First check if job has a specific machine requirement
     required_machine = job.get('MachineName_v')
-    if required_machine and required_machine in machines:
-        return required_machine
+    if required_machine:
+        if required_machine == "NOT_ASSIGN":
+            logger.warning(f"Job {job.get('job_id', 'Unknown')} has NOT_ASSIGN machine - cannot schedule")
+            return None
+        elif required_machine in machines:
+            return required_machine
         
     # If no specific machine required, find least loaded compatible machine
     compatible_machines = []

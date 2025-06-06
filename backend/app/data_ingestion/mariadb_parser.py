@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error
 
-# Load environment variables from .env file at project root
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../../../../.env'))
+# Load environment variables from .env file at backend root
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../../.env'))
 
 # Get database configuration from environment variables
 DB_HOST = os.getenv("MARIADB_HOST")
@@ -269,8 +269,12 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
                     else:
                         logger.debug(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")  # Reduced from WARNING to DEBUG for empty values
             
-            # Handle machine name
-            job["MachineName_v"] = job_row.get("machine_name", "DEFAULT") or "DEFAULT"
+            # Handle machine name - assign NOT_ASSIGN for missing machines
+            machine_name = job_row.get("machine_name", "NOT_ASSIGN") or "NOT_ASSIGN"
+            job["MachineName_v"] = machine_name
+            
+            if machine_name == "NOT_ASSIGN":
+                logger.warning(f"Job {composite_job_id} has no machine assignment - using NOT_ASSIGN (original Machine_v was NULL/empty)")
 
             # Add other columns with proper type conversion
             numeric_int_fields = {"number_operator", "job_quantity", "expect_output_per_hour", 
@@ -310,14 +314,25 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
         
         logger.info(f"Successfully processed {len(jobs_list)} jobs from joined tables.")
 
-        # Extract unique machine names
+        # Extract unique machine names - excluding NOT_ASSIGN machines
         machine_names = list(set(
             job.get("MachineName_v") for job in jobs_list 
-            if job.get("MachineName_v") and job.get("MachineName_v") != "DEFAULT"
+            if job.get("MachineName_v") and job.get("MachineName_v") != "NOT_ASSIGN"
         ))
         
+        # Count NOT_ASSIGN jobs for logging
+        not_assign_jobs = [
+            job for job in jobs_list 
+            if job.get("MachineName_v") == "NOT_ASSIGN"
+        ]
+        
+        if not_assign_jobs:
+            logger.warning(f"Found {len(not_assign_jobs)} jobs with NOT_ASSIGN machine - these will be excluded from scheduling")
+            logger.info(f"NOT_ASSIGN job examples: {[job.get('job_id', job.get('job', 'Unknown'))[:10] for job in not_assign_jobs[:5]]}")
+        
         if not machine_names:
-            machine_names = ["DEFAULT"]
+            machine_names = ["NOT_ASSIGN"]
+            logger.warning("No valid machines found - using NOT_ASSIGN as fallback")
             
         logger.info(f"Extracted {len(machine_names)} unique machines from job data.")
         

@@ -314,10 +314,10 @@ body {
 .schedule-table th:nth-child(4), .schedule-table td:nth-child(4) { width: 5%; } /* End Time */
 .schedule-table th:nth-child(5), .schedule-table td:nth-child(5) { width: 5%; } /* LCD Date */
 .schedule-table th:nth-child(6), .schedule-table td:nth-child(6) { width: 5%; } /* Req. Start */
-.schedule-table th:nth-child(7), .schedule-table td:nth-child(7) { width: 4%; } /* Depend */
-.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 7%; } /* Job Name */
-.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 7%; } /* Process Code */
-.schedule-table th:nth-child(10), .schedule-table td:nth-child(10) { width: 5%; } /* Resource Code */
+.schedule-table th:nth-child(7), .schedule-table td:nth-child(7) { width: 3%; } /* Depend */
+.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 6%; } /* Job Name */
+.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 6%; } /* Process Code */
+.schedule-table th:nth-child(10), .schedule-table td:nth-child(10) { width: 8%; } /* Machine Name */
 .schedule-table th:nth-child(11), .schedule-table td:nth-child(11) { width: 3%; } /* Operator */
 .schedule-table th:nth-child(12), .schedule-table td:nth-child(12) { width: 5%; } /* Job Qty */
 .schedule-table th:nth-child(13), .schedule-table td:nth-child(13) { width: 5%; } /* Output/Hr */
