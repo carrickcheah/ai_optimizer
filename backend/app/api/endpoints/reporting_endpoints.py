@@ -12,6 +12,7 @@ try:
     from app.data_ingestion.mariadb_parser import load_jobs_planning_data
     from app.scheduling.greedy_solver import greedy_schedule as run_greedy_solver
     from app.scheduling.cpsat_solver import schedule_jobs as run_cpsat_solver
+    from app.scheduling.batch_scheduler import smart_batch_schedule_jobs
 except ImportError:
     # Fallback for different import contexts
     try:
@@ -23,6 +24,7 @@ except ImportError:
         from backend.app.data_ingestion.mariadb_parser import load_jobs_planning_data
         from backend.app.scheduling.greedy_solver import greedy_schedule as run_greedy_solver
         from backend.app.scheduling.cpsat_solver import schedule_jobs as run_cpsat_solver
+        from backend.app.scheduling.batch_scheduler import smart_batch_schedule_jobs
     except ImportError:
         from ...reporting.chart_generator import (
             prepare_gantt_data_priority_view, 
@@ -32,6 +34,7 @@ except ImportError:
         from ...data_ingestion.mariadb_parser import load_jobs_planning_data
         from ...scheduling.greedy_solver import greedy_schedule as run_greedy_solver
         from ...scheduling.cpsat_solver import schedule_jobs as run_cpsat_solver
+        from ...scheduling.batch_scheduler import smart_batch_schedule_jobs
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,25 +94,24 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         # 2. Run selected scheduling algorithm
         schedule_output = None
         if solver_type.lower() == "cpsat":
-            # Run CP-SAT solver with aggressive API optimizations for fast response
-            schedule_output_dict = run_cpsat_solver(
+            # Use NEW SMART BATCH SCHEDULER instead of direct CP-SAT
+            logger.info("Using Smart Batch Scheduler (CP-SAT based)")
+            schedule_output_dict = smart_batch_schedule_jobs(
                 jobs_data, 
                 machine_names_list, 
-                setup_times_data, 
-                enforce_sequence=True, 
-                time_limit_seconds=180,   # Increased time limit for more jobs  
-                max_jobs_limit=1000,      # Allow up to 1000 jobs for full scheduling
-                planning_horizon_days=60  # Use full horizon for comprehensive planning
+                setup_times_data
             )
             
-            # Check if we got a valid result from CP-SAT
-            if not schedule_output_dict or schedule_output_dict.get('_metadata', {}).get('status') not in ['OPTIMAL', 'FEASIBLE']:
-                logger.warning(f"CP-SAT solver could not find a solution: {schedule_output_dict.get('_metadata', {}).get('message', 'Unknown error')}")
-                # Fall back to greedy if CP-SAT fails
+            # Check if we got a valid result from Smart Batch Scheduler
+            if not schedule_output_dict or schedule_output_dict.get('_metadata', {}).get('total_scheduled', 0) == 0:
+                logger.warning(f"Smart Batch Scheduler could not schedule any jobs: {schedule_output_dict.get('_metadata', {}).get('message', 'Unknown error')}")
+                # Fall back to greedy if Smart Batch fails
                 logger.info("Falling back to greedy solver")
                 schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
             else:
-                logger.info(f"CP-SAT solver found a solution with status: {schedule_output_dict['_metadata']['status']}")
+                scheduled_count = schedule_output_dict.get('_metadata', {}).get('total_scheduled', 0)
+                success_rate = schedule_output_dict.get('_metadata', {}).get('success_rate', 0)
+                logger.info(f"Smart Batch Scheduler completed: {scheduled_count} jobs scheduled ({success_rate:.1f}% success rate)")
                 
                 # Convert to simple format expected by optimized chart_generator
                 # Format: {machine: [(job_id, start_epoch, end_epoch), ...]}
@@ -132,7 +134,7 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
                     schedule_output[machine].append(job_tuple)
                     logger.debug(f"Added job {job_id} to {machine}: start={details.get('start')}, end={details.get('end')}")
                 
-                logger.info(f"Converted CP-SAT result: {sum(len(tasks) for tasks in schedule_output.values())} scheduled tasks")
+                logger.info(f"Converted Smart Batch result: {sum(len(tasks) for tasks in schedule_output.values())} scheduled tasks")
         else:
             # Fallback to greedy solver
             schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)

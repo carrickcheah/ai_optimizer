@@ -267,7 +267,7 @@ const DetailedScheduleTable: React.FC = () => {
     currentPage: 1,
     totalPages: 1,
     totalItems: 0,
-    itemsPerPage: 50, // Default to 50
+    itemsPerPage: 500, // Default to 500 to show all jobs
   });
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
