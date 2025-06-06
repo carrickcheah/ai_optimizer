@@ -26,7 +26,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('2d');
+  const [timeRange, setTimeRange] = useState<string>('all');
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
   const [overview, setOverview] = useState<{

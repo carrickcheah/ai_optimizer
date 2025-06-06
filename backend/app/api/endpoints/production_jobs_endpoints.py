@@ -37,7 +37,7 @@ class ProductionJobQueries:
             jot.DocRef_v AS job,
             jop.Task_v AS process_code,
             '' AS rsc_location,
-            COALESCE(tm.MachineName_v, jop.Machine_v) AS rsc_code,
+            tm.MachineName_v AS machine_name,
             1 AS job_dependency,
             jop.ManCount_i AS number_operator,
             jot.JoQty_d AS job_quantity,

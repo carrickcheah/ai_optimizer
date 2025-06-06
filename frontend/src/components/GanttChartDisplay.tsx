@@ -64,7 +64,7 @@ const GanttChartDisplay: React.FC = () => {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('2d');
+  const [timeRange, setTimeRange] = useState<string>('all');
   const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [chartTitle, setChartTitle] = useState<string>('Production Planning System');
   const [overview, setOverview] = useState<{

@@ -145,7 +145,7 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
             jot.DocRef_v AS job,
             jop.Task_v AS process_code,
             '' AS rsc_location,
-            COALESCE(tm.MachineName_v, jop.Machine_v) AS rsc_code,
+            tm.MachineName_v AS machine_name,
             jop.ManCount_i AS number_operator,
             jot.JoQty_d AS job_quantity,
             CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
@@ -269,8 +269,8 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
                     else:
                         logger.debug(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")  # Reduced from WARNING to DEBUG for empty values
             
-            # Handle machine name (was resource code)
-            job["MachineName_v"] = job_row.get("rsc_code", "DEFAULT") or "DEFAULT"
+            # Handle machine name
+            job["MachineName_v"] = job_row.get("machine_name", "DEFAULT") or "DEFAULT"
 
             # Add other columns with proper type conversion
             numeric_int_fields = {"number_operator", "job_quantity", "expect_output_per_hour", 
