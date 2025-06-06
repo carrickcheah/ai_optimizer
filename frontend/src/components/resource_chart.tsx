@@ -749,19 +749,42 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             <div className="overview-stats">
               <div className="stat-item">
                 <span className="stat-label">Total Jobs:</span>
-                <span className="stat-value">{overview.total_jobs}</span>
+                <span className="stat-value">{tasks.length}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Date Range:</span>
-                <span className="stat-value">N/A</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (tasks.length === 0) return 'N/A';
+                    const dates = tasks.map(task => [new Date(task.Start), new Date(task.Finish)]).flat();
+                    const validDates = dates.filter(date => !isNaN(date.getTime()));
+                    if (validDates.length === 0) return 'N/A';
+                    const earliest = new Date(Math.min(...validDates.map(d => d.getTime())));
+                    const latest = new Date(Math.max(...validDates.map(d => d.getTime())));
+                    const formatDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                    return `${formatDate(earliest)} to ${formatDate(latest)}`;
+                  })()
+                }</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Total Duration:</span>
-                <span className="stat-value">0 hours</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (tasks.length === 0) return '0 hours';
+                    const totalDuration = tasks.reduce((total, task) => {
+                      const start = new Date(task.Start);
+                      const end = new Date(task.Finish);
+                      if (isNaN(start.getTime()) || isNaN(end.getTime())) return total;
+                      return total + (end.getTime() - start.getTime());
+                    }, 0);
+                    const totalHours = Math.round(totalDuration / (1000 * 60 * 60));
+                    return `${totalHours.toLocaleString()} hours`;
+                  })()
+                }</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">Records Displayed:</span>
-                <span className="stat-value">{overview.total_jobs}</span>
+                <span className="stat-value">{tasks.length}</span>
               </div>
             </div>
           </div>
@@ -770,53 +793,68 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             <h3>Buffer Status</h3>
             <div className="buffer-overview">
               <div className="buffer-rows">
-                <div className="buffer-row">
-                  <div className="buffer-label buffer-label-late">Late</div>
-                  <div className="buffer-bar-container">
-                    <div 
-                      className="buffer-bar-fill buffer-late" 
-                      style={{ width: `${(overview.buffer_status_counts.Late / overview.total_jobs) * 100}%` }}
-                    >
-                      <span className="buffer-count">{overview.buffer_status_counts.Late} jobs</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="buffer-row">
-                  <div className="buffer-label buffer-label-warning">Warning</div>
-                  <div className="buffer-bar-container">
-                    <div 
-                      className="buffer-bar-fill buffer-warning" 
-                      style={{ width: `${(overview.buffer_status_counts.Warning / overview.total_jobs) * 100}%` }}
-                    >
-                      <span className="buffer-count">{overview.buffer_status_counts.Warning} jobs</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="buffer-row">
-                  <div className="buffer-label buffer-label-caution">Caution</div>
-                  <div className="buffer-bar-container">
-                    <div 
-                      className="buffer-bar-fill buffer-caution" 
-                      style={{ width: `${(overview.buffer_status_counts.Caution / overview.total_jobs) * 100}%` }}
-                    >
-                      <span className="buffer-count">{overview.buffer_status_counts.Caution} jobs</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="buffer-row">
-                  <div className="buffer-label buffer-label-ok">OK</div>
-                  <div className="buffer-bar-container">
-                    <div 
-                      className="buffer-bar-fill buffer-ok" 
-                      style={{ width: `${(overview.buffer_status_counts.OK / overview.total_jobs) * 100}%` }}
-                    >
-                      <span className="buffer-count">{overview.buffer_status_counts.OK} jobs</span>
-                    </div>
-                  </div>
-                </div>
+                {(() => {
+                  // Calculate actual buffer status counts from tasks
+                  const bufferCounts = {
+                    Late: tasks.filter(task => task.BufferStatusLabel === 'Late').length,
+                    Warning: tasks.filter(task => task.BufferStatusLabel === 'Warning').length,
+                    Caution: tasks.filter(task => task.BufferStatusLabel === 'Caution').length,
+                    OK: tasks.filter(task => task.BufferStatusLabel === 'OK').length
+                  };
+                  const totalTasks = tasks.length || 1; // Avoid division by zero
+                  
+                  return (
+                    <>
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-late">Late</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-late" 
+                            style={{ width: `${(bufferCounts.Late / totalTasks) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Late} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-warning">Warning</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-warning" 
+                            style={{ width: `${(bufferCounts.Warning / totalTasks) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Warning} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-caution">Caution</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-caution" 
+                            style={{ width: `${(bufferCounts.Caution / totalTasks) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Caution} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-ok">OK</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-ok" 
+                            style={{ width: `${(bufferCounts.OK / totalTasks) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.OK} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>

@@ -98,9 +98,9 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
                 machine_names_list, 
                 setup_times_data, 
                 enforce_sequence=True, 
-                time_limit_seconds=30,    # Further reduced to 30s for CPU relief  
-                max_jobs_limit=100,       # Reduced to 100 jobs for lower CPU usage
-                planning_horizon_days=21  # Reduced to 21 days for faster processing
+                time_limit_seconds=180,   # Increased time limit for more jobs  
+                max_jobs_limit=1000,      # Allow up to 1000 jobs for full scheduling
+                planning_horizon_days=60  # Use full horizon for comprehensive planning
             )
             
             # Check if we got a valid result from CP-SAT
