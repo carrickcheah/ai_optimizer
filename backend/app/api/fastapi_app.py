@@ -121,7 +121,7 @@ class ProductionJobData(BaseModel):
     job: str = Field(..., min_length=1, max_length=50, description="Job identifier")
     process_code: str = Field(..., min_length=1, max_length=20, description="Process code")
     rsc_location: str = Field(..., min_length=1, max_length=10, description="Resource location")
-    rsc_code: str = Field(..., min_length=1, max_length=20, description="Resource code")
+    MachineName_v: str = Field(..., min_length=1, max_length=50, description="Machine name")
     number_operator: int = Field(default=1, ge=1, le=10, description="Number of operators")
     job_quantity: int = Field(..., ge=1, le=1000000, description="Job quantity")
     expect_output_per_hour: int = Field(..., ge=1, le=10000, description="Expected output per hour")
@@ -168,7 +168,7 @@ class ProductionJobData(BaseModel):
                 "job": "J/O-03",
                 "process_code": "CD02-P01",
                 "rsc_location": "VM",
-                "rsc_code": "TW01",
+                "MachineName_v": "TW01-Wire Machine",
                 "job_quantity": 1000,
                 "expect_output_per_hour": 10,
                 "hours_need": 100.0,
@@ -184,7 +184,7 @@ class ProductionJobResponse(BaseModel):
     job: str
     process_code: str
     rsc_location: str
-    rsc_code: str
+    MachineName_v: str
     machine: Optional[str] = None
     job_dependency: bool
     number_operator: int

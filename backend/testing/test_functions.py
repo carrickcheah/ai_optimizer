@@ -314,7 +314,7 @@ def test_greedy_solver():
         from app.scheduling.greedy_solver import find_best_machine
         
         # Test find_best_machine
-        test_job = {"job_id": "TEST", "rsc_code": "MACHINE1"}
+        test_job = {"job_id": "TEST", "MachineName_v": "MACHINE1"}
         test_machines = ["MACHINE1", "MACHINE2", "MACHINE3"]
         machine_times = {"MACHINE1": 100, "MACHINE2": 200, "MACHINE3": 50}
         

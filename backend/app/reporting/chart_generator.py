@@ -457,7 +457,7 @@ def prepare_detailed_schedule_table_data(schedule: Dict[str, Any], jobs_input_da
             'process_code': job.get('process_code', 'N/A'),
             'job_dependency': 'Yes' if str(job.get('job_dependency', '0')) == '1' else 'No',
             'rsc_location': job.get('rsc_location', 'N/A'),
-            'rsc_code': job.get('rsc_code', 'N/A'),
+            'MachineName_v': job.get('MachineName_v', 'N/A'),
             'number_operator': job.get('number_operator', 1),
             'job_quantity': job.get('job_quantity', 0),
             'expect_output_per_hour': job.get('expect_output_per_hour', 0),

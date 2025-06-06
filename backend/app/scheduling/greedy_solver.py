@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 def find_best_machine(job: Dict[str, Any], machines: List[str], machine_available_time: Dict[str, float]) -> Optional[str]:
     """Helper function to find the best machine for a job"""
     # First check if job has a specific machine requirement
-    required_machine = job.get('rsc_code')
+    required_machine = job.get('MachineName_v')
     if required_machine and required_machine in machines:
         return required_machine
         

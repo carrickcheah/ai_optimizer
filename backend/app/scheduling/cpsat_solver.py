@@ -58,7 +58,7 @@ def schedule_jobs(
     Schedule jobs using Google's CP-SAT solver with performance optimizations.
     
     Args:
-        jobs: List of job dictionaries with job_id, rsc_code, hours_need, etc.
+        jobs: List of job dictionaries with job_id, MachineName_v, hours_need, etc.
         machines: List of machine names or machine dictionaries with MachineName_v key
         setup_times: Optional setup times (not used in CP-SAT)
         enforce_sequence: Whether to enforce job sequence constraints
@@ -134,7 +134,7 @@ def schedule_jobs(
     # Filter valid jobs from the already filtered set
     valid_jobs = [
         job for job in filtered_jobs 
-        if isinstance(job, dict) and job.get('job_id') and job.get('rsc_code')
+        if isinstance(job, dict) and job.get('job_id') and job.get('MachineName_v')
     ]
     
     if not valid_jobs:
@@ -169,11 +169,11 @@ def schedule_jobs(
         job_id = job_item['job_id']
         
         # Check if the job has a machine assignment
-        if not job_item.get('rsc_code') or job_item['rsc_code'] not in machine_names:
-            logger.warning(f"Job {job_id} has no valid machine assignment, skipping: {job_item.get('rsc_code')}")
+        if not job_item.get('MachineName_v') or job_item['MachineName_v'] not in machine_names:
+            logger.warning(f"Job {job_id} has no valid machine assignment, skipping: {job_item.get('MachineName_v')}")
             continue
             
-        machine = job_item['rsc_code']
+        machine = job_item['MachineName_v']
         
         # Calculate total hours needed including non-working time components
         total_hours = _calculate_total_job_hours(job_item)

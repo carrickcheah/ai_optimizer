@@ -79,9 +79,9 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
             planning_horizon_days=60
         )  # Use 7-day buffer and 60-day horizon
         
-        # Extract machine names from jobs_data using rsc_code instead of RSC_MACHINE
-        # This assumes jobs have rsc_code field which identifies the machine
-        machine_names_list = list(set(m['rsc_code'] for m in jobs_data if m.get('rsc_code')))
+        # Extract machine names from jobs_data using MachineName_v instead of RSC_MACHINE
+        # This assumes jobs have MachineName_v field which identifies the machine
+        machine_names_list = list(set(m['MachineName_v'] for m in jobs_data if m.get('MachineName_v')))
         
         if not machine_names_list:
             # Fallback or default if no machines found from jobs

@@ -178,7 +178,7 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     # Map uppercase fields to lowercase for consistency
     field_mappings = {
         'JOB_ID': 'job_id',
-        'RSC_CODE': 'rsc_code',
+        'RSC_CODE': 'MachineName_v',
         'HOURS_NEED': 'hours_need',
         'DAY_NEED': 'day_need',
         'PRIORITY': 'priority',

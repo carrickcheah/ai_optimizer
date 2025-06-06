@@ -145,7 +145,7 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
             jot.DocRef_v AS job,
             jop.Task_v AS process_code,
             '' AS rsc_location,
-            jop.Machine_v AS rsc_code,
+            COALESCE(tm.MachineName_v, jop.Machine_v) AS rsc_code,
             jop.ManCount_i AS number_operator,
             jot.JoQty_d AS job_quantity,
             CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
@@ -174,6 +174,11 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
         FROM tbl_jo_process AS jop 
         INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
         LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
+        LEFT JOIN tbl_machine AS tm ON (
+            tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
+            OR tm.machine_id_v = jop.Machine_v
+            OR tm.MachineId_i = jop.Machine_v
+        )
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c != 'CP' 
             AND jop.QtyStatus_c != 'FF' 
@@ -264,8 +269,8 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
                     else:
                         logger.debug(f"Failed to convert {date_field} to epoch for job {composite_job_id}: {job_row[date_field]}")  # Reduced from WARNING to DEBUG for empty values
             
-            # Handle resource code
-            job["rsc_code"] = job_row.get("rsc_code", "DEFAULT") or "DEFAULT"
+            # Handle machine name (was resource code)
+            job["MachineName_v"] = job_row.get("rsc_code", "DEFAULT") or "DEFAULT"
 
             # Add other columns with proper type conversion
             numeric_int_fields = {"number_operator", "job_quantity", "expect_output_per_hour", 
@@ -305,28 +310,28 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
         
         logger.info(f"Successfully processed {len(jobs_list)} jobs from joined tables.")
 
-        # Extract unique machine codes
-        machine_codes = list(set(
-            job.get("rsc_code") for job in jobs_list 
-            if job.get("rsc_code") and job.get("rsc_code") != "DEFAULT"
+        # Extract unique machine names
+        machine_names = list(set(
+            job.get("MachineName_v") for job in jobs_list 
+            if job.get("MachineName_v") and job.get("MachineName_v") != "DEFAULT"
         ))
         
-        if not machine_codes:
-            machine_codes = ["DEFAULT"]
+        if not machine_names:
+            machine_names = ["DEFAULT"]
             
-        logger.info(f"Extracted {len(machine_codes)} unique machines from job data.")
+        logger.info(f"Extracted {len(machine_names)} unique machines from job data.")
         
         # Create machine list
         machines_list = [
-            {"MachineName_v": code, "Description": f"Resource {code}"} 
-            for code in machine_codes
+            {"MachineName_v": name, "Description": f"Resource {name}"} 
+            for name in machine_names
         ]
 
         # Generate setup times using consistent machine identifiers
         setup_times_dict = {}
-        for from_machine in machine_codes:
+        for from_machine in machine_names:
             setup_times_dict[from_machine] = {}
-            for to_machine in machine_codes:
+            for to_machine in machine_names:
                 setup_times_dict[from_machine][to_machine] = 0.25 if from_machine == to_machine else 0.5
 
         logger.info(f"Generated setup times matrix for {len(setup_times_dict)} machines.")

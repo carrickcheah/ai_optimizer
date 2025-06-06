@@ -37,7 +37,7 @@ class ProductionJobQueries:
             jot.DocRef_v AS job,
             jop.Task_v AS process_code,
             '' AS rsc_location,
-            jop.Machine_v AS rsc_code,
+            COALESCE(tm.MachineName_v, jop.Machine_v) AS rsc_code,
             1 AS job_dependency,
             jop.ManCount_i AS number_operator,
             jot.JoQty_d AS job_quantity,
@@ -63,6 +63,11 @@ class ProductionJobQueries:
             jot.UpdateDate_dt AS updated_at
         FROM tbl_jo_process AS jop 
         INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
+        LEFT JOIN tbl_machine AS tm ON (
+            tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
+            OR tm.machine_id_v = jop.Machine_v
+            OR tm.MachineId_i = jop.Machine_v
+        )
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c != 'CP' 
             AND jop.QtyStatus_c != 'FF' 
