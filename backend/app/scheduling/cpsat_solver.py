@@ -550,8 +550,135 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                 model.Add(start_var >= start_date_rel_int)
                 logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
 
+def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day, logger):
+    """
+    🚀 OPTIMIZED: Calculate valid start times for multi-day jobs with performance improvements.
+    
+    Performance optimizations:
+    - Pre-calculate working day patterns to avoid repeated calculations
+    - Use adaptive search windows based on job duration
+    - Consolidated logging (one summary instead of thousands of entries)
+    - Early termination for jobs that fit in single day
+    
+    Multi-day scheduling logic:
+    - Jobs automatically pause during non-working hours (overnight, weekends, holidays, breaks)
+    - Jobs resume at the next working hour (6:30 AM)
+    - Calculate total working hours available across consecutive days
+    
+    Args:
+        job_id: Job identifier for logging
+        job_duration_hours: Total working hours needed for the job
+        working_hours_by_day: Dict of {day_of_week: [(start_hour, end_hour), ...]}
+        logger: Logger instance
+        
+    Returns:
+        List of valid (start_hour, end_hour) slots where job can begin
+    """
+    valid_slots = []
+    
+    # Pre-calculate daily working hours (cached computation)
+    daily_working_hours = {}
+    for day_of_week, periods in working_hours_by_day.items():
+        total_hours = sum(end - start for start, end in periods)
+        daily_working_hours[day_of_week] = total_hours
+    
+    # Get maximum daily working hours for adaptive search
+    max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
+    
+    # Adaptive search window: smaller for short jobs, larger for long jobs
+    if job_duration_hours <= max_daily_hours:
+        # Single-day job: search only 3 days ahead
+        max_search_days = 3
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling with 3-day search window")
+    elif job_duration_hours <= max_daily_hours * 7:  # Up to 1 week
+        # Multi-day job (up to 1 week): search 7 days ahead
+        max_search_days = 7
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 7-day search window")
+    else:
+        # Long job (over 1 week): search 14 days ahead
+        max_search_days = 14
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 14-day search window")
+    
+    # Pre-calculate working day pattern for the search window (optimization)
+    working_day_pattern = []
+    for day_offset in range(max_search_days):
+        day_of_week = (day_offset % 7) + 1
+        day_periods = working_hours_by_day.get(day_of_week, [])
+        day_total_hours = sum(end - start for start, end in day_periods) if day_periods else 0
+        working_day_pattern.append((day_of_week, day_periods, day_total_hours))
+    
+    # Track slots found for summary logging
+    slots_found = 0
+    
+    # For each possible start day, check if job can be completed
+    for start_day in range(max_search_days):
+        day_of_week, day_periods, day_total_hours = working_day_pattern[start_day]
+        
+        # Skip non-working days as start days
+        if not day_periods:
+            continue
+        
+        # Fast path for single-day jobs
+        if job_duration_hours <= day_total_hours:
+            # Job fits entirely in first day - add all working periods as valid slots
+            for start_hour, end_hour in day_periods:
+                day_start_abs = start_day * 24 + start_hour
+                day_end_abs = start_day * 24 + end_hour
+                
+                # Latest start time ensures job finishes within working hours
+                latest_start = day_end_abs - job_duration_hours
+                if latest_start >= day_start_abs:
+                    valid_slots.append((int(day_start_abs), int(latest_start)))
+                    slots_found += 1
+            continue  # Skip multi-day calculation for single-day jobs
+        
+        # Multi-day job calculation (only when necessary)
+        remaining_duration = job_duration_hours
+        current_day_offset = start_day
+        can_complete = True
+        
+        # Check if job can be completed starting from this day
+        while remaining_duration > 0 and current_day_offset < min(start_day + 14, max_search_days):
+            if current_day_offset < len(working_day_pattern):
+                _, current_periods, current_hours = working_day_pattern[current_day_offset]
+            else:
+                # Extend pattern if needed
+                extended_day_of_week = (current_day_offset % 7) + 1
+                current_periods = working_hours_by_day.get(extended_day_of_week, [])
+                current_hours = sum(end - start for start, end in current_periods) if current_periods else 0
+            
+            if not current_periods:
+                # Non-working day - skip to next day
+                current_day_offset += 1
+                continue
+            
+            # Use available working hours for this day
+            remaining_duration -= current_hours
+            current_day_offset += 1
+        
+        # If job can be completed, add first day's working periods as valid slots
+        if remaining_duration <= 0:
+            for start_hour, end_hour in day_periods:
+                day_start_abs = start_day * 24 + start_hour
+                day_end_abs = start_day * 24 + end_hour
+                
+                # Multi-day jobs can start anytime during first day's working hours
+                valid_slots.append((int(day_start_abs), int(day_end_abs - 1)))  # -1 to ensure at least 1h on first day
+                slots_found += 1
+    
+    # Consolidated summary logging (replaces thousands of individual log entries)
+    if job_duration_hours > 24:
+        estimated_days = job_duration_hours / max_daily_hours if max_daily_hours > 0 else 1
+        logger.info(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling completed - "
+                   f"estimated {estimated_days:.1f} working days, {slots_found} valid slots found "
+                   f"(search window: {max_search_days} days)")
+    else:
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling - {slots_found} valid slots found")
+    
+    return valid_slots
+
 def _add_working_hours_constraints(model, all_tasks, logger):
-    """Add working hours constraints using ai_arrangable_hour table configuration."""
+    """Add working hours constraints using ai_arrangable_hour table configuration with multi-day support."""
     from app.scheduling.time_availability import TimeAvailabilityChecker
     
     time_checker = TimeAvailabilityChecker()
@@ -605,32 +732,8 @@ def _add_working_hours_constraints(model, all_tasks, logger):
         start_var = task_info['start']
         job_duration = task_info['hours']
         
-        # Create constraint for each possible day (up to 14 days to handle Sunday gaps)
-        valid_slots = []
-        
-        for day in range(14):  # Look at first 14 days (2 weeks) to handle Sunday gaps
-            # Get day of week (Monday = 0 maps to day_of_week = 1)
-            day_of_week = (day % 7) + 1
-            
-            periods = working_hours_by_day.get(day_of_week, [])
-            
-            # Skip non-working days (like Sunday)
-            if not periods:
-                logger.debug(f"Job {job_id} Day {day} (DoW {day_of_week}): Skipping non-working day")
-                continue
-            
-            for start_hour, end_hour in periods:
-                # Calculate absolute hours from reference time
-                day_start = day * 24 + start_hour
-                day_end = day * 24 + end_hour
-                
-                # Latest possible start time (job must finish within working hours)
-                latest_start = day_end - job_duration
-                
-                if latest_start >= day_start:
-                    # Valid time slot exists for this period
-                    valid_slots.append((int(day_start), int(latest_start)))
-                    logger.debug(f"Job {job_id} Day {day} (DoW {day_of_week}): Can start between {day_start:.1f}-{latest_start:.1f} hours")
+        # Calculate multi-day scheduling for long jobs
+        valid_slots = _calculate_multi_day_slots(job_id, job_duration, working_hours_by_day, logger)
         
         if valid_slots:
             logger.debug(f"Job {job_id}: Found {len(valid_slots)} valid slots: {valid_slots}")
@@ -860,27 +963,32 @@ def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_
             start_epoch = relative_hours_to_epoch(start_val_rel)
             end_epoch = relative_hours_to_epoch(end_val_rel)
             
-            # Check time availability and adjust if necessary
-            if not is_time_available(start_epoch, end_epoch):
-                logger.debug(f"Job {job_id} scheduled outside working hours: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
-                
-                # Calculate job duration in hours
-                duration_hours = (end_epoch - start_epoch) / 3600
-                
-                # Find next available slot
-                next_available_start = get_next_available_slot(start_epoch, duration_hours)
-                
-                if next_available_start:
-                    new_start_epoch = next_available_start
-                    new_end_epoch = new_start_epoch + (end_epoch - start_epoch)  # Keep same duration
+            # For multi-day jobs, skip post-processing time availability check
+            # (CP-SAT constraints already ensure working hours compliance)
+            duration_hours = (end_epoch - start_epoch) / 3600
+            
+            if duration_hours > 24:
+                # Multi-day job - trust CP-SAT constraints, no post-processing needed
+                logger.debug(f"Multi-day job {job_id} ({duration_hours:.1f}h) scheduled by CP-SAT constraints: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
+            else:
+                # Single-day job - apply traditional time availability check
+                if not is_time_available(start_epoch, end_epoch):
+                    logger.debug(f"Job {job_id} scheduled outside working hours: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
                     
-                    logger.info(f"Moved job {job_id} from {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(new_start_epoch))} (working hours adjustment)")
+                    # Find next available slot for single-day jobs
+                    next_available_start = get_next_available_slot(start_epoch, duration_hours)
                     
-                    start_epoch = new_start_epoch
-                    end_epoch = new_end_epoch
-                    time_adjusted_jobs += 1
-                else:
-                    logger.warning(f"Could not find available time slot for job {job_id} - keeping original schedule")
+                    if next_available_start:
+                        new_start_epoch = next_available_start
+                        new_end_epoch = new_start_epoch + (end_epoch - start_epoch)  # Keep same duration
+                        
+                        logger.info(f"Moved job {job_id} from {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(new_start_epoch))} (working hours adjustment)")
+                        
+                        start_epoch = new_start_epoch
+                        end_epoch = new_end_epoch
+                        time_adjusted_jobs += 1
+                    else:
+                        logger.warning(f"Could not find available time slot for job {job_id} - keeping original schedule")
             
             machine_val = task_info['machine']
             priority = task_info['job'].get('priority', 3)

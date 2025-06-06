@@ -107,13 +107,12 @@ def convert_datetime_to_epoch(dt_value):
         logger.debug(f"Error converting datetime to epoch: {e} for value {dt_value}")
         return None
         
-def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning_horizon_days: int = 60):
+def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 60):
     """
     Load job data for production planning from MariaDB using joined tables.
     
     Args:
         max_jobs: Maximum number of jobs to load (default: 1000)
-        buffer_days: Days before today for late jobs (default: 7)
         planning_horizon_days: Days ahead for planning horizon (default: 60)
         
     Returns:
@@ -122,7 +121,7 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
             machines_list (list): List of available machine dictionaries.
             setup_times_dict (dict): Dictionary mapping machine transitions to setup times.
     """
-    logger.info(f"Starting to load jobs planning data from MariaDB using joined tables (max_jobs: {max_jobs})")
+    logger.info(f"Starting to load jobs planning data from MariaDB using joined tables (max_jobs: {max_jobs}, planning_horizon: {planning_horizon_days} days)")
     conn = None
     jobs_list = []
     machines_list = []
@@ -180,16 +179,17 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
             OR tm.MachineId_i = jop.Machine_v
         )
         WHERE jot.Void_c != 1 
-            AND jot.DocStatus_c != 'CP' 
+            AND jot.DocStatus_c NOT IN ('CP', 'CX') 
             AND jop.QtyStatus_c != 'FF' 
-            AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL %s DAY) AND DATE_ADD(CURDATE(), INTERVAL %s DAY)
+            AND jot.TargetDate_dd >= CURDATE()
+            AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
         ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
         LIMIT %s
         """
         
         # Run EXPLAIN to analyze query performance
         explain_query = "EXPLAIN " + jobs_query
-        cursor.execute(explain_query, (buffer_days, planning_horizon_days, max_jobs))
+        cursor.execute(explain_query, (planning_horizon_days, max_jobs))
         explain_results = cursor.fetchall()
         
         logger.info("=== QUERY EXECUTION PLAN ===")
@@ -201,7 +201,7 @@ def load_jobs_planning_data(max_jobs: int = 1000, buffer_days: int = 7, planning
         # Execute actual query with timing
         import time
         start_time = time.time()
-        cursor.execute(jobs_query, (buffer_days, planning_horizon_days, max_jobs))
+        cursor.execute(jobs_query, (planning_horizon_days, max_jobs))
         raw_jobs = cursor.fetchall()
         query_time = time.time() - start_time
         
@@ -379,7 +379,7 @@ if __name__ == '__main__':
     logger.info("Testing mariadb_parser.py directly")
     
     try:
-        jobs, machines, setup_times = load_jobs_planning_data(max_jobs=1000, buffer_days=7, planning_horizon_days=60)
+        jobs, machines, setup_times = load_jobs_planning_data(max_jobs=1000, planning_horizon_days=60)
         
         if jobs:
             print(f"Loaded {len(jobs)} jobs.")
