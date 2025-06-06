@@ -185,6 +185,7 @@ class ProductionJobResponse(BaseModel):
     process_code: str
     rsc_location: str
     rsc_code: str
+    machine: Optional[str] = None
     job_dependency: bool
     number_operator: int
     job_quantity: int

@@ -176,7 +176,7 @@ async def get_production_schedule(
     page_size: int = Query(50, ge=1, le=500, description="Number of items per page"),
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by (e.g., LCD_DATE, JOB, PROCESS_CODE)"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
-    search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, RSC_LOCATION"),
+    search: Optional[str] = Query(None, description="Search term for JOB, PROCESS_CODE, RSC_CODE, MACHINE, RSC_LOCATION"),
     buffer_days: int = Query(7, ge=1, le=30, description="Days before today for late jobs (default: 7)"),
     planning_horizon_days: int = Query(60, ge=7, le=365, description="Days ahead for planning horizon (default: 60)")
 ):
@@ -230,13 +230,14 @@ async def get_production_schedule(
                 LOWER(jot.DocRef_v) LIKE %s OR 
                 LOWER(jop.Task_v) LIKE %s OR 
                 LOWER(jop.Machine_v) LIKE %s OR
+                LOWER(COALESCE(tm.MachineName_v, '')) LIKE %s OR
                 LOWER('' AS RSC_LOCATION) LIKE %s 
             )
             """
              # For aliased RSC_LOCATION, direct SQL search is tricky without subquery or if it's always ''.
              # If RSC_LOCATION can have actual values from a field, replace LOWER('' AS RSC_LOCATION) LIKE %s
              # with LOWER(actual_field_for_RSC_LOCATION) LIKE %s
-            params.extend([search_term_like, search_term_like, search_term_like, search_term_like])
+            params.extend([search_term_like, search_term_like, search_term_like, search_term_like, search_term_like])
 
         try:
             base_select_fields = """ 
@@ -246,6 +247,7 @@ async def get_production_schedule(
                 jop.Task_v AS PROCESS_CODE, 
                 '' AS RSC_LOCATION, 
                 jop.Machine_v AS RSC_CODE, 
+                COALESCE(tm.MachineName_v, jop.Machine_v) AS MACHINE,
                 jop.ManCount_i AS NUMBER_OPERATOR, 
                 jot.JoQty_d AS JOB_QUANTITY, 
                 CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
@@ -273,7 +275,8 @@ async def get_production_schedule(
             """
             from_join_clauses = """ \n            FROM tbl_jo_process AS jop \
             INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i \
-            LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
+            LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i \
+            LEFT JOIN tbl_machine AS tm ON tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') OR tm.machine_id_v = jop.Machine_v
             """
             
             # Intelligent Rolling Window Strategy based on PLAN_DATE (CreateDate_dt)

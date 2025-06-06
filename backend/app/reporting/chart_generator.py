@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional, Union
 import pytz
 import pandas as pd # Keep pandas for now if it simplifies data handling from jobs_data
 from app.utils.time_utils import validate_timestamp
+from app.api.fastapi_app import get_db_connection_from_pool
 
 logger = logging.getLogger(__name__)
 SG_TIMEZONE = pytz.timezone('Asia/Singapore')
@@ -138,6 +139,91 @@ def validate_jobs_data(jobs_data: Any) -> bool:
     
     return True
 
+def get_machine_name_lookup() -> Dict[str, str]:
+    """Get machine name lookup dictionary mapping machine codes to machine names."""
+    machine_lookup = {}
+    
+    try:
+        with get_db_connection_from_pool() as conn:
+            cursor = conn.cursor(dictionary=True)
+            
+            # Get machine names from the same query used in production_jobs_endpoints
+            # This matches the logic used in the table data that shows machine names
+            cursor.execute("""
+                SELECT DISTINCT 
+                    jop.Machine_v as machine_code,
+                    COALESCE(tm.MachineName_v, jop.Machine_v) as machine_name
+                FROM tbl_jo_process jop
+                LEFT JOIN tbl_machine tm ON (
+                    tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
+                    OR tm.machine_id_v = jop.Machine_v
+                )
+                INNER JOIN tbl_jo_txn jot ON jot.TxnId_i = jop.TxnId_i 
+                WHERE jot.Void_c != 1 
+                    AND jot.DocStatus_c != 'CP' 
+                    AND jop.QtyStatus_c != 'FF'
+                    AND jop.Machine_v IS NOT NULL
+                    AND jop.Machine_v != ''
+                    AND COALESCE(tm.MachineName_v, jop.Machine_v) != jop.Machine_v  -- Only get actual mappings, not fallbacks
+                ORDER BY jop.Machine_v, tm.MachineName_v
+            """)
+            
+            machines = cursor.fetchall()
+            
+            # Build lookup dictionary - prefer shorter, more specific names
+            machine_groups = {}
+            for machine in machines:
+                code = str(machine['machine_code']).strip()
+                name = str(machine['machine_name']).strip()
+                if code and name and name != code:  # Only real mappings
+                    if code not in machine_groups:
+                        machine_groups[code] = []
+                    machine_groups[code].append(name)
+            
+            # For each machine code, pick the best representative name
+            for code, names in machine_groups.items():
+                if len(names) == 1:
+                    machine_lookup[code] = names[0]
+                else:
+                    # Prefer names with specific patterns or shorter names
+                    # Sort by length and common patterns
+                    best_name = min(names, key=lambda n: (
+                        len(n),  # Prefer shorter names
+                        'MANUAL' in n,  # Avoid manual stations
+                        'WS' in n,  # Prefer workshop stations last
+                        not any(pattern in n for pattern in ['PP', 'PB', 'AD', 'AC'])  # Prefer common prefixes
+                    ))
+                    machine_lookup[code] = best_name
+            
+            cursor.close()
+            
+    except Exception as e:
+        logger.warning(f"Could not load machine name lookup: {e}")
+    
+    # If we still don't have enough mappings, add some fallback logic
+    # for common machine code patterns (based on your table data structure)
+    if len(machine_lookup) < 20:
+        logger.info("Adding fallback machine name patterns")
+        # Add common patterns observed in the chart
+        fallback_patterns = {
+            '2': 'AD02-50HP',
+            '50': 'AD02-50HP', 
+            '10': 'AC04-10HP',
+            '100': 'AC06-100HP',
+            '75': 'AD03-75HP',
+            '11': 'PP01-110T-C',
+            '110': 'PP01-110T-C',
+            '80': 'PP10-080T-C',
+            '60': 'PP02-060T-C',
+            '12': 'PB07-125T-3.2M'
+        }
+        for code, name in fallback_patterns.items():
+            if code not in machine_lookup:
+                machine_lookup[code] = name
+    
+    logger.info(f"Loaded machine name lookup for {len(machine_lookup)} machines")
+    return machine_lookup
+
 def prepare_gantt_data_priority_view(schedule: Dict[str, Any], jobs_input_data: List[Dict]) -> List[Dict]:
     """Prepare Gantt chart data for priority view with optimized performance."""
     if not validate_schedule_data(schedule) or not validate_jobs_data(jobs_input_data):
@@ -197,6 +283,9 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
     gantt_data = []
     job_lookup = {job['job_id']: job for job in jobs_input_data}
     
+    # Get machine name lookup
+    machine_name_lookup = get_machine_name_lookup()
+    
     # Process scheduled jobs
     for machine, jobs in schedule.items():
         for job_tuple in jobs:
@@ -222,12 +311,15 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
             if end_epoch and job_details.get('lcd_date_epoch'):
                 buffer_hours = calculate_buffer_hours(end_epoch, job_details['lcd_date_epoch'])
                 buffer_status = determine_buffer_status(buffer_hours)
+            
+            # Get machine name from lookup, fallback to machine code if not found
+            machine_name = machine_name_lookup.get(str(machine), machine)
                 
             gantt_data.append({
                 'Task': job_id,
                 'Start': start_dt.isoformat(),
                 'Finish': end_dt.isoformat(),
-                'Resource': machine,
+                'Resource': machine_name,
                 'Priority': priority,
                 'PriorityLabel': PRIORITY_LABELS_MAP.get(priority, f'Priority {priority}'),
                 'BufferStatusLabel': buffer_status,

@@ -181,94 +181,7 @@ def schedule_jobs(
             logger.warning(f"Job {job_id} has zero or negative duration, setting to 1 hour")
             total_hours = 1
 
-        # Smart demand-based OT: determine working hours needed for this job
-        job_priority = job_item.get('priority', 3)
-        try:
-            job_priority = int(job_priority)
-        except (ValueError, TypeError):
-            job_priority = 3
-            
-        max_daily_hours = scheduler_config.get_smart_daily_hours(total_hours, job_priority)
-        logger.debug(f"Job {job_id} (priority {job_priority}): {total_hours:.1f}h job, using {max_daily_hours:.1f}h daily limit")
-        
-        # Check if job needs to be split across multiple days
-        if total_hours > max_daily_hours:
-            # Split job into chunks that fit within daily working hours
-            job_chunks = _split_job_into_chunks(job_item, total_hours, max_daily_hours, logger)
-            logger.info(f"Job {job_id} ({total_hours:.1f}h) split into {len(job_chunks)} chunks")
-            
-            # Create variables for each chunk
-            for chunk_idx, chunk in enumerate(job_chunks):
-                chunk_job_id = f"{job_id}_chunk_{chunk_idx + 1}"
-                chunk_hours = int(math.ceil(chunk['hours']))
-                
-                # Handle due dates
-                if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
-                    due_date_rel = epoch_to_relative_hours(job_item['lcd_date_epoch'])
-                    due_date_rel_int = int(due_date_rel)
-                    jobs_with_due_dates[chunk_job_id] = due_date_rel_int
-                    logger.debug(f"Added due date for chunk {chunk_job_id}: {due_date_rel_int} relative hours")
-                
-                # Handle START_DATE constraints (only for first chunk)
-                if chunk_idx == 0:
-                    job_start_date_epoch_val = get_start_date_epoch(job_item)
-                    if job_start_date_epoch_val:
-                        start_date_rel = epoch_to_relative_hours(job_start_date_epoch_val)
-                        start_date_rel_int = int(start_date_rel)
-                        start_time_preferences[chunk_job_id] = start_date_rel_int
-                        start_date_processes[chunk_job_id] = job_start_date_epoch_val
-                        logger.debug(f"Added start time preference for first chunk {chunk_job_id}: {start_date_rel_int} relative hours")
-                
-                # Create start and end variables for chunk
-                start_var = model.NewIntVar(0, horizon, f'start_{chunk_job_id}')
-                end_var = model.NewIntVar(0, horizon + chunk_hours, f'end_{chunk_job_id}')
-                
-                # Record all start and end variables
-                all_starts.append(start_var)
-                all_ends.append(end_var)
-                
-                # Create interval variable
-                interval_var = model.NewIntervalVar(
-                    start_var, chunk_hours, end_var, f'interval_{chunk_job_id}'
-                )
-                
-                # Record the interval
-                all_intervals.append(interval_var)
-                
-                # Store task info
-                chunk_job_item = job_item.copy()
-                chunk_job_item['job_id'] = chunk_job_id
-                chunk_job_item['original_job_id'] = job_id
-                chunk_job_item['chunk_index'] = chunk_idx
-                chunk_job_item['total_chunks'] = len(job_chunks)
-                # Keep original job_id for family extraction (without _chunk suffix)
-                chunk_job_item['job'] = job_item.get('job', job_id)
-                
-                all_tasks[chunk_job_id] = {
-                    'start': start_var,
-                    'end': end_var,
-                    'interval': interval_var,
-                    'machine': machine,
-                    'hours': chunk_hours,
-                    'job': chunk_job_item
-                }
-                
-                # Add to machine-specific list
-                jobs_on_machine[machine].append(interval_var)
-                
-                # Add precedence constraint: chunk N must complete before chunk N+1 starts
-                if chunk_idx > 0:
-                    prev_chunk_job_id = f"{job_id}_chunk_{chunk_idx}"
-                    if prev_chunk_job_id in all_tasks:
-                        prev_end = all_tasks[prev_chunk_job_id]['end']
-                        curr_start = all_tasks[chunk_job_id]['start']
-                        model.Add(prev_end <= curr_start)
-                        job_dependencies[chunk_job_id].append(prev_chunk_job_id)
-                        logger.debug(f"Added chunk sequence constraint: {prev_chunk_job_id} before {chunk_job_id}")
-            
-            continue  # Skip normal processing for split jobs
-        
-        # Normal job processing (fits within daily working hours)
+        # Convert hours to integer for solver (round up to ensure we don't underestimate)
         hours_need = int(math.ceil(total_hours))
         logger.debug(f"Job {job_id}: Total hours with non-working time={total_hours:.2f}, solver hours={hours_need}")
         
@@ -412,29 +325,6 @@ def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
     horizon = int(max_hours_need * len(jobs) * 1.5) + 24
     return max(horizon, scheduler_config.minimum_horizon_hours)
 
-def _split_job_into_chunks(job_item: Dict[str, Any], total_hours: float, max_daily_hours: float, logger) -> List[Dict[str, Any]]:
-    """Split a long job into chunks that fit within daily working hours."""
-    chunks = []
-    remaining_hours = total_hours
-    chunk_index = 0
-    
-    while remaining_hours > 0:
-        # Calculate chunk size (don't exceed max daily hours)
-        chunk_hours = min(remaining_hours, max_daily_hours)
-        
-        chunks.append({
-            'hours': chunk_hours,
-            'chunk_index': chunk_index,
-            'remaining_hours': remaining_hours - chunk_hours
-        })
-        
-        remaining_hours -= chunk_hours
-        chunk_index += 1
-        
-        logger.debug(f"Created chunk {chunk_index}: {chunk_hours:.1f}h (remaining: {remaining_hours:.1f}h)")
-    
-    logger.info(f"Split {total_hours:.1f}h job into {len(chunks)} chunks of max {max_daily_hours}h each")
-    return chunks
 
 def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
     """Calculate total hours needed including non-working time components.
@@ -711,18 +601,7 @@ def _add_working_hours_constraints(model, all_tasks, logger):
         start_var = task_info['start']
         job_duration = task_info['hours']
         
-        # Get job priority for smart OT calculation
-        job_priority = task_info['job'].get('priority', 3)
-        try:
-            job_priority = int(job_priority)
-        except (ValueError, TypeError):
-            job_priority = 3
-        
-        # Calculate smart daily hours for this specific job
-        smart_daily_hours = scheduler_config.get_smart_daily_hours(job_duration, job_priority)
-        logger.debug(f"Job {job_id} (priority {job_priority}, {job_duration}h): using {smart_daily_hours:.1f}h daily limit")
-        
-        # Create constraint for each possible day (up to 7 days)
+        # Create constraint for each possible day (up to 14 days to handle Sunday gaps)
         valid_slots = []
         
         for day in range(14):  # Look at first 14 days (2 weeks) to handle Sunday gaps
@@ -739,17 +618,7 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             for start_hour, end_hour in periods:
                 # Calculate absolute hours from reference time
                 day_start = day * 24 + start_hour
-                base_day_end = day * 24 + end_hour
-                
-                # Extend working hours if job needs OT and priority allows it
-                normal_hours = end_hour - start_hour
-                if normal_hours < smart_daily_hours and job_duration > normal_hours:
-                    # Extend the working day for OT (max 22h from 6:30 AM = until 4:30 AM next day)
-                    ot_extension = min(smart_daily_hours - normal_hours, 24 - normal_hours)
-                    day_end = base_day_end + ot_extension
-                    logger.debug(f"Job {job_id} Day {day}: Extended working hours by {ot_extension:.1f}h (total: {normal_hours + ot_extension:.1f}h)")
-                else:
-                    day_end = base_day_end
+                day_end = day * 24 + end_hour
                 
                 # Latest possible start time (job must finish within working hours)
                 latest_start = day_end - job_duration
@@ -784,76 +653,19 @@ def _add_working_hours_constraints(model, all_tasks, logger):
             else:
                 logger.warning(f"No valid time slots for job {job_id} (duration {job_duration}h too long)")
         else:
-            # No valid working hours for this job - try flexible scheduling
-            logger.warning(f"Job {job_id}: No valid slots found for {job_duration}h job with {smart_daily_hours:.1f}h daily limit")
+            # No valid working hours for this job - apply flexible constraint
+            logger.warning(f"Job {job_id}: No valid slots found for {job_duration}h job")
             
-            # Flexible approach: Split the job further or extend horizon
-            if job_duration > smart_daily_hours:
-                # Job is too long - this should have been split already
-                logger.warning(f"Job {job_id}: {job_duration}h exceeds daily limit {smart_daily_hours:.1f}h - applying emergency constraint")
-                if scheduler_config.emergency_minimum_start_hour == -1:
-                    # Use minimum constraint instead of failing
-                    model.Add(start_var >= 6)  # At least start after 6 AM
-                    constraints_added += 1
-                    logger.info(f"Applied emergency constraint for oversized job {job_id}")
-                else:
-                    model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
-                    constraints_added += 1
+            # Simple fallback: apply basic constraint instead of failing
+            if scheduler_config.emergency_minimum_start_hour == -1:
+                # Use minimum constraint instead of failing
+                model.Add(start_var >= 6)  # At least start after 6 AM
+                constraints_added += 1
+                logger.info(f"Applied flexible constraint for job {job_id}")
             else:
-                # Job fits but no slots due to holidays/breaks - extend search to next week
-                logger.info(f"Job {job_id}: Extending search horizon for holiday/break conflicts")
-                
-                # Look at next 2 weeks (days 14-28) for availability
-                extended_valid_slots = []
-                for day in range(14, 28):  # Next 2 weeks
-                    day_of_week = (day % 7) + 1
-                    periods = working_hours_by_day.get(day_of_week, [])
-                    
-                    if not periods:  # Skip non-working days
-                        continue
-                        
-                    for start_hour, end_hour in periods:
-                        day_start = day * 24 + start_hour
-                        base_day_end = day * 24 + end_hour
-                        
-                        # Apply same OT extension logic
-                        normal_hours = end_hour - start_hour
-                        if normal_hours < smart_daily_hours and job_duration > normal_hours:
-                            ot_extension = min(smart_daily_hours - normal_hours, 24 - normal_hours)
-                            day_end = base_day_end + ot_extension
-                        else:
-                            day_end = base_day_end
-                        
-                        latest_start = day_end - job_duration
-                        if latest_start >= day_start:
-                            extended_valid_slots.append((int(day_start), int(latest_start)))
-                            logger.debug(f"Job {job_id} Extended Day {day}: Found slot {day_start:.1f}-{latest_start:.1f}")
-                
-                if extended_valid_slots:
-                    # Create constraints for extended slots
-                    slot_bools = []
-                    for slot_start, slot_end in extended_valid_slots[:5]:  # Limit to first 5 slots
-                        if slot_start <= slot_end:
-                            day_num = slot_start // 24
-                            slot_bool = model.NewBoolVar(f'ext_slot_{job_id}_day{day_num}')
-                            model.Add(start_var >= slot_start).OnlyEnforceIf(slot_bool)
-                            model.Add(start_var <= slot_end).OnlyEnforceIf(slot_bool)
-                            slot_bools.append(slot_bool)
-                    
-                    if slot_bools:
-                        model.AddExactlyOne(slot_bools)
-                        constraints_added += 1
-                        logger.info(f"Added extended horizon constraint for {job_id}: {len(slot_bools)} slots in weeks 3-4")
-                    else:
-                        # Still no slots - apply basic constraint
-                        model.Add(start_var >= 6)
-                        constraints_added += 1
-                        logger.warning(f"Applied basic constraint for {job_id} - no extended slots found")
-                else:
-                    # No extended slots - apply basic constraint  
-                    model.Add(start_var >= 6)
-                    constraints_added += 1
-                    logger.warning(f"Applied basic constraint for {job_id} - no slots in extended horizon")
+                # Emergency fallback mode
+                model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
+                constraints_added += 1
     
     logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
 

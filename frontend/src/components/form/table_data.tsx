@@ -9,6 +9,7 @@ interface ProductionSchedule {
   PROCESS_CODE: string;
   RSC_LOCATION: string;
   RSC_CODE: string;
+  MACHINE: string;
   NUMBER_OPERATOR: number;
   JOB_QUANTITY: number;
   EXPECT_OUTPUT_PER_HOUR: number | null;
@@ -149,7 +150,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
       sort_field: field,
       sort_order: order,
       // Rolling window optimization - focus on time-critical jobs
-      buffer_days: '30', // Increased from 5 to 30 days
+      buffer_days: '10', // Changed from 30 to 1 day
       planning_horizon_days: '90', // Increased from 30 to 90 days
     });
 
@@ -430,9 +431,9 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('PROCESS_CODE')}>
                         PROCESS<br/>CODE
                       </th>
-                      <th className={`text-center sortable ${sortField === 'RSC_CODE' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('RSC_CODE')}>
-                        RSC<br/>CODE
+                      <th className={`text-center sortable ${sortField === 'MACHINE' ? `sort-${sortOrder}` : ''}`}
+                          onClick={() => handleSort('MACHINE')}>
+                        MACHINE<br/>NAME
                       </th>
                       <th className={`text-center sortable ${sortField === 'JOB_DEPENDENCY' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('JOB_DEPENDENCY')}>
@@ -497,7 +498,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                        <td colSpan={20} className="text-center">No production schedule found</td>
+                                                  <td colSpan={20} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
@@ -508,7 +509,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{formatDate(job.MATERIAL_ARRIVAL)}</td>
                           <td className="text-center">{job.JOB}</td>
                           <td className="text-center">{job.PROCESS_CODE}</td>
-                          <td className="text-center">{job.RSC_CODE}</td>
+                          <td className="text-center">{job.MACHINE}</td>
                           <td className="text-center">{job.JOB_DEPENDENCY ? 'Yes' : 'No'}</td>
                           <td className="text-center">{job.NUMBER_OPERATOR}</td>
                           <td className="text-center">{job.JOB_QUANTITY}</td>
