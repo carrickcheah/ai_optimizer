@@ -15,7 +15,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict, 
-                       batch_size: int = 5) -> Dict[str, Any]:
+                       batch_size: int = 50) -> Dict[str, Any]:
     """
     PRODUCTION: Schedule jobs in small batches to work around CP-SAT batch size limitations.
     
@@ -52,7 +52,7 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
                 batch_jobs,
                 machines,
                 setup_times,
-                time_limit=60,
+                time_limit_seconds=60,
                 max_jobs=len(batch_jobs),
                 planning_horizon_days=60
             )
@@ -151,7 +151,7 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
         try:
             # Use CP-SAT for single job scheduling with working hours constraints
             single_job_result = schedule_jobs([job], machines, setup_times, 
-                                            time_limit=30,  # Reduced time limit for single jobs
+                                            time_limit_seconds=30,  # Reduced time limit for single jobs
                                             max_jobs=1, 
                                             planning_horizon_days=30)
             

@@ -174,9 +174,9 @@ def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 6
         INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
         LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
         LEFT JOIN tbl_machine AS tm ON (
-            tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
-            OR tm.machine_id_v = jop.Machine_v
+            tm.machine_id_v = jop.Machine_v
             OR tm.MachineId_i = jop.Machine_v
+            OR tm.MachineName_v = jop.Machine_v
         )
         WHERE jot.Void_c != 1 
             AND jot.DocStatus_c NOT IN ('CP', 'CX') 
