@@ -590,14 +590,14 @@ def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day,
         # Single-day job: search only 3 days ahead
         max_search_days = 3
         logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling with 3-day search window")
-    elif job_duration_hours <= max_daily_hours * 7:  # Up to 1 week
-        # Multi-day job (up to 1 week): search 7 days ahead
-        max_search_days = 7
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 7-day search window")
+    elif job_duration_hours <= max_daily_hours * 30:  # Up to 30 days worth of work
+        # Multi-day job (up to 30 days): search 30 days ahead
+        max_search_days = 30
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 30-day search window")
     else:
-        # Long job (over 1 week): search 14 days ahead
-        max_search_days = 14
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 14-day search window")
+        # Very long job (over 30 days): search 60 days ahead
+        max_search_days = 60
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 60-day search window")
     
     # Pre-calculate working day pattern for the search window (optimization)
     working_day_pattern = []
