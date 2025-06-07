@@ -167,9 +167,11 @@ def greedy_schedule(
                                 job['processing_time'] = float(job['hours_need']) * 3600
                                 logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
                             except (ValueError, TypeError):
-                                job['processing_time'] = 3600
+                                logger.warning(f"Job {job.get('job_id')} has invalid HOURS_NEED, skipping job")
+                                return False
                         else:
-                            job['processing_time'] = 3600
+                            logger.warning(f"Job {job.get('job_id')} has no valid HOURS_NEED, skipping job")
+                            return False
                 except (ValueError, TypeError):
                     # DAY_NEED is invalid, fall back to HOURS_NEED
                     if 'hours_need' in job and job['hours_need'] is not None:
@@ -177,9 +179,11 @@ def greedy_schedule(
                             job['processing_time'] = float(job['hours_need']) * 3600
                             logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
                         except (ValueError, TypeError):
-                            job['processing_time'] = 3600
+                            logger.warning(f"Job {job.get('job_id')} has invalid HOURS_NEED, skipping job")
+                            return False
                     else:
-                        job['processing_time'] = 3600
+                        logger.warning(f"Job {job.get('job_id')} has no valid HOURS_NEED, skipping job")
+                        return False
             else:
                 # No DAY_NEED, use HOURS_NEED directly
                 if 'hours_need' in job and job['hours_need'] is not None:
@@ -187,9 +191,11 @@ def greedy_schedule(
                         job['processing_time'] = float(job['hours_need']) * 3600
                         logger.debug(f"No DAY_NEED, using HOURS_NEED for job {job.get('job_id')}: {job['hours_need']} hours")
                     except (ValueError, TypeError):
-                        job['processing_time'] = 3600
+                        logger.warning(f"Job {job.get('job_id')} has invalid HOURS_NEED, skipping job")
+                        return False
                 else:
-                    job['processing_time'] = 3600
+                    logger.warning(f"Job {job.get('job_id')} has no valid HOURS_NEED, skipping job")
+                    return False
         
         # Validate start_time_epoch_val is a reasonable timestamp
         if not isinstance(start_time_epoch_val, (int, float)) or start_time_epoch_val < 1000:
@@ -332,12 +338,36 @@ def greedy_schedule(
             can_skip = special_processes.get(process_num, {}).get('can_skip_dependencies', False)
             
             if not can_skip:
-                prev_process_num = process_num - 1
-                if (family, prev_process_num) in process_end_times:
-                    min_start_time = max(min_start_time, process_end_times[(family, prev_process_num)])
+                # Find the highest completed process number for this family
+                completed_processes = [p for (f, p) in process_end_times.keys() if f == family and p < process_num]
+                
+                if completed_processes:
+                    highest_completed = max(completed_processes)
+                    # Calculate the gap between the highest completed process and what this process needs
+                    required_predecessor = process_num - 1
+                    gap = required_predecessor - highest_completed
+                    
+                    # Allow scheduling with small gaps to handle individual process failures
+                    # Gap of 0: immediate predecessor completed (normal case)
+                    # Gap of 1: one process failed/skipped (acceptable)
+                    # Gap of 2+: too many processes missing (not acceptable)
+                    if gap <= 1:
+                        min_start_time = max(min_start_time, process_end_times[(family, highest_completed)])
+                        if gap == 0:
+                            logger.debug(f"Job {job_id} (P{process_num:02d}) can schedule - immediate predecessor P{highest_completed:02d} completed")
+                        else:
+                            logger.debug(f"Job {job_id} (P{process_num:02d}) can schedule - allowing gap of {gap} after P{highest_completed:02d}")
+                    else:
+                        dependencies_met = False
+                        logger.debug(f"Job {job_id} (P{process_num:02d}) cannot schedule - gap of {gap} too large (needs P{required_predecessor:02d}, only P{highest_completed:02d} completed)")
                 else:
-                    dependencies_met = False
-                    logger.debug(f"Job {job_id} (P{process_num:02d}) depends on P{prev_process_num:02d} of family {family}, which is not yet scheduled")
+                    # No processes completed yet for this family
+                    if process_num == 1:
+                        # Process 1 can always start
+                        logger.debug(f"Job {job_id} (P{process_num:02d}) is first process of family {family}")
+                    else:
+                        dependencies_met = False
+                        logger.debug(f"Job {job_id} (P{process_num:02d}) cannot start - no previous processes completed for family {family}")
             
         if not dependencies_met:
             logger.warning(f"Job {job_id} cannot be scheduled due to unmet dependencies")
@@ -371,27 +401,33 @@ def greedy_schedule(
                             try:
                                 job_item['processing_time'] = float(job_item['hours_need']) * 3600
                             except (ValueError, TypeError):
-                                job_item['processing_time'] = 3600
+                                logger.warning(f"Job {job_item.get('job_id')} has invalid HOURS_NEED, skipping job")
+                                continue
                         else:
-                            job_item['processing_time'] = 3600
+                            logger.warning(f"Job {job_item.get('job_id')} has no valid HOURS_NEED, skipping job")
+                            continue
                 except (ValueError, TypeError):
                     # DAY_NEED is invalid, fall back to HOURS_NEED
                     if 'hours_need' in job_item and job_item['hours_need'] is not None:
                         try:
                             job_item['processing_time'] = float(job_item['hours_need']) * 3600
                         except (ValueError, TypeError):
-                            job_item['processing_time'] = 3600
+                            logger.warning(f"Job {job_item.get('job_id')} has invalid HOURS_NEED, skipping job")
+                            continue
                     else:
-                        job_item['processing_time'] = 3600
+                        logger.warning(f"Job {job_item.get('job_id')} has no valid HOURS_NEED, skipping job")
+                        continue
             else:
                 # No DAY_NEED, use HOURS_NEED directly
                 if 'hours_need' in job_item and job_item['hours_need'] is not None:
                     try:
                         job_item['processing_time'] = float(job_item['hours_need']) * 3600
                     except (ValueError, TypeError):
-                        job_item['processing_time'] = 3600
+                        logger.warning(f"Job {job_item.get('job_id')} has invalid HOURS_NEED, skipping job")
+                        continue
                 else:
-                    job_item['processing_time'] = 3600
+                    logger.warning(f"Job {job_item.get('job_id')} has no valid HOURS_NEED, skipping job")
+                    continue
 
         # Attempt to schedule the job at the earliest possible time
         if can_schedule_job(job_item, machine_id, possible_start_time):
@@ -438,7 +474,9 @@ def greedy_schedule(
 
             start_actual = machine_available_time[machine_id]
             if not job_item.get('processing_time'):
-                job_item['processing_time'] = 3600
+                logger.warning(f"Job {job_id} has no processing_time, skipping job")
+                unscheduled_jobs_list.append(job_item)
+                continue
             end_actual = start_actual + job_item['processing_time']
             
             additional_params = {

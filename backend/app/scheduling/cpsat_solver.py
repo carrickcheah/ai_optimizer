@@ -182,8 +182,8 @@ def schedule_jobs(
         # Calculate total hours needed including non-working time components
         total_hours = _calculate_total_job_hours(job_item)
         if total_hours <= 0:
-            logger.warning(f"Job {job_id} has zero or negative duration, setting to 1 hour")
-            total_hours = 1
+            logger.warning(f"Job {job_id} has zero or negative duration, skipping job")
+            continue
 
         # Convert hours to integer for solver (round up to ensure we don't underestimate)
         hours_need = int(math.ceil(total_hours))

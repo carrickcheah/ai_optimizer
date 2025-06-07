@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 
 def extract_process_number(job_id: str) -> int:
     """
-    Extract the process sequence number from the new format (e.g., 1 from '1/4' in 'CP08-342-1/4') or return 999 if not found.
+    Extract the process sequence number from the format (e.g., 1 from '1/4' in 'CP08-342-1/4') or return 999 if not found.
+    We only care about the sequence number (before the /) and ignore the total count (after the /).
     job_id is in the format job_process_code where process_code ends with 'number/total'.
     
     Args:
@@ -28,10 +29,12 @@ def extract_process_number(job_id: str) -> int:
         logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
         return 999
 
-    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3")
+    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3", "11/6")
+    # We only care about the sequence number (11) and ignore the total (6)
     match = re.search(r'(\d+)/\d+$', str(process_code))
     if match:
         seq = int(match.group(1))
+        logger.debug(f"Extracted sequence number {seq} from job_id {job_id} (ignoring total count)")
         return seq
         
     return 999  # Default if parsing fails
@@ -39,7 +42,7 @@ def extract_process_number(job_id: str) -> int:
 def extract_total_processes(job_id: str) -> int:
     """
     Extract the total number of processes from the new format (e.g., 4 from '1/4' in 'CP08-342-1/4') or return 1 if not found.
-    This is useful for understanding the full sequence length for a job family.
+    NOTE: This function is not used for dependency logic. The scheduler ignores total counts and only uses sequence numbers.
     
     Args:
         job_id: The job identifier string
@@ -207,7 +210,7 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
         'priority': 3,
         'hours_need': 1.0,
         'day_need': None,  # Default to None so HOURS_NEED takes precedence
-        'processing_time': 3600,  # 1 hour in seconds
+        'processing_time': None,  # Will be calculated from hours_need/day_need
         'setup_time': 0,
         'break_time': 0,
         'no_prod': 0
