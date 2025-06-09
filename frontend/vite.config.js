@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       // Proxy API requests to the backend
       '/api': {
-        target: 'http://localhost:8000', // Your FastAPI port
+        target: 'http://backend.zeabur.internal:8000', // Your FastAPI port
         changeOrigin: true,
         secure: false
       }
