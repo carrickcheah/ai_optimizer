@@ -42,6 +42,7 @@ def get_start_date_epoch(job: Dict[str, Any]) -> Optional[Union[int, float]]:
     Returns:
         The start date epoch value or None if not present/valid
     """
+    # Extract START_DATE epoch timestamp handling field name variations
     if not isinstance(job, dict):
         logger.warning(f"Job must be a dictionary, got {type(job)}")
         return None
@@ -76,6 +77,7 @@ def is_valid_timestamp(timestamp: Any) -> bool:
     Returns:
         True if timestamp is valid, False otherwise
     """
+    # Validate timestamp for calculation safety
     return (timestamp is not None and 
             not pd.isna(timestamp) and 
             isinstance(timestamp, (int, float)))
@@ -95,6 +97,7 @@ def get_buffer_status(buffer_hours: float) -> str:
             "Caution" - Less than 72 hours buffer
             "OK" - 72 hours or more buffer
     """
+    # Categorize buffer time into status levels for dashboard display
     if not isinstance(buffer_hours, (int, float)):
         try:
             buffer_hours = float(buffer_hours)
@@ -136,6 +139,7 @@ def add_schedule_times_and_buffer(jobs: List[Dict[str, Any]], schedule: Dict[str
     Returns:
         Updated jobs list with START_TIME, END_TIME, and BAL_HR added
     """
+    # Calculate schedule times and buffer hours for deadline tracking
     if not isinstance(jobs, list):
         logger.error("Jobs must be a list")
         return []
@@ -311,6 +315,7 @@ def apply_sequence_constraints(jobs: List[Dict[str, Any]], schedule: Dict[str, A
     Returns:
         Updated job list with adjusted times based on sequence constraints
     """
+    # Enforce process sequence dependencies within job families
     logger.info("Applying sequence constraints based on job family and process numbers")
     
     if not isinstance(jobs, list) or not isinstance(schedule, dict):

@@ -19,6 +19,7 @@ def extract_process_number(job_id: str) -> int:
     Returns:
         Process sequence number or 999 if parsing fails
     """
+    # Parse sequence number from job ID (P01, P02, etc.)
     if not isinstance(job_id, str):
         logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
         return 999
@@ -50,6 +51,7 @@ def extract_total_processes(job_id: str) -> int:
     Returns:
         Total number of processes or 1 if parsing fails
     """
+    # Extract total process count from job ID format (not used for dependencies)
     if not isinstance(job_id, str):
         logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
         return 1
@@ -82,6 +84,7 @@ def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
     Returns:
         Job family string
     """
+    # Extract family name from job ID for grouping related processes
     if not isinstance(job_id, str):
         logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
         if job_id_suffix:
@@ -133,6 +136,7 @@ def validate_job_data(job: Dict[str, Any]) -> bool:
     Returns:
         True if job is valid, False otherwise
     """
+    # Check job has required fields and valid data types
     if not isinstance(job, dict):
         logger.error(f"Job must be a dictionary, got {type(job)}")
         return False
@@ -171,6 +175,7 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Normalized job dictionary
     """
+    # Standardize field names and data types across different input formats
     if not isinstance(job, dict):
         logger.error("Job must be a dictionary")
         return {}
@@ -234,6 +239,7 @@ def convert_cpsat_to_greedy_format(cpsat_schedule: Dict[str, Any]) -> Dict[str, 
     Returns:
         Schedule in format {machine: [(job_id, start, end, priority, additional_params), ...]}
     """
+    # Convert CP-SAT output format to standardized greedy format
     logger.info("Converting CP-SAT schedule format to greedy format")
     
     if not isinstance(cpsat_schedule, dict):
@@ -340,6 +346,7 @@ def _is_valid_timestamp(timestamp: Any, job_id: str, machine: str, field_name: s
     Returns:
         True if timestamp is valid, False otherwise
     """
+    # Validate timestamp is reasonable epoch time (not small integer)
     if not isinstance(timestamp, (int, float)):
         logger.error(f"Invalid {field_name} time type for job {job_id} on machine {machine}: {type(timestamp)}")
         return False
@@ -362,6 +369,7 @@ def build_schedule_from_logs(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[T
     Returns:
         The schedule in greedy scheduler format {machine: [(job_id, start, end, priority, additional_params), ...]}
     """
+    # Fallback schedule builder from solver log messages
     logger.info("Building schedule from solver log messages")
     greedy_format = {}
     
@@ -409,6 +417,7 @@ def group_jobs_by_family(jobs: List[Dict[str, Any]]) -> Dict[str, List[Tuple[int
     Returns:
         Dictionary mapping family names to lists of (process_number, job_id, job_data) tuples
     """
+    # Group related jobs by family for dependency tracking
     job_families = defaultdict(list)
     
     for job in jobs:
@@ -437,6 +446,7 @@ def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> Dict[str, An
     Returns:
         Dictionary with schedule metrics
     """
+    # Calculate utilization, makespan, and other schedule performance metrics
     if not isinstance(schedule, dict):
         return {}
         

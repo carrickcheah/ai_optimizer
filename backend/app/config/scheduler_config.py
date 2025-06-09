@@ -24,7 +24,7 @@ class SchedulerConfig(BaseSettings):
         description="Maximum number of jobs to process for performance"
     )
     planning_horizon_days: int = Field(
-        default=60,
+        default=180,
         gt=0,
         description="Planning horizon in days"
     )

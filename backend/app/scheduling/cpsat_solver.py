@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 ortools_logger = logging.getLogger('ortools')
 ortools_logger.setLevel(logging.ERROR)  # Set to ERROR to hide all but errors
 
+# Main CP-SAT constraint programming solver for production scheduling optimization
 def schedule_jobs(
     jobs: List[Dict[str, Any]], 
     machines: List[str], 
@@ -282,6 +283,7 @@ def schedule_jobs(
         start_date_processes, jobs_with_due_dates, enforce_sequence, logger
     )
 
+# Creates standardized error result dictionary with metadata
 def _create_error_result(message: str) -> Dict[str, Any]:
     """Create a standardized error result dictionary."""
     return {
@@ -294,6 +296,7 @@ def _create_error_result(message: str) -> Dict[str, Any]:
         }
     }
 
+# Calculates solver time horizon based on maximum job durations
 def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
     """Calculate the solver horizon based on job durations.
     
@@ -329,7 +332,7 @@ def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
     horizon = int(max_hours_need * len(jobs) * 1.5) + 24
     return max(horizon, scheduler_config.minimum_horizon_hours)
 
-
+# Calculates total job hours including setup, break, and non-productive time
 def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
     """Calculate total hours needed including non-working time components.
     
@@ -405,6 +408,7 @@ def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
     
     return total_hours
 
+# Adds precedence constraints between processes of same job family
 def _add_sequence_constraints(model, all_tasks, job_dependencies, logger):
     """Add sequence constraints between processes of the same family."""
     logger.info("Enforcing sequence constraints between processes of the same family")
@@ -435,6 +439,7 @@ def _add_sequence_constraints(model, all_tasks, job_dependencies, logger):
             else:
                 logger.warning(f"Skipping sequence constraint for family {family_key} due to missing tasks")
 
+# Adds cumulative operator resource constraints using CP-SAT Cumulative
 def _add_operator_constraints(model, all_tasks, max_operators, logger):
     """Add cumulative operator constraints."""
     logger.info(f"Adding cumulative operator constraint with capacity {max_operators}")
@@ -458,6 +463,7 @@ def _add_operator_constraints(model, all_tasks, max_operators, logger):
     else:
         logger.info("No jobs require operators, skipping cumulative operator constraint")
 
+# Adds hard START_DATE constraints with priority-based conflict resolution
 def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger):
     """Add hard START_DATE constraints with priority-based conflict resolution."""
     logger.info("Adding hard START_DATE constraints with priority-based conflict resolution")
@@ -510,7 +516,7 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                     if higher_priority_job['job_id'] not in resolved_jobs:
                         # Make highest priority job exact
                         start_var = higher_priority_job['task_info']['start']
-                        model.Add(start_var == higher_priority_job['start_date_rel_int'])
+                        model.Add(start_var >= higher_priority_job['start_date_rel_int'])
                         logger.debug(f"Added EXACT START_DATE for priority job {higher_priority_job['job_id']}")
                         resolved_jobs.add(higher_priority_job['job_id'])
                     
@@ -525,19 +531,19 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                 for job_data in jobs_list:
                     if job_data['job_id'] not in resolved_jobs:
                         start_var = job_data['task_info']['start']
-                        model.Add(start_var == job_data['start_date_rel_int'])
+                        model.Add(start_var >= job_data['start_date_rel_int'])
                         logger.debug(f"Added EXACT START_DATE for non-conflicting job {job_data['job_id']}")
             else:
                 # No time conflicts, make all jobs exact
                 for job_data in jobs_list:
                     start_var = job_data['task_info']['start']
-                    model.Add(start_var == job_data['start_date_rel_int'])
+                    model.Add(start_var >= job_data['start_date_rel_int'])
                     logger.debug(f"Added EXACT START_DATE for single P01 job {job_data['job_id']}")
         else:
             # Single job on machine, make it exact
             job_data = jobs_list[0]
             start_var = job_data['task_info']['start']
-            model.Add(start_var == job_data['start_date_rel_int'])
+            model.Add(start_var >= job_data['start_date_rel_int'])
             logger.debug(f"Added EXACT START_DATE for single P01 job {job_data['job_id']}")
     
     # Handle non-P01 jobs with START_DATE (minimum bound)
@@ -550,6 +556,7 @@ def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger
                 model.Add(start_var >= start_date_rel_int)
                 logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
 
+# Calculate valid start times for multi-day jobs with performance improvements
 def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day, logger):
     """
     🚀 OPTIMIZED: Calculate valid start times for multi-day jobs with performance improvements.
@@ -585,19 +592,19 @@ def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day,
     # Get maximum daily working hours for adaptive search
     max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
     
-    # Adaptive search window: smaller for short jobs, larger for long jobs
+    # Extended search window: allow jobs to be scheduled far into the future
     if job_duration_hours <= max_daily_hours:
-        # Single-day job: search only 3 days ahead
-        max_search_days = 3
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling with 3-day search window")
-    elif job_duration_hours <= max_daily_hours * 30:  # Up to 30 days worth of work
-        # Multi-day job (up to 30 days): search 30 days ahead
-        max_search_days = 30
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 30-day search window")
+        # Single-day job: search 90 days ahead to find available slots
+        max_search_days = 90
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling with 90-day search window")
+    elif job_duration_hours <= max_daily_hours * 90:  # Up to 90 days worth of work
+        # Multi-day job (up to 90 days): search 180 days ahead
+        max_search_days = 180
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 180-day search window")
     else:
-        # Very long job (over 30 days): search 60 days ahead
-        max_search_days = 60
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 60-day search window")
+        # Very long job (over 90 days): search full year ahead
+        max_search_days = 365
+        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 365-day search window")
     
     # Pre-calculate working day pattern for the search window (optimization)
     working_day_pattern = []
@@ -677,6 +684,7 @@ def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day,
     
     return valid_slots
 
+# Add working hours constraints using ai_arrangable_hour table configuration with multi-day support
 def _add_working_hours_constraints(model, all_tasks, logger):
     """Add working hours constraints using ai_arrangable_hour table configuration with multi-day support."""
     from app.scheduling.time_availability import TimeAvailabilityChecker
@@ -776,7 +784,7 @@ def _add_working_hours_constraints(model, all_tasks, logger):
     
     logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
 
-
+# Add hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline
 def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines):
     """Add hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline."""
     if not enforce_deadlines:
@@ -803,6 +811,7 @@ def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enf
         else:
             logger.warning(f"Job {job_id} has a due date but was not found in all_tasks")
 
+# Creates multi-objective function minimizing priority penalties, tardiness, and makespan
 def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_preferences, all_tasks, horizon, logger):
     """Create the objective function for the model."""
     objective_terms = []
@@ -845,6 +854,7 @@ def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_
     
     return objective_terms
 
+# Configures and runs CP-SAT solver with time limits and workers
 def _solve_model(model, time_limit_seconds, logger):
     """Solve the CP-SAT model with performance optimizations."""
     solver = cp_model.CpSolver()
@@ -908,6 +918,7 @@ def _solve_model(model, time_limit_seconds, logger):
         'performance_warning': solve_time > 25
     }
 
+# Processes solver results and converts to final schedule format
 def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_dependencies, 
                           start_date_processes, jobs_with_due_dates, enforce_sequence, logger):
     """Process the solver results and create the final schedule with performance metrics."""
@@ -1034,6 +1045,7 @@ def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_
 
     return results
 
+# Validates sequence constraints are satisfied in final schedule
 def _validate_sequence_constraints(results, job_dependencies, logger):
     """Validate that sequence constraints are satisfied in the final schedule."""
     logger.info("Validating sequence constraints in the final schedule")

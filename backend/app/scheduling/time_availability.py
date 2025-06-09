@@ -17,6 +17,7 @@ SINGAPORE_TZ = pytz.timezone('Asia/Singapore')
 
 def timedelta_to_time(td):
     """Convert timedelta to time object."""
+    # Convert timedelta/time objects to standardized time format
     if isinstance(td, timedelta):
         total_seconds = int(td.total_seconds())
         hours = total_seconds // 3600
@@ -32,6 +33,7 @@ class TimeAvailabilityChecker:
     """Checks time availability based on ai_holidays, ai_arrangable_hour, and ai_breaktimes."""
     
     def __init__(self):
+        # Initialize time availability checker with database-backed caches
         self._holidays_cache = {}
         self._arrangable_hours_cache = {}
         self._breaktimes_cache = []
@@ -45,6 +47,7 @@ class TimeAvailabilityChecker:
     
     def _refresh_cache_if_needed(self):
         """Refresh cache if expired."""
+        # Reload database caches periodically for fresh holiday/hours data
         now = datetime.now()
         if self._cache_expiry is None or now > self._cache_expiry:
             self._load_holidays()
@@ -57,6 +60,7 @@ class TimeAvailabilityChecker:
     
     def _load_holidays(self):
         """Load holiday data from ai_holidays table."""
+        # Load company holidays from database for scheduling exclusions
         try:
             from app.api.fastapi_app import get_db_connection_from_pool
             
@@ -113,6 +117,7 @@ class TimeAvailabilityChecker:
     
     def _load_arrangable_hours(self):
         """Load working hours from ai_arrangable_hour table."""
+        # Load daily working hour schedules from database
         try:
             from app.api.fastapi_app import get_db_connection_from_pool
             
@@ -150,6 +155,7 @@ class TimeAvailabilityChecker:
     
     def _load_breaktimes(self):
         """Load break times from ai_breaktimes table."""
+        # Load break periods when work cannot be scheduled
         try:
             from app.api.fastapi_app import get_db_connection_from_pool
             
@@ -188,6 +194,7 @@ class TimeAvailabilityChecker:
     
     def _build_epoch_caches(self):
         """Build optimized epoch-based caches from loaded database data."""
+        # Pre-compute epoch-based lookups for faster constraint checking
         try:
             # Build holidays epoch cache (days since Unix epoch)
             self._holidays_epoch_cache.clear()
@@ -238,6 +245,7 @@ class TimeAvailabilityChecker:
 
     def is_holiday(self, date_obj: datetime) -> bool:
         """Check if a date is a holiday using ai_holidays table."""
+        # Check if date conflicts with company holidays
         self._refresh_cache_if_needed()
         
         date_key = date_obj.strftime('%Y-%m-%d')
@@ -251,6 +259,7 @@ class TimeAvailabilityChecker:
     
     def is_within_working_hours(self, datetime_obj: datetime) -> bool:
         """Check if datetime falls within arrangable working hours."""
+        # Validate time falls within configured working hours
         self._refresh_cache_if_needed()
         
         # Convert datetime to day of week (1=Monday, 7=Sunday)
@@ -283,6 +292,7 @@ class TimeAvailabilityChecker:
     
     def is_break_time(self, datetime_obj: datetime) -> bool:
         """Check if datetime falls within any break time."""
+        # Check if time conflicts with scheduled break periods
         self._refresh_cache_if_needed()
         
         current_time = datetime_obj.time()
@@ -316,6 +326,7 @@ class TimeAvailabilityChecker:
         
         Returns True only if ALL conditions are met.
         """
+        # Main scheduler constraint checker - holidays, working hours, breaks
         # Check if it's a holiday
         if self.is_holiday(datetime_obj):
             logger.debug(f"Time {datetime_obj} unavailable: holiday")
@@ -352,6 +363,7 @@ class TimeAvailabilityChecker:
         Returns:
             True if the entire time range is available for scheduling
         """
+        # Fast epoch-based availability checking using pre-computed caches
         self._refresh_cache_if_needed()
         
         # If epoch caches aren't built, fall back to original method
@@ -380,6 +392,7 @@ class TimeAvailabilityChecker:
         
         Your logic: NOT holiday AND arrangeable_hour AND NOT breaktime
         """
+        # Check single timestamp against all availability constraints
         # Extract day and time components from epoch
         epoch_day = int(epoch_timestamp // 86400)  # Days since Unix epoch
         seconds_in_day = int(epoch_timestamp % 86400)  # Seconds since midnight
@@ -438,6 +451,7 @@ class TimeAvailabilityChecker:
         Returns:
             Unix timestamp of next available slot, or None if not found
         """
+        # Find next working time slot that can fit job duration
         self._refresh_cache_if_needed()
         
         # If epoch caches aren't built, fall back to original method
@@ -447,7 +461,7 @@ class TimeAvailabilityChecker:
             return next_dt.timestamp() if next_dt else None
         
         duration_seconds = int(duration_hours * 3600)
-        max_search_days = 150
+        max_search_days = 365
         
         # Start from the beginning of the requested day
         start_day_epoch = int(start_epoch // 86400) * 86400
@@ -492,6 +506,7 @@ class TimeAvailabilityChecker:
         Check if an entire time range is available for scheduling.
         Checks every hour within the range.
         """
+        # Check entire time range hourly for availability conflicts
         current = start_datetime
         while current < end_datetime:
             if not self.is_time_available_for_scheduling(current):
@@ -506,6 +521,7 @@ class TimeAvailabilityChecker:
         Find the earliest available datetime slot that can accommodate the given duration.
         Always starts at the earliest working hour (6:30 AM) on the same or next day.
         """
+        # Search for next working period that can fit full job duration
         max_search_days = 365  # Extended search window for long-term scheduling
         
         # Start from the requested date and check each day
@@ -537,6 +553,7 @@ class TimeAvailabilityChecker:
     
     def get_working_hours_for_date(self, date_obj: datetime) -> List[Tuple[time, time]]:
         """Get all working time periods for a specific date."""
+        # Get configured working hours for specific date
         self._refresh_cache_if_needed()
         
         # Check if it's a holiday first
@@ -558,6 +575,7 @@ class TimeAvailabilityChecker:
     
     def get_break_times_for_date(self, date_obj: datetime) -> List[Dict[str, Any]]:
         """Get all break times for a specific date."""
+        # Get break periods for specific date
         self._refresh_cache_if_needed()
         return self._breaktimes_cache.copy()
 
@@ -566,18 +584,22 @@ _time_checker = TimeAvailabilityChecker()
 
 def is_time_available_for_scheduling(datetime_obj: datetime) -> bool:
     """Global function to check if time is available for scheduling."""
+    # Global wrapper for time availability checking
     return _time_checker.is_time_available_for_scheduling(datetime_obj)
 
 def is_time_range_available(start_datetime: datetime, end_datetime: datetime) -> bool:
     """Global function to check if time range is available for scheduling."""
+    # Global wrapper for time range availability checking
     return _time_checker.is_time_range_available(start_datetime, end_datetime)
 
 def get_next_available_datetime(start_datetime: datetime, duration_hours: float) -> Optional[datetime]:
     """Global function to find next available datetime slot."""
+    # Global wrapper for next available slot finding
     return _time_checker.get_next_available_datetime(start_datetime, duration_hours)
 
 def is_holiday(date_obj: datetime) -> bool:
     """Global function to check if date is a holiday."""
+    # Global wrapper for holiday checking
     return _time_checker.is_holiday(date_obj)
 
 # ========================================
@@ -586,6 +608,7 @@ def is_holiday(date_obj: datetime) -> bool:
 
 def is_time_available(start_epoch: float, end_epoch: float, shift_id: Optional[int] = None) -> bool:
     """Check if epoch time range is available for scheduling - using reliable datetime method."""
+    # Primary epoch-based availability checker for schedulers
     try:
         start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
         end_dt = datetime.fromtimestamp(end_epoch, tz=SINGAPORE_TZ)
@@ -596,6 +619,7 @@ def is_time_available(start_epoch: float, end_epoch: float, shift_id: Optional[i
 
 def get_next_available_slot(start_epoch: float, duration_hours: float, shift_id: Optional[int] = None) -> Optional[float]:
     """Find next available epoch slot - using reliable datetime method."""
+    # Primary epoch-based slot finder for schedulers
     try:
         start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
         next_dt = _time_checker.get_next_available_datetime(start_dt, duration_hours)

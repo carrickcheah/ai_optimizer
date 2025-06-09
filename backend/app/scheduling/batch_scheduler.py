@@ -28,6 +28,7 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
     Returns:
         Combined results from all batches
     """
+    # Split large job sets into smaller batches for CP-SAT solver
     logger.info(f"BATCH SCHEDULER: Processing {len(jobs)} jobs in batches of {batch_size}")
     
     all_scheduled_jobs = {}
@@ -125,6 +126,7 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
         Dict with job_id -> {machine, start, end, original_job} mapping
         Plus _metadata with statistics
     """
+    # Multi-strategy scheduler: batch processing + single job fallback
     logger.info("SMART BATCH SCHEDULER: Starting multi-strategy scheduling")
     
     all_scheduled_jobs = {}

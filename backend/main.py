@@ -11,18 +11,9 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    # Load environment variables - try backend directory first, then project root
-    backend_env = os.path.join(os.path.dirname(__file__), '.env')
-    project_root_env = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    
-    if os.path.exists(backend_env):
-        load_dotenv(backend_env)
-        logger.info(f"Loaded .env from backend directory: {backend_env}")
-    elif os.path.exists(project_root_env):
-        load_dotenv(project_root_env)
-        logger.info(f"Loaded .env from project root: {project_root_env}")
-    else:
-        logger.warning("No .env file found in backend directory or project root")
+    # Load environment variables
+    dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    load_dotenv(dotenv_path)
     
     # Initialize FastAPI app
     app = FastAPI(
@@ -69,10 +60,25 @@ def create_app() -> FastAPI:
     
     return app
 
+def get_port():
+    """Get the port number with proper error handling."""
+    port_env = os.getenv("PORT", "8000")
+    
+    # Handle Zeabur's invalid PORT environment variable
+    if port_env.startswith('${') or not port_env.isdigit():
+        logger.warning(f"Invalid PORT environment variable: {port_env}. Using default port 8000.")
+        return 8000
+    
+    try:
+        return int(port_env)
+    except (ValueError, TypeError):
+        logger.warning(f"Could not parse PORT environment variable: {port_env}. Using default port 8000.")
+        return 8000
+
 # Create the FastAPI application
 app = create_app()
 
 if __name__ == "__main__":
-    server_port = int(os.getenv("PORT", 8000))
+    server_port = get_port()
     logger.info(f"Starting Uvicorn server on port {server_port}")
-    uvicorn.run("main:app", host="0.0.0.0", port=server_port, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=server_port, reload=True)

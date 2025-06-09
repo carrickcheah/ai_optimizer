@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 def find_best_machine(job: Dict[str, Any], machines: List[str], machine_available_time: Dict[str, float]) -> Optional[str]:
     """Helper function to find the best machine for a job"""
+    # Find least loaded compatible machine for job assignment
     # First check if job has a specific machine requirement
     required_machine = job.get('MachineName_v')
     if required_machine:
@@ -74,6 +75,7 @@ def greedy_schedule(
     Returns:
         Dictionary with machine IDs as keys and lists of scheduled jobs as values
     """
+    # Main greedy scheduling algorithm - assigns jobs to least loaded machines
     start_time = time.time()
     logger.info(f"Creating schedule using greedy algorithm for {len(jobs)} jobs on {len(machines)} machines")
     logger.info(f"Using max_operators={max_operators}")
@@ -148,6 +150,7 @@ def greedy_schedule(
     
     def can_schedule_job(job: Dict[str, Any], machine_id: str, start_time_epoch_val: float) -> bool:
         """Check if a job can be scheduled at the given time"""
+        # Validate job constraints: time, machine, operators, deadlines
         processing_time = job.get('processing_time')
         if not processing_time:
             # Priority logic: DAY_NEED takes precedence over HOURS_NEED
@@ -515,6 +518,7 @@ def _schedule_job_at_time(job_item, machine_id, start_time, schedule, scheduled_
                          machine_available_time, operators_in_use, family_end_times, 
                          process_end_times, family, process_num, max_operators):
     """Helper to schedule a job at a specific time."""
+    # Place job in schedule and update all tracking structures
     job_id = job_item['job_id']
     end_time = start_time + job_item['processing_time']
     
@@ -546,6 +550,7 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
                             process_end_times, family, process_num, max_operators, 
                             unscheduled_jobs_list):
     """Helper to find the next available slot for a job."""
+    # Search for available time slot within extended horizon window
     job_id = job_item['job_id']
     search_limit_hours = 3600  # Extended search window to 3600 hours (~150 days)
     current_search_time = start_search_time
