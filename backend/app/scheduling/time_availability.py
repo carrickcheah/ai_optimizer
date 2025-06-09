@@ -447,7 +447,7 @@ class TimeAvailabilityChecker:
             return next_dt.timestamp() if next_dt else None
         
         duration_seconds = int(duration_hours * 3600)
-        max_search_days = 30
+        max_search_days = 150
         
         # Start from the beginning of the requested day
         start_day_epoch = int(start_epoch // 86400) * 86400
@@ -506,7 +506,7 @@ class TimeAvailabilityChecker:
         Find the earliest available datetime slot that can accommodate the given duration.
         Always starts at the earliest working hour (6:30 AM) on the same or next day.
         """
-        max_search_days = 30  # Limit search to 30 days ahead
+        max_search_days = 365  # Extended search window for long-term scheduling
         
         # Start from the requested date and check each day
         current_date = start_datetime.date()

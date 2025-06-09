@@ -302,6 +302,12 @@ def greedy_schedule(
             logger.warning(f"Could not schedule START_DATE job {job_id} at required time "
                           f"{format_datetime_for_display(epoch_to_datetime(start_time_epoch_val))}")
     
+    # Precompute minimum process numbers for each family to optimize dependency checking
+    family_min_processes = {}
+    for family, jobs_in_family in job_families.items():
+        if jobs_in_family:
+            family_min_processes[family] = min(process_num for process_num, job_id, job_data in jobs_in_family)
+    
     # Collect all jobs into a single list to schedule by priority
     all_remaining_jobs = []
     for family, jobs_in_family in job_families.items():
@@ -361,13 +367,15 @@ def greedy_schedule(
                         dependencies_met = False
                         logger.debug(f"Job {job_id} (P{process_num:02d}) cannot schedule - gap of {gap} too large (needs P{required_predecessor:02d}, only P{highest_completed:02d} completed)")
                 else:
-                    # No processes completed yet for this family
-                    if process_num == 1:
-                        # Process 1 can always start
-                        logger.debug(f"Job {job_id} (P{process_num:02d}) is first process of family {family}")
+                    # No processes completed yet for this family - check if this is the lowest sequence for this family
+                    min_family_process = family_min_processes.get(family, 1)
+                    
+                    if process_num == min_family_process:
+                        # This is the first process in the family sequence - can schedule
+                        logger.debug(f"Job {job_id} (P{process_num:02d}) can schedule - first process in family {family}")
                     else:
                         dependencies_met = False
-                        logger.debug(f"Job {job_id} (P{process_num:02d}) cannot start - no previous processes completed for family {family}")
+                        logger.debug(f"Job {job_id} (P{process_num:02d}) cannot schedule - waiting for first process P{min_family_process:02d} of family {family}")
             
         if not dependencies_met:
             logger.warning(f"Job {job_id} cannot be scheduled due to unmet dependencies")
@@ -539,7 +547,7 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
                             unscheduled_jobs_list):
     """Helper to find the next available slot for a job."""
     job_id = job_item['job_id']
-    search_limit_hours = 24 
+    search_limit_hours = 3600  # Extended search window to 3600 hours (~150 days)
     current_search_time = start_search_time
     max_search_time = current_search_time + search_limit_hours * 3600
 
