@@ -1,16 +1,21 @@
 # urgent_handling.py
 import logging
+import os
 from datetime import datetime
 from typing import List, Dict, Any
+from dotenv import load_dotenv
 from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
+
+# Load environment variables
+load_dotenv()
 
 # Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
 
 def reduce_non_productive_time(
     jobs: List[Dict[str, Any]], 
-    buffer_threshold: float = 8, 
-    reduction_factor: float = 0.5
+    buffer_threshold: float = None, 
+    reduction_factor: float = None
 ) -> List[Dict[str, Any]]:
     """
     Reduce setting and break hours for urgent jobs below buffer threshold.
@@ -30,6 +35,12 @@ def reduce_non_productive_time(
     if not isinstance(jobs, list):
         logger.error("Jobs input must be a list")
         return []
+        
+    # Use .env values if not provided
+    if buffer_threshold is None:
+        buffer_threshold = float(os.getenv('URGENT_BUFFER_THRESHOLD_HOURS', 8))
+    if reduction_factor is None:
+        reduction_factor = float(os.getenv('URGENT_REDUCTION_FACTOR', 0.5))
         
     if not 0 <= reduction_factor <= 1:
         raise ValueError(f"reduction_factor must be between 0 and 1, got {reduction_factor}")

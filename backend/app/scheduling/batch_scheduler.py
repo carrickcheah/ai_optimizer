@@ -3,6 +3,11 @@
 from typing import List, Dict, Any
 import time
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 try:
     from .cpsat_solver import schedule_jobs
@@ -53,9 +58,9 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
                 batch_jobs,
                 machines,
                 setup_times,
-                time_limit_seconds=60,
+                time_limit_seconds=int(os.getenv('SOLVER_TIME_LIMIT_SECONDS')),
                 max_jobs=len(batch_jobs),
-                planning_horizon_days=60
+                planning_horizon_days=int(os.getenv('PLANNING_HORIZON_DAYS'))
             )
             
             scheduled_in_batch = 0
@@ -133,9 +138,10 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
     total_scheduled = 0
     start_time = time.time()
 
-    # Strategy 1: Regular batch processing with smaller batches
+    # Strategy 1: Regular batch processing with smaller batches  
     logger.info("Strategy 1: Regular batch processing")
-    batch_result = batch_schedule_jobs(jobs, machines, setup_times, batch_size=3)  # Smaller batches for better success
+    batch_size = int(os.getenv('BATCH_SIZE'))
+    batch_result = batch_schedule_jobs(jobs, machines, setup_times, batch_size=batch_size)
     
     # Extract scheduled jobs from batch result
     for job_id, job_data in batch_result.items():
@@ -153,9 +159,9 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
         try:
             # Use CP-SAT for single job scheduling with working hours constraints
             single_job_result = schedule_jobs([job], machines, setup_times, 
-                                            time_limit_seconds=30,  # Reduced time limit for single jobs
+                                            time_limit_seconds=int(os.getenv('SOLVER_TIME_LIMIT_SECONDS')),
                                             max_jobs=1, 
-                                            planning_horizon_days=30)
+                                            planning_horizon_days=int(os.getenv('PLANNING_HORIZON_DAYS')))
             
             if single_job_result and isinstance(single_job_result, dict):
                 # Convert CP-SAT format to our format

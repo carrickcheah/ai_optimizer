@@ -17,8 +17,13 @@ The overall workflow is:
 import pandas as pd
 from datetime import datetime
 import logging
+import os
 from typing import List, Dict, Any, Optional, Union
 from collections import defaultdict
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from app.utils.time_utils import (
     epoch_to_datetime, 
@@ -105,13 +110,18 @@ def get_buffer_status(buffer_hours: float) -> str:
             logger.warning(f"Invalid buffer_hours value: {buffer_hours}")
             return "Unknown"
     
+    # Use .env values for buffer thresholds
+    critical_hours = float(os.getenv('BUFFER_CRITICAL_HOURS', 8))
+    warning_hours = float(os.getenv('BUFFER_WARNING_HOURS', 24))
+    caution_hours = float(os.getenv('BUFFER_CAUTION_HOURS', 72))
+    
     if buffer_hours < 0:
         return "Late"
-    elif buffer_hours < 8:
+    elif buffer_hours < critical_hours:
         return "Critical"
-    elif buffer_hours < 24:
+    elif buffer_hours < warning_hours:
         return "Warning"
-    elif buffer_hours < 72:
+    elif buffer_hours < caution_hours:
         return "Caution"
     else:
         return "OK"
@@ -228,8 +238,9 @@ def add_schedule_times_and_buffer(jobs: List[Dict[str, Any]], schedule: Dict[str
     job_adjustments = {}
     
     for family, time_shift in family_time_shifts.items():
-        # Skip negligible time shifts (less than 1 minute)
-        if abs(time_shift) < 60:
+        # Skip negligible time shifts
+        min_shift_seconds = float(os.getenv('MINIMUM_TIME_SHIFT_SECONDS', 60))
+        if abs(time_shift) < min_shift_seconds:
             continue
             
         logger.info(f"Applying time shift of {time_shift/3600:.1f} hours to family {family} for visualization")

@@ -6,6 +6,10 @@ from typing import List, Dict, Any, Tuple, Optional
 import time
 import os
 import math
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from ortools.sat.python import cp_model
 
@@ -228,7 +232,7 @@ def greedy_schedule(
         if 'lcd_date_epoch' in job and job['lcd_date_epoch']:
             lcd_deadline = job['lcd_date_epoch']
             current_time = datetime_to_epoch(datetime.now())
-            grace_period_seconds = 12 * 3600  # 12-hour grace period for already late jobs
+            grace_period_seconds = int(os.getenv('GRACE_PERIOD_HOURS')) * 3600
             
             # If job is already late, give it a grace period
             if lcd_deadline < current_time:
@@ -581,7 +585,7 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
         if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
             lcd_deadline = job_item['lcd_date_epoch']
             current_time = datetime_to_epoch(datetime.now())
-            grace_period_seconds = 12 * 3600  # 12-hour grace period for already late jobs
+            grace_period_seconds = int(os.getenv('GRACE_PERIOD_HOURS')) * 3600
             
             # If job is already late, give it a grace period
             if lcd_deadline < current_time:
