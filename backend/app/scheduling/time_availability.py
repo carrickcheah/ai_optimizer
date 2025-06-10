@@ -440,64 +440,33 @@ class TimeAvailabilityChecker:
         # All checks passed
         return True
     
-    def get_next_available_slot_epoch(self, start_epoch: float, duration_hours: float) -> float:
+    def get_next_available_slot_epoch(self, start_epoch: float, duration_hours: float) -> Optional[float]:
         """
-        🚀 OPTIMIZED: Find next available epoch slot without datetime conversions.
+        Find the next available time slot using epoch-based calculations.
         
         Args:
-            start_epoch: Earliest acceptable start time (Unix timestamp)
-            duration_hours: Job duration in hours
+            start_epoch: Earliest possible start time (Unix epoch).
+            duration_hours: Duration of the job in hours.
             
         Returns:
-            Unix timestamp of next available slot, or None if not found
+            The epoch timestamp for the start of the next available slot, or None.
         """
-        # Find next working time slot that can fit job duration
         self._refresh_cache_if_needed()
         
-        # If epoch caches aren't built, fall back to original method
-        if not self._working_hours_epoch_cache:
-            start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
-            next_dt = self.get_next_available_datetime(start_dt, duration_hours)
-            return next_dt.timestamp() if next_dt else None
+        duration_seconds = duration_hours * 3600
+        current_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
         
-        duration_seconds = int(duration_hours * 3600)
-        max_search_days = 365
+        # Search for a valid slot within a limited time window to avoid infinite loops
+        search_limit_days = 180  # Increased from 30 to match overall planning horizon
+        end_search_dt = current_dt + timedelta(days=search_limit_days)
         
-        # Start from the beginning of the requested day
-        start_day_epoch = int(start_epoch // 86400) * 86400
+        # Start searching from the proposed start time
+        search_dt = current_dt
         
-        # Check each day
-        for day_offset in range(max_search_days):
-            day_start_epoch = start_day_epoch + (day_offset * 86400)
-            day_of_week = (((day_start_epoch // 86400) + 4) % 7) + 1
-            if day_of_week == 8:
-                day_of_week = 1
-            
-            # Skip holidays
-            epoch_day = int(day_start_epoch // 86400)
-            if epoch_day in self._holidays_epoch_cache:
-                continue
-            
-            # Check working periods for this day
-            working_periods = self._working_hours_epoch_cache.get(day_of_week, [])
-            
-            for start_seconds, end_seconds in working_periods:
-                # Calculate the actual start time for this working period
-                period_start_epoch = day_start_epoch + start_seconds
-                period_end_epoch = day_start_epoch + end_seconds
-                
-                # For the first day, check if we've missed the working period start
-                if day_offset == 0 and period_start_epoch < start_epoch:
-                    # If we've missed today's 6:30 AM, skip to next day
-                    continue
-                
-                # Check if job fits in this period
-                job_end_epoch = period_start_epoch + duration_seconds
-                
-                if job_end_epoch <= period_end_epoch:
-                    # Check if this time slot is available (no breaks)
-                    if self.is_time_available_epoch(period_start_epoch, job_end_epoch):
-                        return period_start_epoch
+        while search_dt < end_search_dt:
+            if self.is_time_available_epoch(search_dt, search_dt + duration_seconds):
+                return search_dt
+            search_dt += timedelta(hours=1)
         
         return None
     
