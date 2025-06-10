@@ -457,7 +457,7 @@ class TimeAvailabilityChecker:
         current_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
         
         # Search for a valid slot within a limited time window to avoid infinite loops
-        search_limit_days = 180  # Increased from 30 to match overall planning horizon
+        search_limit_days = 360  
         end_search_dt = current_dt + timedelta(days=search_limit_days)
         
         # Start searching from the proposed start time
