@@ -59,19 +59,6 @@ interface ScheduleTableRow {
   lcd_date_epoch?: number;
 }
 
-interface ScheduleOverview {
-  total_jobs: number;
-  date_range: string;
-  total_duration: string;
-  records_displayed: number;
-  buffer_status_counts: {
-    Late: number;
-    Warning: number;
-    Caution: number;
-    OK: number;
-  };
-}
-
 // Helper function to format date-time strings
 const formatDateTime = (dateTimeStr: string | undefined): React.ReactNode => {
   if (!dateTimeStr) return 'N/A';
@@ -253,7 +240,6 @@ const columns = [
 
 const DetailedScheduleTable: React.FC = () => {
   const [data, setData] = useState<ScheduleTableRow[]>([]);
-  const [overview, setOverview] = useState<ScheduleOverview | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -286,13 +272,9 @@ const DetailedScheduleTable: React.FC = () => {
       try {
         // Use the reports endpoint that has the correct field format with scheduling data
         const scheduleUrl = `${API_BASE_URL}/reports/detailed-schedule`;
-        const overviewUrl = `${API_BASE_URL}/reports/schedule-overview`;
 
-        const [scheduleResponse, overviewResponse] = await Promise.all([
-          fetch(scheduleUrl),
-          fetch(overviewUrl)
-        ]);
-        
+        const scheduleResponse = await fetch(scheduleUrl);
+
         if (!scheduleResponse.ok) {
           const errorData = await scheduleResponse.json();
           throw new Error(errorData.detail || `Failed to fetch table data: ${scheduleResponse.statusText}`);
@@ -319,10 +301,6 @@ const DetailedScheduleTable: React.FC = () => {
           itemsPerPage: itemsPerPage,
         }));
         
-        if (overviewResponse.ok) {
-          const overviewData: ScheduleOverview = await overviewResponse.json();
-          setOverview(overviewData);
-        }
       } catch (err) {
         if (err instanceof Error) {
             setError(err.message);
@@ -469,128 +447,6 @@ const DetailedScheduleTable: React.FC = () => {
       >
         <i className="fas fa-arrow-left"></i> Back
       </button>
-      
-      {overview && (
-        <div className="overview-section">
-          <div className="overview-left">
-            <h3>Schedule Overview</h3>
-            <div className="overview-stats">
-              <div className="stat-item">
-                <span className="stat-label">Total Jobs:</span>
-                <span className="stat-value">{data.length}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Date Range:</span>
-                <span className="stat-value">{
-                  (() => {
-                    if (data.length === 0) return 'N/A';
-                    const dates = data.map(task => [
-                      task.scheduled_start_time_str ? new Date(task.scheduled_start_time_str) : null,
-                      task.scheduled_end_time_str ? new Date(task.scheduled_end_time_str) : null
-                    ]).flat().filter(date => date && !isNaN(date.getTime()));
-                    if (dates.length === 0) return 'N/A';
-                    const earliest = new Date(Math.min(...dates.map(d => d!.getTime())));
-                    const latest = new Date(Math.max(...dates.map(d => d!.getTime())));
-                    const formatDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-                    return `${formatDate(earliest)} to ${formatDate(latest)}`;
-                  })()
-                }</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Total Duration:</span>
-                <span className="stat-value">{
-                  (() => {
-                    if (data.length === 0) return '0 hours';
-                    const totalDuration = data.reduce((total, task) => {
-                      if (!task.scheduled_start_time_str || !task.scheduled_end_time_str) return total;
-                      const start = new Date(task.scheduled_start_time_str);
-                      const end = new Date(task.scheduled_end_time_str);
-                      if (isNaN(start.getTime()) || isNaN(end.getTime())) return total;
-                      return total + (end.getTime() - start.getTime());
-                    }, 0);
-                    const totalHours = Math.round(totalDuration / (1000 * 60 * 60));
-                    return `${totalHours.toLocaleString()} hours`;
-                  })()
-                }</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Records Displayed:</span>
-                <span className="stat-value">{data.length}</span>
-              </div>
-            </div>
-          </div>
-          
-                     <div className="overview-right">
-             <h3>Buffer Status</h3>
-             <div className="buffer-overview">
-               <div className="buffer-rows">
-                 {(() => {
-                   // Calculate actual buffer status counts from data
-                   const bufferCounts = {
-                     Late: data.filter(task => task.buffer_status === 'Late').length,
-                     Warning: data.filter(task => task.buffer_status === 'Warning').length,
-                     Caution: data.filter(task => task.buffer_status === 'Caution').length,
-                     OK: data.filter(task => task.buffer_status === 'OK').length
-                   };
-                   const totalTasks = data.length || 1; // Avoid division by zero
-                   
-                   return (
-                     <>
-                       <div className="buffer-row">
-                         <div className="buffer-label buffer-label-late">Late</div>
-                         <div className="buffer-bar-container">
-                           <div 
-                             className="buffer-bar-fill buffer-late" 
-                             style={{ width: `${(bufferCounts.Late / totalTasks) * 100}%` }}
-                           >
-                             <span className="buffer-count">{bufferCounts.Late} jobs</span>
-                           </div>
-                         </div>
-                       </div>
-                       
-                       <div className="buffer-row">
-                         <div className="buffer-label buffer-label-warning">Warning</div>
-                         <div className="buffer-bar-container">
-                           <div 
-                             className="buffer-bar-fill buffer-warning" 
-                             style={{ width: `${(bufferCounts.Warning / totalTasks) * 100}%` }}
-                           >
-                             <span className="buffer-count">{bufferCounts.Warning} jobs</span>
-                           </div>
-                         </div>
-                       </div>
-                       
-                       <div className="buffer-row">
-                         <div className="buffer-label buffer-label-caution">Caution</div>
-                         <div className="buffer-bar-container">
-                           <div 
-                             className="buffer-bar-fill buffer-caution" 
-                             style={{ width: `${(bufferCounts.Caution / totalTasks) * 100}%` }}
-                           >
-                             <span className="buffer-count">{bufferCounts.Caution} jobs</span>
-                           </div>
-                         </div>
-                       </div>
-                       
-                       <div className="buffer-row">
-                         <div className="buffer-label buffer-label-ok">OK</div>
-                         <div className="buffer-bar-container">
-                           <div 
-                             className="buffer-bar-fill buffer-ok" 
-                             style={{ width: `${(bufferCounts.OK / totalTasks) * 100}%` }}
-                           >
-                             <span className="buffer-count">{bufferCounts.OK} jobs</span>
-                           </div>
-                         </div>
-                       </div>
-                     </>
-                   );
-                 })()}
-               </div>
-             </div>
-           </div>
-        </div>
-      )}
       
       <div className="card">
         <div className="card-header">
