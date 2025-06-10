@@ -148,13 +148,13 @@ class SchedulerConfig(BaseSettings):
         if job_count < 100:
             return {
                 'time_limit_seconds': min(self.solver_time_limit_seconds, 60),
-                'planning_horizon_days': min(self.planning_horizon_days, 30),
+                'planning_horizon_days': self.planning_horizon_days,  # Use full horizon
                 'max_jobs_limit': self.max_jobs_limit
             }
         elif job_count < 500:
             return {
                 'time_limit_seconds': self.solver_time_limit_seconds,
-                'planning_horizon_days': min(self.planning_horizon_days, 45),
+                'planning_horizon_days': self.planning_horizon_days,  # Use full horizon
                 'max_jobs_limit': self.max_jobs_limit
             }
         else:

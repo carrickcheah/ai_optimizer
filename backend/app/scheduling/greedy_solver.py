@@ -33,6 +33,35 @@ from app.scheduling.time_availability import is_time_available, get_next_availab
 # Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
 
+# Get normal working hours from environment, default to 17.5
+NORMAL_WORKING_HOURS = float(os.getenv('NORMAL_WORKING_HOURS', '17.5'))
+
+def get_subcon_machine_name() -> str:
+    """Get the Subcon machine name from database (MachineId_i = 153)"""
+    try:
+        from app.api.fastapi_app import get_db_connection_from_pool
+        
+        with get_db_connection_from_pool() as conn:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT MachineName_v 
+                FROM tbl_machine 
+                WHERE MachineId_i = 153 
+                LIMIT 1
+            """)
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result and result['MachineName_v']:
+                return result['MachineName_v']
+            else:
+                logger.warning("Subcon machine (MachineId_i=153) not found in database, using default 'Subcon'")
+                return "Subcon"
+                
+    except Exception as e:
+        logger.warning(f"Could not query database for Subcon machine: {e}, using default 'Subcon'")
+        return "Subcon"
+
 def find_best_machine(job: Dict[str, Any], machines: List[str], machine_available_time: Dict[str, float]) -> Optional[str]:
     """Helper function to find the best machine for a job"""
     # Find least loaded compatible machine for job assignment
@@ -40,8 +69,10 @@ def find_best_machine(job: Dict[str, Any], machines: List[str], machine_availabl
     required_machine = job.get('MachineName_v')
     if required_machine:
         if required_machine == "NOT_ASSIGN":
-            logger.warning(f"Job {job.get('job_id', 'Unknown')} has NOT_ASSIGN machine - cannot schedule")
-            return None
+            # ALL NOT_ASSIGN jobs get assigned to Subcon machine (dynamically looked up)
+            subcon_machine = get_subcon_machine_name()
+            logger.debug(f"Job {job.get('job_id', 'Unknown')} has NOT_ASSIGN machine - assigning to {subcon_machine}")
+            return subcon_machine
         elif required_machine in machines:
             return required_machine
         
@@ -92,6 +123,12 @@ def greedy_schedule(
     if not isinstance(machines, list) or not machines:
         logger.error("Machines must be a non-empty list")
         return {}
+    
+    # Ensure Subcon machine is available for NOT_ASSIGN jobs
+    subcon_machine = get_subcon_machine_name()
+    if subcon_machine not in machines:
+        machines = list(machines) + [subcon_machine]
+        logger.info(f"Added {subcon_machine} machine to machines list for NOT_ASSIGN jobs")
     
     # Normalize and validate job data
     valid_jobs = []
@@ -157,10 +194,41 @@ def greedy_schedule(
         # Validate job constraints: time, machine, operators, deadlines
         processing_time = job.get('processing_time')
         if not processing_time:
-            # Priority logic: DAY_NEED takes precedence over HOURS_NEED
+            # Priority logic: LeadTime_d takes precedence, then DAY_NEED, then HOURS_NEED
+            lead_time_d = job.get('LeadTime_d')
             day_need = job.get('day_need') or job.get('DAY_NEED')
             
-            if day_need is not None:
+            if lead_time_d is not None:
+                try:
+                    lead_time_val = float(lead_time_d)
+                    if lead_time_val > 0:
+                        # Convert lead time days to working hours: 1 day = NORMAL_WORKING_HOURS
+                        job['processing_time'] = lead_time_val * NORMAL_WORKING_HOURS * 3600  # Convert to seconds
+                        logger.debug(f"Using LeadTime_d for job {job.get('job_id')}: {lead_time_val} days = {lead_time_val * NORMAL_WORKING_HOURS} working hours")
+                    else:
+                        # LeadTime_d is 0/negative, fall back to DAY_NEED
+                        if day_need is not None:
+                            try:
+                                day_need_val = float(day_need)
+                                if day_need_val > 0:
+                                    job['processing_time'] = day_need_val * 24 * 3600
+                                else:
+                                    # Use default 1 hour if all values are 0/negative
+                                    job['processing_time'] = 1 * 3600
+                                    logger.info(f"Job {job.get('job_id')} - using default 1 hour (all time values 0/negative)")
+                            except (ValueError, TypeError):
+                                # Use default 1 hour if conversion fails
+                                job['processing_time'] = 1 * 3600
+                                logger.info(f"Job {job.get('job_id')} - using default 1 hour (invalid DAY_NEED)")
+                        else:
+                            # Use default 1 hour if no DAY_NEED
+                            job['processing_time'] = 1 * 3600
+                            logger.info(f"Job {job.get('job_id')} - using default 1 hour (no DAY_NEED)")
+                except (ValueError, TypeError):
+                    # Use default 1 hour if LeadTime_d conversion fails
+                    job['processing_time'] = 1 * 3600
+                    logger.info(f"Job {job.get('job_id')} - using default 1 hour (invalid LeadTime_d)")
+            elif day_need is not None:
                 try:
                     day_need_val = float(day_need)
                     if day_need_val > 0:
