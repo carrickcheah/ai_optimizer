@@ -199,7 +199,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       },
       text: resourceTasks.map(task => {
         const tooltipParts = [
-          `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
+          `<b>${task.Task}</b>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
           `<b>Machine:</b> ${task.Resource}`,
           `<b>Start:</b> ${formatDateTime(task.Start)}`,
           `<b>End:</b> ${formatDateTime(task.Finish)}`,
@@ -407,7 +407,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           },
           text: resourceTasks.map(task => {
             const tooltipParts = [
-              `<b>${task.Task}</b> (${task.JobFamily || 'Unknown Family'})`,
+              `<b>${task.Task}</b>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
               `<b>Machine:</b> ${task.Resource}`,
               `<b>Start:</b> ${formatDateTime(task.Start)}`,
               `<b>End:</b> ${formatDateTime(task.Finish)}`,
