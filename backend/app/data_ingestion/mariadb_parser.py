@@ -155,8 +155,10 @@ def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 6
                  ELSE NULL END AS hours_need,
             CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
                  THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
-                 WHEN jop.CapMin_d = 0 AND jop.LeadTime_d != 0 
+                 WHEN jop.CapMin_d = 0 AND jop.LeadTime_d IS NOT NULL AND jop.LeadTime_d > 0
                  THEN jop.LeadTime_d 
+                 WHEN (jop.Machine_v IS NULL OR jop.Machine_v = '' OR jop.Machine_v = '0') AND jop.LeadTime_d IS NOT NULL AND jop.LeadTime_d > 0
+                 THEN jop.LeadTime_d
                  ELSE NULL END AS day_need,
             jop.SetupTime_d AS setting_hours,
             1 AS break_hours,
@@ -314,21 +316,33 @@ def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 6
         
         logger.info(f"Successfully processed {len(jobs_list)} jobs from joined tables.")
 
-        # Extract unique machine names - excluding NOT_ASSIGN machines
+        # Extract unique machine names - excluding NOT_ASSIGN machines WITHOUT LeadTime_d
         machine_names = list(set(
             job.get("MachineName_v") for job in jobs_list 
             if job.get("MachineName_v") and job.get("MachineName_v") != "NOT_ASSIGN"
         ))
         
-        # Count NOT_ASSIGN jobs for logging
-        not_assign_jobs = [
+        # Count NOT_ASSIGN jobs - separate those with and without LeadTime_d
+        not_assign_jobs_with_leadtime = [
             job for job in jobs_list 
-            if job.get("MachineName_v") == "NOT_ASSIGN"
+            if job.get("MachineName_v") == "NOT_ASSIGN" and job.get("day_need") is not None and job.get("day_need") > 0
         ]
         
-        if not_assign_jobs:
-            logger.warning(f"Found {len(not_assign_jobs)} jobs with NOT_ASSIGN machine - these will be excluded from scheduling")
-            logger.info(f"NOT_ASSIGN job examples: {[job.get('job_id', job.get('job', 'Unknown'))[:10] for job in not_assign_jobs[:5]]}")
+        not_assign_jobs_without_leadtime = [
+            job for job in jobs_list 
+            if job.get("MachineName_v") == "NOT_ASSIGN" and (job.get("day_need") is None or job.get("day_need") <= 0)
+        ]
+        
+        if not_assign_jobs_with_leadtime:
+            logger.info(f"Found {len(not_assign_jobs_with_leadtime)} jobs with NOT_ASSIGN machine but valid LeadTime_d - these WILL be included in scheduling")
+            logger.info(f"NOT_ASSIGN jobs with LeadTime_d examples: {[job.get('job_id', job.get('job', 'Unknown'))[:15] for job in not_assign_jobs_with_leadtime[:5]]}")
+            # Add NOT_ASSIGN to machine list if we have jobs with LeadTime_d
+            if "NOT_ASSIGN" not in machine_names:
+                machine_names.append("NOT_ASSIGN")
+        
+        if not_assign_jobs_without_leadtime:
+            logger.warning(f"Found {len(not_assign_jobs_without_leadtime)} jobs with NOT_ASSIGN machine and no LeadTime_d - these will be excluded from scheduling")
+            logger.info(f"NOT_ASSIGN jobs without LeadTime_d examples: {[job.get('job_id', job.get('job', 'Unknown'))[:15] for job in not_assign_jobs_without_leadtime[:3]]}")
         
         if not machine_names:
             machine_names = ["NOT_ASSIGN"]
@@ -350,6 +364,19 @@ def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 6
                 setup_times_dict[from_machine][to_machine] = 0.25 if from_machine == to_machine else 0.5
 
         logger.info(f"Generated setup times matrix for {len(setup_times_dict)} machines.")
+        
+        # Filter out jobs that have NOT_ASSIGN machine but no valid LeadTime_d
+        original_job_count = len(jobs_list)
+        jobs_list = [
+            job for job in jobs_list 
+            if not (job.get("MachineName_v") == "NOT_ASSIGN" and (job.get("day_need") is None or job.get("day_need") <= 0))
+        ]
+        
+        filtered_count = original_job_count - len(jobs_list)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} jobs with NOT_ASSIGN machine and no valid LeadTime_d from final job list")
+        
+        logger.info(f"Final job count for scheduling: {len(jobs_list)} jobs")
 
     except Error as e:
         logger.error(f"Database error while loading planning data: {e}")
@@ -366,6 +393,13 @@ def load_jobs_planning_data(max_jobs: int = 1000, planning_horizon_days: int = 6
     # Final validation
     if not jobs_list:
         logger.warning("No jobs loaded from the database.")
+    else:
+        # Log summary of job types
+        with_machine_jobs = [j for j in jobs_list if j.get("MachineName_v") != "NOT_ASSIGN"]
+        no_machine_with_leadtime_jobs = [j for j in jobs_list if j.get("MachineName_v") == "NOT_ASSIGN" and j.get("day_need") and j.get("day_need") > 0]
+        
+        logger.info(f"Job summary: {len(with_machine_jobs)} with assigned machines, {len(no_machine_with_leadtime_jobs)} without machines but with LeadTime_d")
+        
     if not machines_list:
         logger.warning("No machines loaded from the database.")
     if not setup_times_dict:
