@@ -39,7 +39,7 @@ fi
 echo "🔧 Starting Backend (FastAPI)..."
 cd backend
 source .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload &
+uvicorn main:app --host 127.0.0.1 --port 8000 --reload &
 BACKEND_PID=$!
 echo "   Backend running at: http://localhost:8000"
 echo "   Backend API docs: http://localhost:8000/docs"
