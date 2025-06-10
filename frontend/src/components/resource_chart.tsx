@@ -148,10 +148,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     return new Date(a.Start).getTime() - new Date(b.Start).getTime();
   });
 
-  const resourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort((a, b) => {
-    // Simple alphabetical sort for machine names
-    return a.localeCompare(b);
-  });
+  // Custom sorting function to put 'Subcon' last
+  const sortResourcesWithSubconLast = (resources: string[]): string[] => {
+    return resources.sort((a, b) => {
+      // Always put 'Subcon' last
+      if (a === 'Subcon' && b !== 'Subcon') return 1;
+      if (b === 'Subcon' && a !== 'Subcon') return -1;
+      // For all other resources, sort alphabetically
+      return a.localeCompare(b);
+    });
+  };
+
+  const resourceGroups = sortResourcesWithSubconLast([...new Set(sortedTasks.map(task => task.Resource))]);
   
   console.log('[ResourceChart] Sorted tasks:', sortedTasks.length);
   console.log('[ResourceChart] Resource groups:', resourceGroups);
@@ -373,7 +381,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const filteredPlotData: Partial<PlotData>[] = [];
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = [...new Set(filteredTasks.map(task => task.Resource))].sort((a, b) => a.localeCompare(b));
+    const filteredResourceGroups = sortResourcesWithSubconLast([...new Set(filteredTasks.map(task => task.Resource))]);
     
     filteredResourceGroups.forEach(resource => {
       const resourceTasks = filteredTasks.filter(task => task.Resource === resource);
@@ -439,7 +447,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       categoryorder: 'array' as const,
-      categoryarray: resourceGroups.sort((a, b) => a.localeCompare(b)),
+      categoryarray: sortResourcesWithSubconLast([...resourceGroups]),
       autorange: 'reversed' as const,
     },
     autosize: true,
@@ -472,7 +480,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // For "all" timeframe, we can just use all tasks
     if (timeRange === 'all') {
       // Get all unique resources for the y-axis
-      const allResourceGroups = [...new Set(sortedTasks.map(task => task.Resource))].sort((a, b) => a.localeCompare(b));
+      const allResourceGroups = sortResourcesWithSubconLast([...new Set(sortedTasks.map(task => task.Resource))]);
       
       // Calculate the actual data range for 'all' timeframe
       const allValidDates = sortedTasks
@@ -519,7 +527,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           ...layout.yaxis,
           type: 'category',
           categoryorder: 'array' as const,
-                  categoryarray: allResourceGroups.sort((a, b) => a.localeCompare(b)),
+                  categoryarray: sortResourcesWithSubconLast([...allResourceGroups]),
           autorange: 'reversed' as const,
         },
         shapes: [{
@@ -613,7 +621,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     });
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = [...new Set(filteredTasksForLayout.map(task => task.Resource))].sort((a, b) => a.localeCompare(b));
+    const filteredResourceGroups = sortResourcesWithSubconLast([...new Set(filteredTasksForLayout.map(task => task.Resource))]);
     
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
@@ -648,7 +656,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         ...layout.yaxis,
         type: 'category',
         categoryorder: 'array' as const,
-        categoryarray: filteredResourceGroups.sort((a, b) => a.localeCompare(b)),
+        categoryarray: sortResourcesWithSubconLast([...filteredResourceGroups]),
         autorange: 'reversed' as const,
       },
       shapes: [{

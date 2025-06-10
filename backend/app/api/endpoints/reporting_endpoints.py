@@ -77,17 +77,20 @@ async def get_schedule_and_job_data(solver_type: str = "cpsat"):
         # This requires DB connection and might be slow for an API call if not cached/pre-run.
         # For now, we assume it's feasible for demonstration.
         jobs_data, machines_data, setup_times_data = load_jobs_planning_data(
-            max_jobs=1000, 
-            planning_horizon_days=60
-        )  # Use 60-day planning horizon based on target dates
+            max_jobs=1500, 
+            planning_horizon_days=180
+        )  # Use 180-day planning horizon for extended scheduling
         
-        # Extract machine names from jobs_data using MachineName_v field
-        # This assumes jobs have MachineName_v field which identifies the machine
-        machine_names_list = list(set(m['MachineName_v'] for m in jobs_data if m.get('MachineName_v')))
+        # Extract machine names from machines_data 
+        if machines_data and isinstance(machines_data[0], dict):
+            # machines_data is list of dictionaries with MachineName_v
+            machine_names_list = [m['MachineName_v'] for m in machines_data if m.get('MachineName_v')]
+        else:
+            # Fallback: extract unique machine names from jobs
+            machine_names_list = list(set(job['MachineName_v'] for job in jobs_data if job.get('MachineName_v')))
         
         if not machine_names_list:
-            # Fallback or default if no machines found from jobs
-            machine_names_list = [m['MachineName_v'] for m in machines_data] if machines_data else ["DefaultMachine"]
+            machine_names_list = ["DefaultMachine"]
 
         logger.info(f"Using '{solver_type}' solver to schedule {len(jobs_data)} jobs on {len(machine_names_list)} machines")
         

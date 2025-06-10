@@ -289,9 +289,12 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
     # Process scheduled jobs
     for machine, jobs in schedule.items():
         for job_tuple in jobs:
+            if len(job_tuple) < 3:
+                continue  # Skip invalid tuples
+                
             job_id = job_tuple[0]
-            start_epoch = job_tuple[1] if len(job_tuple) > 1 else None
-            end_epoch = job_tuple[2] if len(job_tuple) > 2 else None
+            start_epoch = job_tuple[1]
+            end_epoch = job_tuple[2]
             
             if not all([job_id, start_epoch is not None, end_epoch is not None]):
                         continue
@@ -415,9 +418,14 @@ def prepare_detailed_schedule_table_data(schedule: Dict[str, Any], jobs_input_da
         for job_tuple in jobs:
             if len(job_tuple) >= 3:
                 job_id = job_tuple[0]
+                start_time = job_tuple[1]
+                end_time = job_tuple[2]
+                
+                # Handle both 3-tuple, 4-tuple, and 5-tuple formats
                 scheduled_times[job_id] = {
-                    'start': job_tuple[1],
-                    'end': job_tuple[2]
+                    'start': start_time,
+                    'end': end_time,
+                    'machine': machine
                 }
     
     table_rows = []
