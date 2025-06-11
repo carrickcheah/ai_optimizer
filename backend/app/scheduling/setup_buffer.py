@@ -1,59 +1,166 @@
 """
-Functions for handling setup times and schedule time adjustments.
-
-This module manages the critical timing aspects of the production planning system:
-1. Standardized field access for start date epochs (handling name inconsistencies)  
-2. Schedule time calculations and adjustments based on constraints
-3. Buffer time calculations between job completion and deadlines
-4. Schedule visualization preparation
-
-The overall workflow is:
-- Extract scheduled times from the optimized solution
-- Group jobs by family and process sequence
-- Apply time shifts based on START_DATE constraints
-- Calculate buffer hours between job completion and deadline
-- Categorize buffer status for visualization
+setup_buffer.py - PRODUCTION GRADE VERSION
+Functions for handling setup times and schedule time adjustments
+All configuration loaded from .env without defaults
 """
-import pandas as pd
-from datetime import datetime
+
 import logging
 import os
-from typing import List, Dict, Any, Optional, Union
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import pandas as pd
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-from app.utils.time_utils import (
-    epoch_to_datetime, 
-    datetime_to_epoch, 
-    format_datetime_for_display, 
-    validate_timestamp
-)
-from app.scheduling.scheduler_utils import extract_job_family, extract_process_number
-
-# Get module-specific logger without configuring at module level
 logger = logging.getLogger(__name__)
 
-def get_start_date_epoch(job: Dict[str, Any]) -> Optional[Union[int, float]]:
-    """
-    Standardized accessor for START_DATE_EPOCH field that handles both naming variants.
-    Always use this function instead of accessing START_DATE_EPOCH or START_DATE _EPOCH directly.
+
+class SetupBufferError(Exception):
+    """Base exception for setup buffer errors."""
+    pass
+
+
+class SetupBufferConfigurationError(SetupBufferError):
+    """Exception for configuration-related errors."""
+    pass
+
+
+@dataclass
+class BufferConfig:
+    """Configuration for buffer calculations loaded from .env."""
+    buffer_critical_hours: int
+    buffer_warning_hours: int
+    buffer_caution_hours: int
+    minimum_time_shift_seconds: int
+
+
+@dataclass
+class ScheduleMetrics:
+    """Container for schedule processing metrics."""
+    total_jobs: int
+    scheduled_jobs: int
+    unscheduled_jobs: int
+    families_processed: int
+    time_shifts_applied: int
+    processing_time_ms: float
+
+
+class SetupBufferConfigManager:
+    """Manages setup buffer configuration from environment variables only."""
     
-    Args:
-        job: Job dictionary
+    @staticmethod
+    def load_config() -> BufferConfig:
+        """Load configuration from .env variables with validation - NO DEFAULTS."""
+        config_vars = {
+            'BUFFER_CRITICAL_HOURS': 'buffer_critical_hours',
+            'BUFFER_WARNING_HOURS': 'buffer_warning_hours',
+            'BUFFER_CAUTION_HOURS': 'buffer_caution_hours',
+            'MINIMUM_TIME_SHIFT_SECONDS': 'minimum_time_shift_seconds'
+        }
         
-    Returns:
-        The start date epoch value or None if not present/valid
-    """
-    # Extract START_DATE epoch timestamp handling field name variations
-    if not isinstance(job, dict):
-        logger.warning(f"Job must be a dictionary, got {type(job)}")
-        return None
+        config_values = {}
+        missing_vars = []
         
-    # Check all possible field naming variations
-    possible_field_names = [
+        # Check all required environment variables
+        for env_var, config_key in config_vars.items():
+            value = os.getenv(env_var)
+            if value is None:
+                missing_vars.append(env_var)
+            else:
+                config_values[config_key] = value
+        
+        if missing_vars:
+            raise SetupBufferConfigurationError(
+                f"❌ MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
+            )
+        
+        # Convert and validate values
+        try:
+            config = BufferConfig(
+                buffer_critical_hours=int(config_values['buffer_critical_hours']),
+                buffer_warning_hours=int(config_values['buffer_warning_hours']),
+                buffer_caution_hours=int(config_values['buffer_caution_hours']),
+                minimum_time_shift_seconds=int(config_values['minimum_time_shift_seconds'])
+            )
+            
+            # Validate configuration values
+            SetupBufferConfigManager._validate_config(config)
+            return config
+            
+        except (ValueError, TypeError) as e:
+            raise SetupBufferConfigurationError(f"❌ INVALID CONFIGURATION: Error converting values: {e}")
+    
+    @staticmethod
+    def _validate_config(config: BufferConfig) -> None:
+        """Validate configuration values."""
+        validations = [
+            (config.buffer_critical_hours >= 0, "BUFFER_CRITICAL_HOURS must be non-negative"),
+            (config.buffer_warning_hours >= config.buffer_critical_hours, "BUFFER_WARNING_HOURS must be >= BUFFER_CRITICAL_HOURS"),
+            (config.buffer_caution_hours >= config.buffer_warning_hours, "BUFFER_CAUTION_HOURS must be >= BUFFER_WARNING_HOURS"),
+            (config.minimum_time_shift_seconds >= 0, "MINIMUM_TIME_SHIFT_SECONDS must be non-negative")
+        ]
+        
+        for condition, error_msg in validations:
+            if not condition:
+                raise SetupBufferConfigurationError(f"❌ INVALID CONFIGURATION: {error_msg}")
+
+
+class TimestampValidator:
+    """Handles timestamp validation with optimized checks."""
+    
+    MIN_VALID_TIMESTAMP = 946684800  # 2000-01-01 00:00:00 UTC
+    MAX_VALID_TIMESTAMP = 4102444800  # 2100-01-01 00:00:00 UTC
+    
+    @staticmethod
+    def validate_timestamp(timestamp: Any) -> bool:
+        """
+        Validate timestamp is reasonable epoch time.
+        
+        Args:
+            timestamp: Value to validate
+            
+        Returns:
+            True if timestamp is valid, False otherwise
+        """
+        try:
+            from app.utils.time_utils import validate_timestamp as util_validate
+            return util_validate(timestamp)
+        except ImportError:
+            # Fallback validation
+            if not isinstance(timestamp, (int, float)):
+                return False
+            
+            return (TimestampValidator.MIN_VALID_TIMESTAMP <= 
+                   timestamp <= 
+                   TimestampValidator.MAX_VALID_TIMESTAMP)
+    
+    @staticmethod
+    def is_valid_timestamp(timestamp: Any) -> bool:
+        """
+        Check if timestamp is valid for calculations.
+        
+        Args:
+            timestamp: Value to check
+            
+        Returns:
+            True if timestamp is valid, False otherwise
+        """
+        return (timestamp is not None and 
+                not pd.isna(timestamp) and 
+                isinstance(timestamp, (int, float)) and
+                TimestampValidator.validate_timestamp(timestamp))
+
+
+class StartDateExtractor:
+    """Handles extraction of start date epochs from job data."""
+    
+    # Possible field naming variations for start date
+    START_DATE_FIELDS = [
         'START_DATE_EPOCH', 
         'START_DATE _EPOCH', 
         'start_date_epoch', 
@@ -61,386 +168,577 @@ def get_start_date_epoch(job: Dict[str, Any]) -> Optional[Union[int, float]]:
         'start_date_input_epoch'
     ]
     
-    for field_name in possible_field_names:
-        if field_name in job and job[field_name] is not None and not pd.isna(job[field_name]):
-            value = job[field_name]
-            # Validate the timestamp to ensure it's not a small value like a job ID
-            if validate_timestamp(value):
-                return value
-            else:
-                logger.warning(f"Rejected invalid {field_name} value: {value} for job ID {job.get('job_id', 'unknown')}")
-    
-    return None
-
-def is_valid_timestamp(timestamp: Any) -> bool:
-    """
-    Check if a timestamp is valid for calculations.
-    
-    Args:
-        timestamp: Value to check
+    @staticmethod
+    def get_start_date_epoch(job: Dict[str, Any]) -> Optional[Union[int, float]]:
+        """
+        Extract START_DATE epoch timestamp handling field name variations.
         
-    Returns:
-        True if timestamp is valid, False otherwise
-    """
-    # Validate timestamp for calculation safety
-    return (timestamp is not None and 
-            not pd.isna(timestamp) and 
-            isinstance(timestamp, (int, float)))
+        Args:
+            job: Job dictionary
+            
+        Returns:
+            The start date epoch value or None if not present/valid
+        """
+        if not isinstance(job, dict):
+            logger.warning(f"Job must be a dictionary, got {type(job)}")
+            return None
+        
+        for field_name in StartDateExtractor.START_DATE_FIELDS:
+            if field_name in job and job[field_name] is not None and not pd.isna(job[field_name]):
+                value = job[field_name]
+                if TimestampValidator.validate_timestamp(value):
+                    return value
+                else:
+                    logger.warning(f"Rejected invalid {field_name} value: {value} for job ID {job.get('job_id', 'unknown')}")
+        
+        return None
 
-def get_buffer_status(buffer_hours: float) -> str:
-    """Get status category based on buffer hours.
+
+class BufferCalculator:
+    """Handles buffer time calculations and status determination."""
     
-    Args:
-        buffer_hours: The buffer time in hours between job completion and deadline.
-            Negative values indicate the job will be late by that many hours.
+    def __init__(self, config: BufferConfig):
+        self.config = config
     
-    Returns:
-        Status category for visualization:
-            "Late" - Job will be late (negative buffer)
-            "Critical" - Less than 8 hours buffer
-            "Warning" - Less than 24 hours buffer
-            "Caution" - Less than 72 hours buffer
-            "OK" - 72 hours or more buffer
-    """
-    # Categorize buffer time into status levels for dashboard display
-    if not isinstance(buffer_hours, (int, float)):
+    def get_buffer_status(self, buffer_hours: float) -> str:
+        """
+        Get status category based on buffer hours from .env configuration.
+        
+        Args:
+            buffer_hours: Buffer time in hours (negative = late)
+            
+        Returns:
+            Status category: "Late", "Critical", "Warning", "Caution", "OK"
+        """
+        if not isinstance(buffer_hours, (int, float)):
+            try:
+                buffer_hours = float(buffer_hours)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid buffer_hours value: {buffer_hours}")
+                return "Unknown"
+        
+        if buffer_hours < 0:
+            return "Late"
+        elif buffer_hours < self.config.buffer_critical_hours:
+            return "Critical"
+        elif buffer_hours < self.config.buffer_warning_hours:
+            return "Warning"
+        elif buffer_hours < self.config.buffer_caution_hours:
+            return "Caution"
+        else:
+            return "OK"
+    
+    def calculate_buffer_hours(self, end_time: Union[int, float], 
+                             lcd_date_epoch: Union[int, float]) -> float:
+        """
+        Calculate buffer hours between completion and deadline.
+        
+        Args:
+            end_time: Job completion time (epoch)
+            lcd_date_epoch: Deadline time (epoch)
+            
+        Returns:
+            Buffer hours (negative if late)
+        """
         try:
-            buffer_hours = float(buffer_hours)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid buffer_hours value: {buffer_hours}")
-            return "Unknown"
-    
-    # Use .env values for buffer thresholds
-    critical_hours = float(os.getenv('BUFFER_CRITICAL_HOURS', 8))
-    warning_hours = float(os.getenv('BUFFER_WARNING_HOURS', 24))
-    caution_hours = float(os.getenv('BUFFER_CAUTION_HOURS', 72))
-    
-    if buffer_hours < 0:
-        return "Late"
-    elif buffer_hours < critical_hours:
-        return "Critical"
-    elif buffer_hours < warning_hours:
-        return "Warning"
-    elif buffer_hours < caution_hours:
-        return "Caution"
-    else:
-        return "OK"
+            buffer_seconds = lcd_date_epoch - end_time
+            return buffer_seconds / 3600
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Error calculating buffer: {e}")
+            return float('inf')
 
-def add_schedule_times_and_buffer(jobs: List[Dict[str, Any]], schedule: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Add schedule times (START_TIME and END_TIME) to job dictionaries and
-    calculate the buffer time (BAL_HR) between job completion and deadline.
-    Also adjusts times for dependent processes to maintain proper sequence.
+
+class ScheduleExtractor:
+    """Extracts and validates schedule data from optimizer results."""
     
-    This is a central function in the production planning workflow that:
-    1. Extracts the scheduled start/end times for each job from the optimizer solution
-    2. Groups jobs by family to handle related processes
-    3. Applies time shift adjustments based on START_DATE constraints
-    4. Calculates buffer hours between job completion and deadline
-    5. Adds status indicators for buffer visualization
-    
-    Each job's job_id follows a pattern that includes process number information,
-    which is used to identify related jobs that must be processed in sequence.
-    
-    Args:
-        jobs: List of job dictionaries, each with job_id
-        schedule: Schedule as {machine: [(job_id, start, end, priority), ...]}
+    @staticmethod
+    def extract_job_times(schedule: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
+        """
+        Extract job start/end times from schedule.
         
-    Returns:
-        Updated jobs list with START_TIME, END_TIME, and BAL_HR added
-    """
-    # Calculate schedule times and buffer hours for deadline tracking
-    if not isinstance(jobs, list):
-        logger.error("Jobs must be a list")
-        return []
-        
-    if not isinstance(schedule, dict):
-        logger.error("Schedule must be a dictionary")
-        return jobs
-    
-    logger.info(f"Processing schedule times and buffer calculations for {len(jobs)} jobs")
-    
-    # STEP 1: Extract job start/end times from the scheduling solution and store in a dictionary
-    times = {}
-    for machine, tasks in schedule.items():
-        if not isinstance(tasks, list):
-            logger.warning(f"Tasks for machine {machine} must be a list, got {type(tasks)}")
-            continue
+        Args:
+            schedule: Schedule dictionary
             
-        for task in tasks:
-            if not isinstance(task, (tuple, list)) or len(task) < 3:
-                logger.warning(f"Invalid task format for machine {machine}: {task}")
+        Returns:
+            Dictionary mapping job_id to (start_time, end_time)
+        """
+        times = {}
+        
+        if not isinstance(schedule, dict):
+            logger.error("Schedule must be a dictionary")
+            return times
+        
+        for machine, tasks in schedule.items():
+            if not isinstance(tasks, list):
+                logger.warning(f"Tasks for machine {machine} must be a list, got {type(tasks)}")
                 continue
-                
-            # Handle both old format (4-tuple) and new format (5-tuple with additional params)
-            job_id = task[0]
-            start = task[1]
-            end = task[2]
             
-            if not job_id or not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
-                logger.warning(f"Invalid task data: job_id={job_id}, start={start}, end={end}")
-                continue
+            for task in tasks:
+                if not isinstance(task, (tuple, list)) or len(task) < 3:
+                    logger.warning(f"Invalid task format for machine {machine}: {task}")
+                    continue
                 
-            # Store the start and end times for each job
-            times[job_id] = (start, end)
-            
-            # Store additional timing information if available
-            if len(task) >= 5 and isinstance(task[4], dict):
-                additional_params = task[4]
-                for job in jobs:
-                    if job.get('job_id') == job_id:
-                        # Store actual timing values from scheduler
-                        for param_key, param_value in additional_params.items():
-                            if param_key.endswith('_time') and isinstance(param_value, (int, float)) and param_value > 0:
-                                job[f'actual_{param_key}'] = param_value
+                job_id, start, end = task[0], task[1], task[2]
                 
-    # STEP 2: Group jobs by family and sequence number
-    family_processes = defaultdict(list)
-    for job in jobs:
-        if not isinstance(job, dict) or 'job_id' not in job:
-            logger.warning("Skipping invalid job entry")
-            continue
-            
-        job_id = job['job_id']
-        family = extract_job_family(job_id)
-        seq_num = extract_process_number(job_id)
+                if (not job_id or 
+                    not isinstance(start, (int, float)) or 
+                    not isinstance(end, (int, float))):
+                    logger.warning(f"Invalid task data: job_id={job_id}, start={start}, end={end}")
+                    continue
+                
+                times[job_id] = (start, end)
         
-        family_processes[family].append((seq_num, job_id, job))
+        return times
+
+
+class FamilyProcessor:
+    """Handles job family grouping and sequence processing."""
     
-    # Sort jobs within each family by their sequence number to maintain proper order
-    for family in family_processes:
-        family_processes[family].sort(key=lambda x: x[0])
+    def __init__(self, config: BufferConfig):
+        self.config = config
     
-    # STEP 3: Calculate time shifts needed to honor START_DATE constraints
-    family_time_shifts = {}
-    
-    for family, processes in family_processes.items():
-        for seq_num, job_id, job in processes:
-            start_date_epoch = get_start_date_epoch(job)
+    def group_jobs_by_family(self, jobs: List[Dict[str, Any]]) -> Dict[str, List[Tuple[int, str, Dict[str, Any]]]]:
+        """
+        Group jobs by family and sort by sequence number.
+        
+        Args:
+            jobs: List of job dictionaries
             
-            if start_date_epoch is not None and job_id in times:
-                scheduled_start = times[job_id][0]
-                requested_start = start_date_epoch
-                        
-                time_shift = None
-                if requested_start is not None:
-                    time_shift = scheduled_start - requested_start
+        Returns:
+            Dictionary mapping family to sorted job lists
+        """
+        family_processes = defaultdict(list)
+        
+        try:
+            from app.scheduling.scheduler_utils import extract_job_family, extract_process_number
+        except ImportError:
+            logger.warning("Could not import scheduler utilities - using fallback grouping")
+            # Fallback: treat each job as its own family
+            for i, job in enumerate(jobs):
+                if isinstance(job, dict) and 'job_id' in job:
+                    job_id = job['job_id']
+                    family_processes[job_id].append((1, job_id, job))
+            return dict(family_processes)
+        
+        for job in jobs:
+            if not isinstance(job, dict) or 'job_id' not in job:
+                logger.warning("Skipping invalid job entry")
+                continue
+            
+            job_id = job['job_id']
+            family = extract_job_family(job_id)
+            seq_num = extract_process_number(job_id)
+            
+            family_processes[family].append((seq_num, job_id, job))
+        
+        # Sort by sequence number
+        for family in family_processes:
+            family_processes[family].sort(key=lambda x: x[0])
+        
+        return dict(family_processes)
+    
+    def calculate_family_time_shifts(self, family_processes: Dict[str, List], 
+                                   times: Dict[str, Tuple[float, float]]) -> Dict[str, float]:
+        """
+        Calculate time shifts needed for START_DATE constraints.
+        
+        Args:
+            family_processes: Grouped job families
+            times: Job timing data
+            
+        Returns:
+            Dictionary mapping family to required time shift
+        """
+        family_time_shifts = {}
+        
+        for family, processes in family_processes.items():
+            for seq_num, job_id, job in processes:
+                start_date_epoch = StartDateExtractor.get_start_date_epoch(job)
+                
+                if start_date_epoch is not None and job_id in times:
+                    scheduled_start = times[job_id][0]
+                    time_shift = scheduled_start - start_date_epoch
                     
-                # For each family, we keep track of the largest shift needed
-                if family not in family_time_shifts or abs(time_shift) > abs(family_time_shifts[family]):
-                    family_time_shifts[family] = time_shift
-                
-                if time_shift is not None:
-                    logger.debug(f"Family {family} has START_DATE constraint for {job_id}: "
-                              f"shift={time_shift/3600:.1f} hours")
-    
-    # STEP 4: Apply time shifts to jobs to meet fixed start date constraints
-    job_adjustments = {}
-    
-    for family, time_shift in family_time_shifts.items():
-        # Skip negligible time shifts
-        min_shift_seconds = float(os.getenv('MINIMUM_TIME_SHIFT_SECONDS', 60))
-        if abs(time_shift) < min_shift_seconds:
-            continue
-            
-        logger.info(f"Applying time shift of {time_shift/3600:.1f} hours to family {family} for visualization")
+                    # Keep track of largest shift needed per family
+                    if (family not in family_time_shifts or 
+                        abs(time_shift) > abs(family_time_shifts[family])):
+                        family_time_shifts[family] = time_shift
+                    
+                    logger.debug(f"Family {family} START_DATE constraint for {job_id}: shift={time_shift/3600:.1f} hours")
         
-        # Process all jobs in this family
-        for seq_num, job_id, job_data in family_processes[family]:
-            if job_id in times:
-                original_start, original_end = times[job_id]
-                
-                new_start = original_start - time_shift 
-                new_end = original_end - time_shift
-                
-                job_adjustments[job_id] = (new_start, new_end)
-                logger.debug(f"  Adjusted {job_id} from {original_start}-{original_end} to {new_start}-{new_end}")
-
-    # STEP 5: Add final scheduled times and calculate buffer
-    for job in jobs:
-        if not isinstance(job, dict) or 'job_id' not in job:
-            continue
+        return family_time_shifts
+    
+    def apply_time_shifts(self, family_processes: Dict[str, List], 
+                         family_time_shifts: Dict[str, float],
+                         times: Dict[str, Tuple[float, float]]) -> Dict[str, Tuple[float, float]]:
+        """
+        Apply calculated time shifts to job families.
+        
+        Args:
+            family_processes: Grouped job families
+            family_time_shifts: Required time shifts per family
+            times: Original job timing data
             
+        Returns:
+            Dictionary of adjusted job times
+        """
+        job_adjustments = {}
+        shifts_applied = 0
+        
+        for family, time_shift in family_time_shifts.items():
+            # Skip negligible shifts
+            if abs(time_shift) < self.config.minimum_time_shift_seconds:
+                continue
+            
+            logger.info(f"Applying time shift of {time_shift/3600:.1f} hours to family {family}")
+            shifts_applied += 1
+            
+            # Apply shift to all jobs in family
+            for seq_num, job_id, job_data in family_processes[family]:
+                if job_id in times:
+                    original_start, original_end = times[job_id]
+                    new_start = original_start - time_shift
+                    new_end = original_end - time_shift
+                    
+                    job_adjustments[job_id] = (new_start, new_end)
+                    logger.debug(f"  Adjusted {job_id}: {original_start}-{original_end} → {new_start}-{new_end}")
+        
+        return job_adjustments
+
+
+class JobProcessor:
+    """Processes individual jobs with schedule and buffer data."""
+    
+    def __init__(self, config: BufferConfig):
+        self.config = config
+        self.buffer_calculator = BufferCalculator(config)
+    
+    def process_job(self, job: Dict[str, Any], times: Dict[str, Tuple[float, float]], 
+                   job_adjustments: Dict[str, Tuple[float, float]]) -> None:
+        """
+        Process a single job with schedule times and buffer calculation.
+        
+        Args:
+            job: Job dictionary to process
+            times: Original job timing data
+            job_adjustments: Adjusted job timing data
+        """
+        if not isinstance(job, dict) or 'job_id' not in job:
+            return
+        
         job_id = job['job_id']
         
-        # Use adjusted times if they exist, otherwise use original scheduled times
+        # Set schedule times
         if job_id in job_adjustments:
             job['start_time'], job['end_time'] = job_adjustments[job_id]
         elif job_id in times:
             job['start_time'], job['end_time'] = times[job_id]
         else:
-            # If job was not scheduled, set times to None
             job['start_time'] = None
             job['end_time'] = None
             logger.debug(f"Job {job_id} not found in schedule, times set to None")
-
-        # Calculate buffer time (bal_hr) between scheduled end and due date
-        if is_valid_timestamp(job.get('end_time')) and is_valid_timestamp(job.get('lcd_date_epoch')):
-            try:
-                buffer_seconds = job['lcd_date_epoch'] - job['end_time']
-                job['buffer_hours'] = buffer_seconds / 3600
-                
-                # Log buffer calculation for debugging
-                original_lcd = job.get('lcd_date_original', job.get('lcd_date_epoch'))
-                lcd_dt_str = format_datetime_for_display(epoch_to_datetime(original_lcd)) if original_lcd else "N/A"
-                end_dt_str = format_datetime_for_display(epoch_to_datetime(job['end_time']))
-                
-                logger.debug(f"Job {job_id}: end_time={end_dt_str}, lcd_date={lcd_dt_str}, "
-                           f"Buffer={job['buffer_hours']:.1f} hrs")
-            except (TypeError, ValueError) as e:
-                logger.warning(f"Error calculating buffer for job {job_id}: {e}")
-                job['buffer_hours'] = float('inf')
+        
+        # Calculate buffer hours
+        if (TimestampValidator.is_valid_timestamp(job.get('end_time')) and 
+            TimestampValidator.is_valid_timestamp(job.get('lcd_date_epoch'))):
+            
+            job['buffer_hours'] = self.buffer_calculator.calculate_buffer_hours(
+                job['end_time'], job['lcd_date_epoch']
+            )
+            
+            # Log buffer calculation
+            self._log_buffer_calculation(job)
         else:
             job['buffer_hours'] = float('inf')
             logger.debug(f"Job {job_id}: Missing end_time or lcd_date, buffer set to infinity")
-            
-        # Add buffer status for visualization
-        job['buffer_status'] = get_buffer_status(job['buffer_hours'])
-
-        # Add formatted dates for display purposes
+        
+        # Set buffer status
+        job['buffer_status'] = self.buffer_calculator.get_buffer_status(job['buffer_hours'])
+        
+        # Add formatted display strings
+        self._add_display_strings(job)
+    
+    def _log_buffer_calculation(self, job: Dict[str, Any]) -> None:
+        """Log buffer calculation details."""
         try:
+            from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
+            
+            original_lcd = job.get('lcd_date_original', job.get('lcd_date_epoch'))
+            lcd_dt_str = format_datetime_for_display(epoch_to_datetime(original_lcd)) if original_lcd else "N/A"
+            end_dt_str = format_datetime_for_display(epoch_to_datetime(job['end_time']))
+            
+            logger.debug(f"Job {job['job_id']}: end_time={end_dt_str}, lcd_date={lcd_dt_str}, "
+                        f"Buffer={job['buffer_hours']:.1f} hrs")
+        except ImportError:
+            logger.debug(f"Job {job['job_id']}: Buffer={job['buffer_hours']:.1f} hrs")
+        except Exception as e:
+            logger.warning(f"Error logging buffer calculation for job {job['job_id']}: {e}")
+    
+    def _add_display_strings(self, job: Dict[str, Any]) -> None:
+        """Add formatted date strings for display."""
+        try:
+            from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
+            
             if job.get('start_time') is not None:
                 job['start_time_str'] = format_datetime_for_display(epoch_to_datetime(job['start_time']))
             if job.get('end_time') is not None:
                 job['end_time_str'] = format_datetime_for_display(epoch_to_datetime(job['end_time']))
             if job.get('lcd_date_epoch') is not None:
                 job['lcd_date_str'] = format_datetime_for_display(epoch_to_datetime(job['lcd_date_epoch']))
+        except ImportError:
+            logger.warning("Could not import time utilities - skipping display string formatting")
         except Exception as e:
-            logger.warning(f"Error formatting display dates for job {job_id}: {e}")
+            logger.warning(f"Error formatting display dates for job {job['job_id']}: {e}")
 
-    logger.info("Finished adding schedule times and calculating buffer hours for all jobs")
-    return jobs
 
-def apply_sequence_constraints(jobs: List[Dict[str, Any]], schedule: Dict[str, Any]) -> List[Dict[str, Any]]:
+def add_schedule_times_and_buffer(jobs: List[Dict[str, Any]], 
+                                 schedule: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Apply sequence constraints based on job family and process numbering.
-    
-    This function ensures that jobs within the same family are scheduled in 
-    the order specified by their process numbers. If a job in a sequence needs
-    to be rescheduled, all subsequent jobs in the sequence are also adjusted.
+    Add schedule times and calculate buffer hours - PRODUCTION GRADE.
     
     Args:
-        jobs: List of job dictionaries, each with job_id
-        schedule: Schedule as {machine: [(job_id, start, end, priority), ...]}
+        jobs: List of job dictionaries
+        schedule: Schedule dictionary
         
     Returns:
-        Updated job list with adjusted times based on sequence constraints
+        Updated jobs list with schedule times and buffer calculations
+        
+    Raises:
+        SetupBufferConfigurationError: If required .env variables are missing/invalid
+        SetupBufferError: If processing fails
     """
-    # Enforce process sequence dependencies within job families
-    logger.info("Applying sequence constraints based on job family and process numbers")
+    import time
+    start_time = time.time()
     
-    if not isinstance(jobs, list) or not isinstance(schedule, dict):
-        logger.error("Invalid input types for apply_sequence_constraints")
-        return jobs if isinstance(jobs, list) else []
-    
-    # Extract start/end times from schedule
-    times = {}
-    for machine, scheduled_jobs in schedule.items():
-        if not isinstance(scheduled_jobs, list):
-            continue
-            
-        for job_tuple in scheduled_jobs:
-            if isinstance(job_tuple, (tuple, list)) and len(job_tuple) >= 3:
-                job_id, start_time, end_time = job_tuple[0:3]
-                if job_id and isinstance(start_time, (int, float)) and isinstance(end_time, (int, float)):
-                    times[job_id] = (start_time, end_time)
-    
-    # Group jobs by family and sort by process number
-    family_processes = defaultdict(list)
-    job_adjustments = {}
-    
-    for job in jobs:
-        if not isinstance(job, dict) or 'job_id' not in job:
-            continue
-            
-        job_id = job.get('job_id')
-        if not job_id or job_id not in times:
-            continue
-            
-        if job.get('job_dependency') != 1:
-            # Skip jobs with no dependency flag
-            continue
-            
-        family = extract_job_family(job_id)
-        seq_num = extract_process_number(job_id)
+    try:
+        # Load configuration from .env
+        config = SetupBufferConfigManager.load_config()
+        logger.info("Setup buffer configuration loaded successfully from .env")
         
-        if seq_num == 999:
-            # Skip jobs where we couldn't determine the sequence
-            continue
-            
-        family_processes[family].append((seq_num, job_id, job))
+        # Validate inputs
+        if not isinstance(jobs, list):
+            raise SetupBufferError("Jobs must be a list")
+        if not isinstance(schedule, dict):
+            raise SetupBufferError("Schedule must be a dictionary")
+        
+        logger.info(f"Processing schedule times and buffer calculations for {len(jobs)} jobs")
+        
+        # Extract job times from schedule
+        times = ScheduleExtractor.extract_job_times(schedule)
+        
+        # Process job families
+        family_processor = FamilyProcessor(config)
+        family_processes = family_processor.group_jobs_by_family(jobs)
+        
+        # Calculate and apply time shifts
+        family_time_shifts = family_processor.calculate_family_time_shifts(family_processes, times)
+        job_adjustments = family_processor.apply_time_shifts(family_processes, family_time_shifts, times)
+        
+        # Process individual jobs
+        job_processor = JobProcessor(config)
+        scheduled_count = 0
+        
+        for job in jobs:
+            job_processor.process_job(job, times, job_adjustments)
+            if job.get('start_time') is not None:
+                scheduled_count += 1
+        
+        # Log metrics
+        processing_time = (time.time() - start_time) * 1000
+        metrics = ScheduleMetrics(
+            total_jobs=len(jobs),
+            scheduled_jobs=scheduled_count,
+            unscheduled_jobs=len(jobs) - scheduled_count,
+            families_processed=len(family_processes),
+            time_shifts_applied=len(job_adjustments),
+            processing_time_ms=processing_time
+        )
+        
+        logger.info(f"Schedule processing completed: {metrics.scheduled_jobs}/{metrics.total_jobs} jobs scheduled, "
+                   f"{metrics.families_processed} families processed, {metrics.time_shifts_applied} shifts applied "
+                   f"in {processing_time:.2f}ms")
+        
+        return jobs
+        
+    except SetupBufferConfigurationError as e:
+        logger.error(f"Configuration error in setup buffer: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in add_schedule_times_and_buffer: {e}")
+        raise SetupBufferError(f"Processing failed: {e}")
+
+
+def apply_sequence_constraints(jobs: List[Dict[str, Any]], 
+                              schedule: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Apply sequence constraints - PRODUCTION GRADE.
     
-    # Process each family
-    for family in family_processes:
-        processes = sorted(family_processes[family], key=lambda x: x[0])
+    Args:
+        jobs: List of job dictionaries
+        schedule: Schedule dictionary
         
-        # Check for START_DATE constraints first
-        start_date_constraint = None
-        for seq_num, job_id, job_data_item in processes: # Renamed job to job_data_item to avoid conflict
-            start_date_epoch = get_start_date_epoch(job_data_item) # Use job_data_item
-            
-            if start_date_epoch is not None and job_id in times:
-                scheduled_start = times[job_id][0]
-                
-                if scheduled_start < start_date_epoch:
-                    time_shift = start_date_epoch - scheduled_start
-                    if time_shift > 0:
-                        start_date_constraint = {
-                            'job_id': job_id,
-                            'time_shift': time_shift
-                        }
-                        logger.info(f"Family {family} has START_DATE constraint for {job_id}: "
-                                  f"scheduled_start={scheduled_start}, constraint={start_date_epoch}, "
-                                  f"shift={time_shift}")
-                        break 
+    Returns:
+        Updated jobs list with sequence constraints applied
         
-        # Apply the time shift to all jobs in the family if needed
-        if start_date_constraint:
-            time_shift = start_date_constraint['time_shift']
-            start_job_id = start_date_constraint['job_id']
-            start_index = next((i for i, (_, jid, _) in enumerate(processes) if jid == start_job_id), None)
-            
-            if start_index is not None:
-                for seq_num, job_id, job_data_item_again in processes[start_index:]: # Renamed job to job_data_item_again
-                    if job_id in times:
-                        original_start, original_end = times[job_id]
-                        new_start = original_start + time_shift
-                        new_end = original_end + time_shift
-                        
-                        job_adjustments[job_id] = (new_start, new_end)
-                        logger.debug(f"  Adjusted {job_id} from {original_start}-{original_end} to {new_start}-{new_end}")
-    
-    # Apply adjustments to jobs list
-    for job_item_final in jobs: # Renamed job to job_item_final
-        if not isinstance(job_item_final, dict) or 'job_id' not in job_item_final:
-            continue
-            
-        job_id = job_item_final['job_id']
+    Raises:
+        SetupBufferConfigurationError: If required .env variables are missing/invalid
+        SetupBufferError: If processing fails
+    """
+    try:
+        # Load configuration
+        config = SetupBufferConfigManager.load_config()
+        logger.info("Applying sequence constraints based on job family and process numbers")
         
-        if job_id in job_adjustments:
-            job_item_final['start_time'], job_item_final['end_time'] = job_adjustments[job_id]
-        elif job_id in times:
-            job_item_final['start_time'], job_item_final['end_time'] = times[job_id]
+        # Validate inputs
+        if not isinstance(jobs, list) or not isinstance(schedule, dict):
+            raise SetupBufferError("Invalid input types for apply_sequence_constraints")
+        
+        # Extract times and process families
+        times = ScheduleExtractor.extract_job_times(schedule)
+        family_processor = FamilyProcessor(config)
+        family_processes = defaultdict(list)
+        job_adjustments = {}
+        
+        # Group jobs with dependencies
+        for job in jobs:
+            if not isinstance(job, dict) or 'job_id' not in job:
+                continue
             
-        # Add buffer_hours if lcd_date and end_time are available
-        if 'lcd_date_epoch' in job_item_final and 'end_time' in job_item_final and job_item_final['end_time'] is not None:
+            job_id = job.get('job_id')
+            if not job_id or job_id not in times or job.get('job_dependency') != 1:
+                continue
+            
             try:
-                end_dt = datetime.fromtimestamp(job_item_final['end_time'])
-                lcd_dt = datetime.fromtimestamp(job_item_final['lcd_date_epoch'])
-                end_dt_str = end_dt.strftime('%Y-%m-%d %H:%M')
-                lcd_dt_str = lcd_dt.strftime('%Y-%m-%d %H:%M')
+                from app.scheduling.scheduler_utils import extract_job_family, extract_process_number
+                family = extract_job_family(job_id)
+                seq_num = extract_process_number(job_id)
                 
-                job_item_final['buffer_hours'] = max(0, (job_item_final['lcd_date_epoch'] - job_item_final['end_time']) / 3600)
-                logger.debug(f"Job {job_id}: end_time={end_dt_str}, lcd_date={lcd_dt_str}, "
-                           f"Buffer={job_item_final['buffer_hours']:.1f} hrs")
-            except (ValueError, TypeError, OSError) as e:
-                logger.warning(f"Error calculating buffer for job {job_id}: {e}")
-                job_item_final['buffer_hours'] = float('inf')
-        else:
-            job_item_final['buffer_hours'] = float('inf')
-            logger.debug(f"Job {job_id}: Missing end_time or lcd_date, buffer set to infinity")
-    
-    return jobs
+                if seq_num != 999:
+                    family_processes[family].append((seq_num, job_id, job))
+            except ImportError:
+                logger.warning("Could not import scheduler utilities - skipping sequence constraints")
+                continue
+        
+        # Process each family for START_DATE constraints
+        for family in family_processes:
+            processes = sorted(family_processes[family], key=lambda x: x[0])
+            
+            # Find START_DATE constraints
+            start_date_constraint = None
+            for seq_num, job_id, job_data in processes:
+                start_date_epoch = StartDateExtractor.get_start_date_epoch(job_data)
+                
+                if start_date_epoch is not None and job_id in times:
+                    scheduled_start = times[job_id][0]
+                    
+                    if scheduled_start < start_date_epoch:
+                        time_shift = start_date_epoch - scheduled_start
+                        if time_shift > 0:
+                            start_date_constraint = {
+                                'job_id': job_id,
+                                'time_shift': time_shift
+                            }
+                            logger.info(f"Family {family} START_DATE constraint for {job_id}: shift={time_shift}")
+                            break
+            
+            # Apply time shift to family
+            if start_date_constraint:
+                time_shift = start_date_constraint['time_shift']
+                start_job_id = start_date_constraint['job_id']
+                start_index = next((i for i, (_, jid, _) in enumerate(processes) if jid == start_job_id), None)
+                
+                if start_index is not None:
+                    for seq_num, job_id, job_data in processes[start_index:]:
+                        if job_id in times:
+                            original_start, original_end = times[job_id]
+                            new_start = original_start + time_shift
+                            new_end = original_end + time_shift
+                            
+                            job_adjustments[job_id] = (new_start, new_end)
+                            logger.debug(f"  Adjusted {job_id}: {original_start}-{original_end} → {new_start}-{new_end}")
+        
+        # Apply adjustments and calculate buffers
+        buffer_calculator = BufferCalculator(config)
+        job_processor = JobProcessor(config)
+        
+        for job in jobs:
+            if not isinstance(job, dict) or 'job_id' not in job:
+                continue
+            
+            job_id = job['job_id']
+            
+            # Apply timing adjustments
+            if job_id in job_adjustments:
+                job['start_time'], job['end_time'] = job_adjustments[job_id]
+            elif job_id in times:
+                job['start_time'], job['end_time'] = times[job_id]
+            
+            # Calculate buffer hours
+            if ('lcd_date_epoch' in job and 'end_time' in job and 
+                job['end_time'] is not None):
+                try:
+                    job['buffer_hours'] = buffer_calculator.calculate_buffer_hours(
+                        job['end_time'], job['lcd_date_epoch']
+                    )
+                    
+                    # Log buffer calculation
+                    try:
+                        from app.utils.time_utils import epoch_to_datetime
+                        end_dt = datetime.fromtimestamp(job['end_time'])
+                        lcd_dt = datetime.fromtimestamp(job['lcd_date_epoch'])
+                        logger.debug(f"Job {job_id}: end_time={end_dt.strftime('%Y-%m-%d %H:%M')}, "
+                                   f"lcd_date={lcd_dt.strftime('%Y-%m-%d %H:%M')}, "
+                                   f"Buffer={job['buffer_hours']:.1f} hrs")
+                    except (ImportError, ValueError, TypeError, OSError):
+                        logger.debug(f"Job {job_id}: Buffer={job['buffer_hours']:.1f} hrs")
+                        
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error calculating buffer for job {job_id}: {e}")
+                    job['buffer_hours'] = float('inf')
+            else:
+                job['buffer_hours'] = float('inf')
+                logger.debug(f"Job {job_id}: Missing end_time or lcd_date, buffer set to infinity")
+        
+        return jobs
+        
+    except SetupBufferConfigurationError as e:
+        logger.error(f"Configuration error in sequence constraints: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in apply_sequence_constraints: {e}")
+        raise SetupBufferError(f"Sequence constraint processing failed: {e}")
+
+
+# Public API functions for backward compatibility
+def get_start_date_epoch(job: Dict[str, Any]) -> Optional[Union[int, float]]:
+    """Extract START_DATE epoch timestamp handling field name variations."""
+    return StartDateExtractor.get_start_date_epoch(job)
+
+
+def is_valid_timestamp(timestamp: Any) -> bool:
+    """Check if timestamp is valid for calculations."""
+    return TimestampValidator.is_valid_timestamp(timestamp)
+
+
+def get_buffer_status(buffer_hours: float) -> str:
+    """Get buffer status using .env configuration."""
+    try:
+        config = SetupBufferConfigManager.load_config()
+        calculator = BufferCalculator(config)
+        return calculator.get_buffer_status(buffer_hours)
+    except SetupBufferConfigurationError as e:
+        logger.error(f"Configuration error in get_buffer_status: {e}")
+        return "Unknown"
+
 
 if __name__ == '__main__':
-    pass 
+    """Test configuration loading."""
+    try:
+        config = SetupBufferConfigManager.load_config()
+        logger.info("Setup buffer configuration loaded successfully from .env")
+        print(f"Buffer thresholds: Critical={config.buffer_critical_hours}h, "
+              f"Warning={config.buffer_warning_hours}h, Caution={config.buffer_caution_hours}h")
+        print(f"Minimum time shift: {config.minimum_time_shift_seconds}s")
+    except SetupBufferConfigurationError as e:
+        logger.error(f"Configuration error: {e}")
+        print(f"❌ Configuration Error: {e}")

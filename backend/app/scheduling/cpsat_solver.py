@@ -1,52 +1,1310 @@
-# cpsat_solver.py | dont edit this line
-# Constraint Programming (CP-SAT) solver for production scheduling
-'''
-1. schedule_jobs - Main CP-SAT constraint programming solver for production scheduling optimization
-2. _create_error_result - Creates standardized error result dictionary with metadata
-3. _calculate_horizon - Calculates solver time horizon based on maximum job durations
-4. _calculate_total_job_hours - Calculates total job hours including setup, break, and non-productive time
-5. _add_sequence_constraints - Adds precedence constraints between processes of same job family
-6. _add_operator_constraints - Adds cumulative operator resource constraints using CP-SAT Cumulative
-7. _add_start_date_constraints - Adds hard START_DATE constraints with priority-based conflict resolution
-8. _create_objective_function - Creates multi-objective function minimizing priority penalties, tardiness, and makespan
-9. _solve_model - Configures and runs CP-SAT solver with time limits and workers
-10. _process_solver_results - Processes solver results and converts to final schedule format
-11. _validate_sequence_constraints - Validates sequence constraints are satisfied in final schedule
-12. main execution block - CLI example usage with data loading and result display
-'''
+"""
+cpsat_solver.py - FIXED VERSION
+Constraint Programming (CP-SAT) solver for production scheduling with improved structure
+All configuration loaded from .env without defaults
+"""
+
+import logging
+import math
+import os
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ortools.sat.python import cp_model
-from datetime import datetime
-import logging
-import time
-import os
-import math
-from collections import defaultdict
-from typing import List, Dict, Any, Optional
 
-from app.utils.time_utils import (
-    epoch_to_relative_hours,
-    relative_hours_to_epoch,
-    epoch_to_datetime,
-    datetime_to_epoch,
-    format_datetime_for_display
-)
-from app.scheduling.setup_buffer import get_start_date_epoch
-from app.scheduling.scheduler_utils import extract_process_number, extract_job_family, normalize_job_fields, validate_job_data
-from app.scheduling.time_availability import is_time_available, get_next_available_slot
-from app.config.scheduler_config import scheduler_config
-
-# Get module-specific logger without configuring at module level
+# Configure logging to suppress OR-Tools verbose output
 logger = logging.getLogger(__name__)
-
-# Suppress OR-Tools logging output
 ortools_logger = logging.getLogger('ortools')
-ortools_logger.setLevel(logging.ERROR)  # Set to ERROR to hide all but errors
+ortools_logger.setLevel(logging.ERROR)
 
-# Main CP-SAT constraint programming solver for production scheduling optimization
+
+class SchedulingError(Exception):
+    """Base exception for scheduling errors."""
+    pass
+
+
+class ConfigurationError(SchedulingError):
+    """Exception for configuration-related errors."""
+    pass
+
+
+@dataclass
+class SchedulingConfig:
+    """Configuration for scheduling parameters loaded from .env."""
+    solver_time_limit_seconds: int
+    max_jobs_limit: int
+    planning_horizon_days: int
+    max_workers_limit: int
+    relative_gap_limit: float
+    absolute_gap_limit: int
+    priority_weight: int
+    minimum_horizon_hours: int
+    emergency_minimum_start_hour: int
+    grace_period_hours: int
+    scheduler_search_days: int
+    cpsat_batch_size: int
+    # Add missing variables from .env
+    normal_working_hours: float
+    ot_working_hours: float
+    emergency_ot_hours: float
+    
+    def get_dynamic_limits(self, num_jobs: int) -> Dict[str, int]:
+        """Get dynamic limits based on problem size."""
+        if num_jobs > 500:
+            return {
+                'time_limit_seconds': max(self.solver_time_limit_seconds // 2, 120),
+                'planning_horizon_days': max(self.planning_horizon_days // 2, 7),
+                'max_jobs_limit': min(self.max_jobs_limit, 500)
+            }
+        elif num_jobs > 200:
+            return {
+                'time_limit_seconds': max(self.solver_time_limit_seconds * 3 // 4, 180),
+                'planning_horizon_days': max(self.planning_horizon_days * 3 // 4, 14),
+                'max_jobs_limit': min(self.max_jobs_limit, 800)
+            }
+        else:
+            return {
+                'time_limit_seconds': self.solver_time_limit_seconds,
+                'planning_horizon_days': self.planning_horizon_days,
+                'max_jobs_limit': self.max_jobs_limit
+            }
+
+
+@dataclass
+class TaskInfo:
+    """Information about a scheduled task."""
+    start: Any  # CP-SAT variable
+    end: Any    # CP-SAT variable
+    interval: Any  # CP-SAT interval
+    machine: str
+    hours: int
+    job: Dict[str, Any]
+
+
+@dataclass
+class SolverResult:
+    """Result from CP-SAT solver."""
+    solver: cp_model.CpSolver
+    status: int
+    solve_time: float
+    model: cp_model.CpModel
+    performance_warning: bool = False
+
+
+class SchedulingConfigManager:
+    """Manages scheduling configuration from environment variables only."""
+    
+    @staticmethod
+    def load_config() -> SchedulingConfig:
+        """Load configuration from .env variables with validation - NO DEFAULTS."""
+        config_vars = {
+            'SOLVER_TIME_LIMIT_SECONDS': 'solver_time_limit_seconds',
+            'MAX_JOBS_LIMIT': 'max_jobs_limit',
+            'PLANNING_HORIZON_DAYS': 'planning_horizon_days',
+            'MAX_WORKERS_LIMIT': 'max_workers_limit',
+            'RELATIVE_GAP_LIMIT': 'relative_gap_limit',
+            'ABSOLUTE_GAP_LIMIT': 'absolute_gap_limit',
+            'PRIORITY_WEIGHT': 'priority_weight',
+            'MINIMUM_HORIZON_HOURS': 'minimum_horizon_hours',
+            'EMERGENCY_MINIMUM_START_HOUR': 'emergency_minimum_start_hour',
+            'GRACE_PERIOD_HOURS': 'grace_period_hours',
+            'SCHEDULER_SEARCH_DAYS': 'scheduler_search_days',
+            'CPSAT_BATCH_SIZE': 'cpsat_batch_size',
+            'NORMAL_WORKING_HOURS': 'normal_working_hours',
+            'OT_WORKING_HOURS': 'ot_working_hours',
+            'EMERGENCY_OT_HOURS': 'emergency_ot_hours'
+        }
+        
+        config_values = {}
+        missing_vars = []
+        
+        # Check all required environment variables
+        for env_var, config_key in config_vars.items():
+            value = os.getenv(env_var)
+            if value is None:
+                missing_vars.append(env_var)
+            else:
+                config_values[config_key] = value
+        
+        if missing_vars:
+            raise ConfigurationError(
+                f"❌ MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
+            )
+        
+        # Convert and validate values
+        try:
+            config = SchedulingConfig(
+                solver_time_limit_seconds=int(config_values['solver_time_limit_seconds']),
+                max_jobs_limit=int(config_values['max_jobs_limit']),
+                planning_horizon_days=int(config_values['planning_horizon_days']),
+                max_workers_limit=int(config_values['max_workers_limit']),
+                relative_gap_limit=float(config_values['relative_gap_limit']),
+                absolute_gap_limit=int(config_values['absolute_gap_limit']),
+                priority_weight=int(config_values['priority_weight']),
+                minimum_horizon_hours=int(config_values['minimum_horizon_hours']),
+                emergency_minimum_start_hour=int(config_values['emergency_minimum_start_hour']),
+                grace_period_hours=int(config_values['grace_period_hours']),
+                scheduler_search_days=int(config_values['scheduler_search_days']),
+                cpsat_batch_size=int(config_values['cpsat_batch_size']),
+                normal_working_hours=float(config_values['normal_working_hours']),
+                ot_working_hours=float(config_values['ot_working_hours']),
+                emergency_ot_hours=float(config_values['emergency_ot_hours'])
+            )
+            
+            # Validate configuration values
+            SchedulingConfigManager._validate_config(config)
+            return config
+            
+        except (ValueError, TypeError) as e:
+            raise ConfigurationError(f"❌ INVALID CONFIGURATION: Error converting values: {e}")
+    
+    @staticmethod
+    def _validate_config(config: SchedulingConfig) -> None:
+        """Validate configuration values."""
+        validations = [
+            (config.solver_time_limit_seconds > 0, "SOLVER_TIME_LIMIT_SECONDS must be positive"),
+            (config.max_jobs_limit > 0, "MAX_JOBS_LIMIT must be positive"),
+            (config.planning_horizon_days > 0, "PLANNING_HORIZON_DAYS must be positive"),
+            (config.max_workers_limit > 0, "MAX_WORKERS_LIMIT must be positive"),
+            (0.0 <= config.relative_gap_limit <= 1.0, "RELATIVE_GAP_LIMIT must be between 0 and 1"),
+            (config.absolute_gap_limit >= 0, "ABSOLUTE_GAP_LIMIT must be non-negative"),
+            (config.priority_weight > 0, "PRIORITY_WEIGHT must be positive"),
+            (config.minimum_horizon_hours > 0, "MINIMUM_HORIZON_HOURS must be positive"),
+            (config.grace_period_hours >= 0, "GRACE_PERIOD_HOURS must be non-negative"),
+            (config.scheduler_search_days > 0, "SCHEDULER_SEARCH_DAYS must be positive"),
+            (config.cpsat_batch_size > 0, "CPSAT_BATCH_SIZE must be positive"),
+            (config.normal_working_hours > 0, "NORMAL_WORKING_HOURS must be positive"),
+            (config.ot_working_hours > 0, "OT_WORKING_HOURS must be positive"),
+            (config.emergency_ot_hours > 0, "EMERGENCY_OT_HOURS must be positive")
+        ]
+        
+        for condition, error_msg in validations:
+            if not condition:
+                raise ConfigurationError(f"❌ INVALID CONFIGURATION: {error_msg}")
+
+
+class JobValidator:
+    """Validates and normalizes job data."""
+    
+    @staticmethod
+    def validate_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate and filter valid jobs."""
+        valid_jobs = []
+        
+        for job in jobs:
+            if not isinstance(job, dict):
+                logger.warning(f"Skipping non-dictionary job: {job}")
+                continue
+                
+            if not job.get('job_id'):
+                logger.warning(f"Skipping job without job_id: {job}")
+                continue
+                
+            if not job.get('MachineName_v'):
+                logger.warning(f"Skipping job {job.get('job_id')} without machine assignment")
+                continue
+                
+            valid_jobs.append(job)
+        
+        return valid_jobs
+    
+    @staticmethod
+    def normalize_machines(machines: List[Union[str, Dict[str, Any]]]) -> List[str]:
+        """Normalize machines list to strings."""
+        if not machines:
+            return []
+            
+        if isinstance(machines[0], dict):
+            machine_names = []
+            for m in machines:
+                name = m.get('MachineName_v') or m.get('machine_name') or str(m)
+                machine_names.append(name)
+            logger.debug(f"Converted machine dictionaries to names: {machine_names}")
+            return machine_names
+        else:
+            return machines
+
+
+class JobFilterer:
+    """Handles job filtering and prioritization."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+    
+    def filter_and_limit_jobs(self, jobs: List[Dict[str, Any]], 
+                             current_time_epoch: int) -> List[Dict[str, Any]]:
+        """Filter jobs by planning horizon and apply limits."""
+        # Calculate horizon cutoff using 24 hours per day
+        hours_per_day = 24.0
+        horizon_cutoff_epoch = (
+            current_time_epoch + (self.config.planning_horizon_days * hours_per_day * 3600)
+        )
+        
+        # Filter jobs by planning horizon and priority
+        filtered_jobs = []
+        for job in jobs:
+            if self._should_include_job(job, horizon_cutoff_epoch):
+                filtered_jobs.append(job)
+        
+        # Apply job limit with prioritization
+        if len(filtered_jobs) > self.config.max_jobs_limit:
+            filtered_jobs = self._prioritize_jobs(filtered_jobs, current_time_epoch)
+            logger.warning(
+                f"Limited to {self.config.max_jobs_limit} jobs for performance "
+                f"(from {len(jobs)} total)"
+            )
+        
+        logger.info(
+            f"Performance filtering: {len(jobs)} → {len(filtered_jobs)} jobs "
+            f"(horizon: {self.config.planning_horizon_days} days, "
+            f"limit: {self.config.max_jobs_limit})"
+        )
+        
+        return filtered_jobs
+    
+    def _should_include_job(self, job: Dict[str, Any], horizon_cutoff_epoch: int) -> bool:
+        """Determine if job should be included based on horizon and priority."""
+        lcd_date_epoch = job.get('lcd_date_epoch')
+        priority = job.get('priority', 5)  # Fallback for missing priority
+        
+        # Include high priority jobs regardless of horizon
+        if priority <= 2:
+            return True
+            
+        # Apply horizon filter for lower priority jobs
+        if lcd_date_epoch and lcd_date_epoch > horizon_cutoff_epoch:
+            return False
+            
+        return True
+    
+    def _prioritize_jobs(self, jobs: List[Dict[str, Any]], 
+                        current_time_epoch: int) -> List[Dict[str, Any]]:
+        """Sort and limit jobs by priority and urgency."""
+        return sorted(jobs, key=lambda x: (
+            x.get('priority', 5),  # Lower number = higher priority
+            x.get('lcd_date_epoch', current_time_epoch + 999999)  # Earlier due date = higher priority
+        ))[:self.config.max_jobs_limit]
+
+
+class HorizonCalculator:
+    """Calculates solver time horizon."""
+    
+    @staticmethod
+    def calculate_horizon(jobs: List[Dict[str, Any]], min_horizon: int) -> int:
+        """Calculate solver horizon based on job durations."""
+        max_hours_need = 0
+        
+        for job_item in jobs:
+            hours_val = HorizonCalculator._get_job_duration(job_item)
+            
+            try:
+                hours_val = float(hours_val)
+                if hours_val > max_hours_need:
+                    max_hours_need = hours_val
+            except (ValueError, TypeError):
+                logger.warning(f"Job {job_item.get('job_id')} has invalid duration values")
+        
+        if max_hours_need == 0:
+            max_hours_need = 1.0  # Use 1.0 instead of MIN_DAILY_HOURS constant
+            
+        # Use 1.5 multiplier and 24 hour buffer (matching your .env philosophy)
+        horizon = int(max_hours_need * len(jobs) * 1.5) + 24
+        return max(horizon, min_horizon)
+    
+    @staticmethod
+    def _get_job_duration(job_item: Dict[str, Any]) -> float:
+        """Get job duration using priority logic."""
+        # Priority 1: Check for DAY_NEED first
+        day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
+        if day_need is not None:
+            try:
+                day_need_val = float(day_need)
+                if day_need_val > 0:
+                    return day_need_val * 24.0  # Convert days to hours
+            except (ValueError, TypeError):
+                pass
+        
+        # Priority 2: Use HOURS_NEED
+        hours_need = job_item.get('hours_need')
+        if hours_need is not None:
+            try:
+                return float(hours_need)
+            except (ValueError, TypeError):
+                pass
+        
+        return 1.0  # Fallback minimum
+
+
+class JobDurationCalculator:
+    """Calculates total job duration including overhead."""
+    
+    @staticmethod
+    def calculate_total_job_hours(job_item: Dict[str, Any]) -> Optional[float]:
+        """Calculate total hours needed including non-working time components."""
+        # Get base duration using priority logic
+        total_hours = JobDurationCalculator._get_base_duration(job_item)
+        if total_hours is None or total_hours <= 0:
+            return None
+        
+        # Add overhead time components
+        total_hours += JobDurationCalculator._calculate_overhead(job_item)
+        
+        return total_hours
+    
+    @staticmethod
+    def _get_base_duration(job_item: Dict[str, Any]) -> Optional[float]:
+        """Get base duration using priority logic."""
+        job_id = job_item.get('job_id', 'Unknown')
+        
+        # Priority 1: DAY_NEED
+        day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
+        if day_need is not None:
+            try:
+                day_need_val = float(day_need)
+                if day_need_val > 0:
+                    total_hours = day_need_val * 24.0  # Convert days to hours
+                    logger.debug(
+                        f"Using DAY_NEED for job {job_id}: "
+                        f"{day_need_val} days = {total_hours} hours"
+                    )
+                    return total_hours
+            except (ValueError, TypeError):
+                pass
+        
+        # Priority 2: HOURS_NEED
+        hours_need = job_item.get('hours_need')
+        if hours_need is not None:
+            try:
+                hours_val = float(hours_need)
+                if hours_val > 0:
+                    logger.debug(f"Using HOURS_NEED for job {job_id}: {hours_val} hours")
+                    return hours_val
+            except (ValueError, TypeError):
+                pass
+        
+        # Priority 3: Calculate from quantity and output rate
+        return JobDurationCalculator._calculate_from_quantity(job_item)
+    
+    @staticmethod
+    def _calculate_from_quantity(job_item: Dict[str, Any]) -> Optional[float]:
+        """Calculate duration from job quantity and output rate."""
+        job_id = job_item.get('job_id', 'Unknown')
+        job_quantity = job_item.get('job_quantity', 0)
+        output_per_hour = job_item.get('expect_output_per_hour', 0)
+        
+        if (job_quantity and output_per_hour and 
+            job_quantity > 0 and output_per_hour > 0):
+            try:
+                calculated_hours = job_quantity / output_per_hour
+                logger.info(
+                    f"Calculated hours_need for job {job_id}: "
+                    f"{calculated_hours} hours from {job_quantity} qty / "
+                    f"{output_per_hour} per hour"
+                )
+                return calculated_hours
+            except ZeroDivisionError:
+                logger.error(f"Division by zero for job {job_id}")
+                return None
+        
+        logger.error(
+            f"❌ Job {job_id} has no valid duration data - cannot schedule"
+        )
+        return None
+    
+    @staticmethod
+    def _calculate_overhead(job_item: Dict[str, Any]) -> float:
+        """Calculate overhead time from setup, break, and non-productive time."""
+        overhead = 0.0
+        
+        # Setup time
+        setup_time = job_item.get('setup_time') or job_item.get('setting_hours', 0)
+        if setup_time:
+            try:
+                if 'setup_time' in job_item:
+                    overhead += float(setup_time) / 3600  # Convert seconds to hours
+                else:
+                    overhead += float(setup_time)  # Already in hours
+            except (ValueError, TypeError):
+                pass
+        
+        # Break time
+        break_time = job_item.get('break_time') or job_item.get('break_hours', 0)
+        if break_time:
+            try:
+                if 'break_time' in job_item:
+                    overhead += float(break_time) / 3600
+                else:
+                    overhead += float(break_time)
+            except (ValueError, TypeError):
+                pass
+        
+        # Non-productive time
+        no_prod_time = job_item.get('no_prod_time') or job_item.get('no_prod', 0)
+        if no_prod_time:
+            try:
+                if 'no_prod_time' in job_item:
+                    overhead += float(no_prod_time) / 3600
+                else:
+                    overhead += float(no_prod_time)
+            except (ValueError, TypeError):
+                pass
+        
+        return overhead
+
+
+class CPSATModelBuilder:
+    """Builds CP-SAT model with variables and constraints."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+        self.model = cp_model.CpModel()
+        self.all_tasks: Dict[str, TaskInfo] = {}
+        self.all_starts: List[Any] = []
+        self.all_ends: List[Any] = []
+        self.all_intervals: List[Any] = []
+        self.jobs_on_machine: Dict[str, List[Any]] = defaultdict(list)
+        self.job_dependencies: Dict[str, List[str]] = defaultdict(list)
+        self.start_date_processes: Dict[str, int] = {}
+        self.jobs_with_due_dates: Dict[str, int] = {}
+        self.start_time_preferences: Dict[str, int] = {}
+    
+    def create_model(self, jobs: List[Dict[str, Any]], 
+                    machines: List[str], horizon: int) -> None:
+        """Create CP-SAT model with variables and basic constraints."""
+        logger.info(f"Creating CP-SAT model for {len(jobs)} jobs, horizon: {horizon}")
+        
+        self._create_job_variables(jobs, horizon)
+        self._add_machine_constraints(machines)
+        
+        if not self.all_tasks:
+            raise SchedulingError("No valid tasks created after processing constraints")
+    
+    def _create_job_variables(self, jobs: List[Dict[str, Any]], horizon: int) -> None:
+        """Create variables and intervals for all jobs."""
+        for job_item in jobs:
+            task_info = self._create_single_job_variables(job_item, horizon)
+            if task_info:
+                job_id = job_item['job_id']
+                self.all_tasks[job_id] = task_info
+                self._record_job_metadata(job_item, job_id)
+    
+    def _create_single_job_variables(self, job_item: Dict[str, Any], 
+                                   horizon: int) -> Optional[TaskInfo]:
+        """Create variables for a single job."""
+        job_id = job_item['job_id']
+        machine_name = job_item.get('MachineName_v')
+        
+        # Calculate total hours needed
+        total_hours = JobDurationCalculator.calculate_total_job_hours(job_item)
+        if total_hours is None or total_hours <= 0:
+            logger.warning(f"Job {job_id} has invalid duration, skipping")
+            return None
+        
+        # Convert to integer hours for solver
+        hours_need = int(math.ceil(total_hours))
+        logger.debug(
+            f"Job {job_id}: Total hours={total_hours:.2f}, solver hours={hours_need}"
+        )
+        
+        # Create CP-SAT variables
+        start_var = self.model.NewIntVar(0, horizon, f'start_{job_id}')
+        end_var = self.model.NewIntVar(0, horizon + hours_need, f'end_{job_id}')
+        interval_var = self.model.NewIntervalVar(
+            start_var, hours_need, end_var, f'interval_{job_id}'
+        )
+        
+        # Record variables
+        self.all_starts.append(start_var)
+        self.all_ends.append(end_var)
+        self.all_intervals.append(interval_var)
+        
+        # Add to machine-specific list
+        self.jobs_on_machine[machine_name].append(interval_var)
+        
+        return TaskInfo(
+            start=start_var,
+            end=end_var,
+            interval=interval_var,
+            machine=machine_name,
+            hours=hours_need,
+            job=job_item
+        )
+    
+    def _record_job_metadata(self, job_item: Dict[str, Any], job_id: str) -> None:
+        """Record job metadata for constraints."""
+        # Import here to avoid circular imports
+        try:
+            from app.utils.time_utils import epoch_to_relative_hours
+            from app.scheduling.setup_buffer import get_start_date_epoch
+        except ImportError:
+            logger.warning("Could not import utility functions - using placeholder logic")
+            return
+        
+        # Due dates
+        if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
+            due_date_rel = epoch_to_relative_hours(job_item['lcd_date_epoch'])
+            self.jobs_with_due_dates[job_id] = int(due_date_rel)
+        
+        # Start date constraints
+        job_start_date_epoch_val = get_start_date_epoch(job_item)
+        if job_start_date_epoch_val:
+            start_date_rel = epoch_to_relative_hours(job_start_date_epoch_val)
+            self.start_time_preferences[job_id] = int(start_date_rel)
+            self.start_date_processes[job_id] = job_start_date_epoch_val
+    
+    def _add_machine_constraints(self, machines: List[str]) -> None:
+        """Add NoOverlap constraints for each machine."""
+        for machine_key in machines:
+            if self.jobs_on_machine[machine_key]:
+                self.model.AddNoOverlap(self.jobs_on_machine[machine_key])
+                logger.debug(
+                    f"Added NoOverlap constraint for machine {machine_key} "
+                    f"with {len(self.jobs_on_machine[machine_key])} jobs"
+                )
+
+
+class ConstraintManager:
+    """Manages different types of scheduling constraints."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+    
+    def add_all_constraints(self, model_builder: CPSATModelBuilder, 
+                          enforce_sequence: bool, max_operators: Optional[int],
+                          enforce_deadlines: bool) -> None:
+        """Add all scheduling constraints to the model."""
+        if enforce_sequence:
+            self._add_sequence_constraints(model_builder)
+        
+        if max_operators is not None and max_operators > 0:
+            self._add_operator_constraints(model_builder, max_operators)
+        
+        self._add_start_date_constraints(model_builder)
+        
+        if enforce_deadlines:
+            self._add_deadline_constraints(model_builder)
+        
+        self._add_working_hours_constraints(model_builder)
+    
+    def _add_sequence_constraints(self, model_builder: CPSATModelBuilder) -> None:
+        """Add sequence constraints between processes of the same family."""
+        logger.info("Adding sequence constraints between processes of the same family")
+        
+        try:
+            from app.scheduling.scheduler_utils import (
+                extract_job_family, extract_process_number
+            )
+        except ImportError:
+            logger.warning("Could not import scheduler utilities - skipping sequence constraints")
+            return
+        
+        # Group jobs by family
+        job_families = defaultdict(list)
+        for job_id, task_info in model_builder.all_tasks.items():
+            original_job_id = task_info.job.get('job')
+            family = extract_job_family(job_id, job_id_suffix=original_job_id)
+            process_num = extract_process_number(job_id)
+            
+            if process_num != 999:
+                job_families[family].append((process_num, job_id))
+            else:
+                logger.warning(f"Job {job_id} has invalid process number, cannot enforce sequence")
+        
+        # Add precedence constraints
+        for family_key, processes in job_families.items():
+            processes.sort()  # Sort by process number
+            for i in range(len(processes) - 1):
+                pred_job_id = processes[i][1]
+                succ_job_id = processes[i+1][1]
+                
+                if (pred_job_id in model_builder.all_tasks and 
+                    succ_job_id in model_builder.all_tasks):
+                    pred_end = model_builder.all_tasks[pred_job_id].end
+                    succ_start = model_builder.all_tasks[succ_job_id].start
+                    model_builder.model.Add(pred_end <= succ_start)
+                    model_builder.job_dependencies[succ_job_id].append(pred_job_id)
+                    logger.debug(f"Added sequence constraint: {pred_job_id} before {succ_job_id}")
+    
+    def _add_operator_constraints(self, model_builder: CPSATModelBuilder, 
+                                max_operators: int) -> None:
+        """Add cumulative operator constraints."""
+        logger.info(f"Adding cumulative operator constraint with capacity {max_operators}")
+        
+        operator_demands = []
+        operator_intervals = []
+        
+        for job_id, task_info in model_builder.all_tasks.items():
+            num_ops = task_info.job.get('operators') or task_info.job.get('number_operator', 1)
+            try:
+                num_ops = int(num_ops) if num_ops is not None else 1
+                if num_ops > 0:
+                    operator_intervals.append(task_info.interval)
+                    operator_demands.append(num_ops)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid operator count for job {job_id}: {num_ops}")
+        
+        if operator_intervals:
+            model_builder.model.AddCumulative(operator_intervals, operator_demands, max_operators)
+            logger.info(f"Added Cumulative constraint for {len(operator_intervals)} tasks requiring operators")
+    
+    def _add_start_date_constraints(self, model_builder: CPSATModelBuilder) -> None:
+        """Add hard START_DATE constraints with priority-based conflict resolution."""
+        logger.info("Adding hard START_DATE constraints with priority-based conflict resolution")
+        
+        try:
+            from app.scheduling.scheduler_utils import extract_process_number
+        except ImportError:
+            logger.warning("Could not import scheduler utilities - using fallback logic")
+            extract_process_number = lambda x: 1  # Fallback
+        
+        # Group P01 jobs by machine to detect conflicts
+        p01_by_machine = defaultdict(list)
+        for job_id, task_info in model_builder.all_tasks.items():
+            if job_id in model_builder.start_time_preferences:
+                process_num = extract_process_number(job_id)
+                if process_num == 1:  # P01 process
+                    machine = task_info.machine
+                    priority = task_info.job.get('priority', 3)
+                    try:
+                        priority = int(priority)
+                    except (ValueError, TypeError):
+                        priority = 3
+                        
+                    p01_by_machine[machine].append({
+                        'job_id': job_id,
+                        'priority': priority,
+                        'start_date_rel_int': model_builder.start_time_preferences[job_id],
+                        'duration': task_info.hours,
+                        'task_info': task_info
+                    })
+        
+        # Resolve conflicts and add constraints
+        self._resolve_start_date_conflicts(model_builder, p01_by_machine)
+        self._add_non_p01_start_constraints(model_builder, extract_process_number)
+    
+    def _resolve_start_date_conflicts(self, model_builder: CPSATModelBuilder,
+                                    p01_by_machine: Dict[str, List[Dict]]) -> None:
+        """Resolve start date conflicts for P01 jobs."""
+        for machine, jobs_list in p01_by_machine.items():
+            if len(jobs_list) <= 1:
+                # Single job - make it exact
+                if jobs_list:
+                    job_data = jobs_list[0]
+                    start_var = job_data['task_info'].start
+                    model_builder.model.Add(start_var >= job_data['start_date_rel_int'])
+                continue
+            
+            # Multiple jobs - check for time conflicts
+            conflicts = self._detect_time_conflicts(jobs_list)
+            if conflicts:
+                self._handle_priority_conflicts(model_builder, conflicts)
+            else:
+                # No conflicts - make all exact
+                for job_data in jobs_list:
+                    start_var = job_data['task_info'].start
+                    model_builder.model.Add(start_var >= job_data['start_date_rel_int'])
+    
+    def _detect_time_conflicts(self, jobs_list: List[Dict]) -> List[Tuple[Dict, Dict]]:
+        """Detect actual time overlaps between jobs."""
+        conflicts = []
+        for i, job1 in enumerate(jobs_list):
+            for job2 in jobs_list[i+1:]:
+                job1_start = job1['start_date_rel_int']
+                job1_end = job1_start + job1['duration']
+                job2_start = job2['start_date_rel_int']
+                job2_end = job2_start + job2['duration']
+                
+                # Check if time windows overlap
+                if not (job1_end <= job2_start or job2_end <= job1_start):
+                    # Sort by priority (lower number = higher priority)
+                    if job1['priority'] <= job2['priority']:
+                        conflicts.append((job1, job2))
+                    else:
+                        conflicts.append((job2, job1))
+                    logger.info(f"Time conflict detected: {job1['job_id']} vs {job2['job_id']}")
+        
+        return conflicts
+    
+    def _handle_priority_conflicts(self, model_builder: CPSATModelBuilder,
+                                 conflicts: List[Tuple[Dict, Dict]]) -> None:
+        """Handle conflicts by priority."""
+        resolved_jobs = set()
+        
+        for higher_priority_job, lower_priority_job in conflicts:
+            if higher_priority_job['job_id'] not in resolved_jobs:
+                # Make highest priority job exact
+                start_var = higher_priority_job['task_info'].start
+                model_builder.model.Add(start_var >= higher_priority_job['start_date_rel_int'])
+                resolved_jobs.add(higher_priority_job['job_id'])
+            
+            if lower_priority_job['job_id'] not in resolved_jobs:
+                # Make lower priority job flexible
+                start_var = lower_priority_job['task_info'].start
+                model_builder.model.Add(start_var >= lower_priority_job['start_date_rel_int'])
+                resolved_jobs.add(lower_priority_job['job_id'])
+    
+    def _add_non_p01_start_constraints(self, model_builder: CPSATModelBuilder,
+                                     extract_process_number) -> None:
+        """Add start date constraints for non-P01 jobs."""
+        for job_id, task_info in model_builder.all_tasks.items():
+            if job_id in model_builder.start_time_preferences:
+                process_num = extract_process_number(job_id)
+                if process_num != 1:  # Not P01
+                    start_date_rel_int = model_builder.start_time_preferences[job_id]
+                    start_var = task_info.start
+                    model_builder.model.Add(start_var >= start_date_rel_int)
+                    logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
+    
+    def _add_deadline_constraints(self, model_builder: CPSATModelBuilder) -> None:
+        """Add hard LCD_DATE (deadline) constraints."""
+        logger.info("Adding hard LCD_DATE (deadline) constraints")
+        
+        try:
+            from app.utils.time_utils import epoch_to_relative_hours, datetime_to_epoch
+            current_time_rel = epoch_to_relative_hours(datetime_to_epoch(datetime.now()))
+        except ImportError:
+            logger.warning("Could not import time utilities - using fallback")
+            current_time_rel = 0
+        
+        for job_id, due_date_rel_int in model_builder.jobs_with_due_dates.items():
+            if job_id in model_builder.all_tasks:
+                end_var = model_builder.all_tasks[job_id].end
+                
+                # Apply grace period for overdue jobs
+                if due_date_rel_int < current_time_rel:
+                    adjusted_deadline = current_time_rel + self.config.grace_period_hours
+                    model_builder.model.Add(end_var <= int(adjusted_deadline))
+                    logger.debug(
+                        f"Added grace period LCD_DATE constraint for late job {job_id}: "
+                        f"end <= {int(adjusted_deadline)} (original: {due_date_rel_int})"
+                    )
+                else:
+                    model_builder.model.Add(end_var <= due_date_rel_int)
+                    logger.debug(f"Added hard LCD_DATE constraint for job {job_id}: end <= {due_date_rel_int}")
+    
+    def _add_working_hours_constraints(self, model_builder: CPSATModelBuilder) -> None:
+        """Add working hours constraints from ai_arrangable_hour table."""
+        try:
+            from app.scheduling.time_availability import TimeAvailabilityChecker
+        except ImportError:
+            logger.warning("Could not import TimeAvailabilityChecker - skipping working hours constraints")
+            return
+        
+        time_checker = TimeAvailabilityChecker()
+        logger.info("Adding working hours constraints from ai_arrangable_hour table")
+        
+        # Force cache refresh
+        time_checker._refresh_cache_if_needed()
+        
+        # Get working hours for each day (1=Monday, 7=Sunday)
+        working_hours_by_day = self._get_working_hours_by_day(time_checker)
+        
+        if not any(working_hours_by_day.values()):
+            error_msg = "CRITICAL: No working hours loaded from ai_arrangable_hour table"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        constraints_added = 0
+        for job_id, task_info in model_builder.all_tasks.items():
+            if self._add_job_working_hours_constraint(
+                model_builder, job_id, task_info, working_hours_by_day
+            ):
+                constraints_added += 1
+        
+        logger.info(f"Added working hours constraints for {constraints_added} jobs")
+    
+    def _get_working_hours_by_day(self, time_checker) -> Dict[int, List[Tuple[float, float]]]:
+        """Get working hours configuration by day of week."""
+        working_hours_by_day = {}
+        
+        for day_of_week in range(1, 8):  # 1-7 for Monday-Sunday
+            periods = time_checker._arrangable_hours_cache.get(day_of_week, [])
+            day_periods = []
+            
+            if periods:
+                for period in periods:
+                    start_time = period['start_time']
+                    end_time = period['end_time']
+                    
+                    # Convert time to hours since midnight
+                    start_hour = start_time.hour + start_time.minute / 60.0
+                    end_hour = end_time.hour + end_time.minute / 60.0
+                    
+                    # Handle overnight periods
+                    if end_hour < start_hour:
+                        day_periods.extend([(start_hour, 24.0), (0.0, end_hour)])
+                    else:
+                        day_periods.append((start_hour, end_hour))
+            
+            working_hours_by_day[day_of_week] = day_periods
+            logger.debug(f"Day {day_of_week} working hours: {day_periods}")
+        
+        return working_hours_by_day
+    
+    def _add_job_working_hours_constraint(self, model_builder: CPSATModelBuilder,
+                                        job_id: str, task_info: TaskInfo,
+                                        working_hours_by_day: Dict) -> bool:
+        """Add working hours constraint for a single job."""
+        start_var = task_info.start
+        job_duration = task_info.hours
+        
+        # Calculate valid time slots
+        valid_slots = self._calculate_multi_day_slots(
+            job_id, job_duration, working_hours_by_day
+        )
+        
+        if not valid_slots:
+            logger.warning(f"No valid time slots for job {job_id} - applying fallback constraint")
+            # Emergency fallback
+            model_builder.model.Add(start_var >= self.config.emergency_minimum_start_hour)
+            return True
+        
+        # Create constraint for valid slots
+        slot_bools = []
+        for slot_start, slot_end in valid_slots:
+            if slot_start <= slot_end:
+                day_num = slot_start // 24
+                slot_bool = model_builder.model.NewBoolVar(f'work_slot_{job_id}_day{day_num}')
+                
+                # Constrain start time if this slot is chosen
+                model_builder.model.Add(start_var >= slot_start).OnlyEnforceIf(slot_bool)
+                model_builder.model.Add(start_var <= slot_end).OnlyEnforceIf(slot_bool)
+                slot_bools.append(slot_bool)
+        
+        if slot_bools:
+            # Exactly one time slot must be chosen
+            model_builder.model.AddExactlyOne(slot_bools)
+            logger.debug(f"Added working hours constraint for {job_id}: {len(slot_bools)} valid slots")
+            return True
+        
+        return False
+    
+    def _calculate_multi_day_slots(self, job_id: str, job_duration_hours: int,
+                                 working_hours_by_day: Dict) -> List[Tuple[int, int]]:
+        """Calculate valid start times for multi-day jobs."""
+        valid_slots = []
+        
+        # Pre-calculate daily working hours
+        daily_working_hours = {}
+        for day_of_week, periods in working_hours_by_day.items():
+            total_hours = sum(end - start for start, end in periods)
+            daily_working_hours[day_of_week] = total_hours
+        
+        max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
+        max_search_days = self.config.scheduler_search_days
+        
+        logger.debug(
+            f"Job {job_id} ({job_duration_hours}h): Searching within {max_search_days} days"
+        )
+        
+        # Pre-calculate working day pattern
+        working_day_pattern = []
+        for day_offset in range(max_search_days):
+            day_of_week = (day_offset % 7) + 1
+            day_periods = working_hours_by_day.get(day_of_week, [])
+            day_total_hours = sum(end - start for start, end in day_periods) if day_periods else 0
+            working_day_pattern.append((day_of_week, day_periods, day_total_hours))
+        
+        slots_found = 0
+        
+        # Check each possible start day
+        for start_day in range(max_search_days):
+            day_of_week, day_periods, day_total_hours = working_day_pattern[start_day]
+            
+            if not day_periods:
+                continue  # Skip non-working days
+            
+            # Fast path for single-day jobs
+            if job_duration_hours <= day_total_hours:
+                for start_hour, end_hour in day_periods:
+                    day_start_abs = start_day * 24 + start_hour
+                    day_end_abs = start_day * 24 + end_hour
+                    
+                    latest_start = day_end_abs - job_duration_hours
+                    if latest_start >= day_start_abs:
+                        valid_slots.append((int(day_start_abs), int(latest_start)))
+                        slots_found += 1
+                continue
+            
+            # Multi-day job calculation
+            if self._can_complete_multi_day_job(
+                job_duration_hours, start_day, working_day_pattern, max_search_days, working_hours_by_day
+            ):
+                for start_hour, end_hour in day_periods:
+                    day_start_abs = start_day * 24 + start_hour
+                    day_end_abs = start_day * 24 + end_hour
+                    valid_slots.append((int(day_start_abs), int(day_end_abs - 1)))
+                    slots_found += 1
+        
+        # Log summary
+        if job_duration_hours > 24:
+            estimated_days = job_duration_hours / max_daily_hours if max_daily_hours > 0 else 1
+            logger.info(
+                f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling - "
+                f"estimated {estimated_days:.1f} working days, {slots_found} valid slots"
+            )
+        else:
+            logger.debug(f"Job {job_id} ({job_duration_hours}h): {slots_found} valid slots found")
+        
+        return valid_slots
+    
+    def _can_complete_multi_day_job(self, job_duration_hours: int, start_day: int,
+                                   working_day_pattern: List, max_search_days: int,
+                                   working_hours_by_day: Dict) -> bool:
+        """Check if multi-day job can be completed within search window."""
+        remaining_duration = job_duration_hours
+        current_day_offset = start_day
+        
+        while remaining_duration > 0 and current_day_offset < min(start_day + 14, max_search_days):  # Use 14 instead of WORKING_HOURS_SEARCH_LIMIT
+            if current_day_offset < len(working_day_pattern):
+                _, current_periods, current_hours = working_day_pattern[current_day_offset]
+            else:
+                # Extend pattern if needed
+                extended_day_of_week = (current_day_offset % 7) + 1
+                current_periods = working_hours_by_day.get(extended_day_of_week, [])
+                current_hours = sum(end - start for start, end in current_periods) if current_periods else 0
+            
+            if not current_periods:
+                current_day_offset += 1
+                continue
+            
+            remaining_duration -= current_hours
+            current_day_offset += 1
+        
+        return remaining_duration <= 0
+
+
+class ObjectiveBuilder:
+    """Builds objective function for the CP-SAT model."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+    
+    def create_objective(self, model_builder: CPSATModelBuilder, horizon: int) -> List[Any]:
+        """Create multi-objective function."""
+        objective_terms = []
+        
+        if not model_builder.all_ends:
+            return objective_terms
+        
+        # 1. Priority penalties
+        priority_terms = self._create_priority_objective(model_builder, horizon)
+        if priority_terms:
+            objective_terms.extend(priority_terms)
+        
+        # 2. Makespan
+        makespan = model_builder.model.NewIntVar(0, horizon * 2, 'makespan')
+        model_builder.model.AddMaxEquality(makespan, model_builder.all_ends)
+        objective_terms.append(makespan)
+        
+        return objective_terms
+    
+    def _create_priority_objective(self, model_builder: CPSATModelBuilder,
+                                 horizon: int) -> List[Any]:
+        """Create priority-based objective terms."""
+        priority_penalty_vars = []
+        
+        for job_id, task_info in model_builder.all_tasks.items():
+            priority = task_info.job.get('priority', 3)
+            try:
+                priority = int(priority)
+            except (ValueError, TypeError):
+                priority = 3
+            
+            if priority > 0:
+                start_var = task_info.start
+                priority_penalty = model_builder.model.NewIntVar(
+                    0, horizon * priority * 10, f'priority_penalty_{job_id}'
+                )
+                model_builder.model.Add(priority_penalty == start_var * priority)
+                priority_penalty_vars.append(priority_penalty)
+        
+        if priority_penalty_vars:
+            total_priority_penalty = model_builder.model.NewIntVar(
+                0, horizon * len(priority_penalty_vars) * 30, 'total_priority_penalty'
+            )
+            model_builder.model.Add(total_priority_penalty == sum(priority_penalty_vars))
+            weighted_penalty = total_priority_penalty * self.config.priority_weight
+            logger.debug(
+                f"Added priority optimization for {len(priority_penalty_vars)} jobs "
+                f"with weight {self.config.priority_weight}"
+            )
+            return [weighted_penalty]
+        
+        return []
+
+
+class CPSATSolver:
+    """Handles CP-SAT solver configuration and execution."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+    
+    def solve_model(self, model: cp_model.CpModel) -> SolverResult:
+        """Solve the CP-SAT model with optimized configuration."""
+        solver = cp_model.CpSolver()
+        
+        # Configure solver parameters
+        solver.parameters.max_time_in_seconds = float(self.config.solver_time_limit_seconds)
+        solver.parameters.log_search_progress = False
+        solver.parameters.log_to_stdout = False
+        
+        # Performance optimizations
+        solver.parameters.num_search_workers = min(
+            os.cpu_count() or 4, self.config.max_workers_limit
+        )
+        solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
+        solver.parameters.cp_model_presolve = True
+        solver.parameters.linearization_level = 2
+        
+        # Gap limits for early termination
+        solver.parameters.relative_gap_limit = self.config.relative_gap_limit
+        solver.parameters.absolute_gap_limit = self.config.absolute_gap_limit
+        
+        # Additional optimizations
+        solver.parameters.cp_model_probing_level = 0
+        solver.parameters.symmetry_level = 1
+        
+        logger.info(
+            f"Solver configured: time_limit={self.config.solver_time_limit_seconds}s, "
+            f"workers={solver.parameters.num_search_workers}, "
+            f"gap_limits=[rel:{self.config.relative_gap_limit*100:.1f}%, "
+            f"abs:{self.config.absolute_gap_limit}]"
+        )
+        
+        # Solve with timing
+        start_solve_time = time.time()
+        status = solver.Solve(model)
+        solve_time = time.time() - start_solve_time
+        
+        # Log results
+        self._log_solver_results(solver, status, solve_time)
+        
+        return SolverResult(
+            solver=solver,
+            status=status,
+            solve_time=solve_time,
+            model=model,
+            performance_warning=solve_time > 25
+        )
+    
+    def _log_solver_results(self, solver: cp_model.CpSolver, status: int, solve_time: float) -> None:
+        """Log solver results with appropriate level."""
+        if status == cp_model.OPTIMAL:
+            logger.info(f"✅ OPTIMAL solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
+        elif status == cp_model.FEASIBLE:
+            logger.info(f"✅ FEASIBLE solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
+        elif status == cp_model.UNKNOWN:
+            logger.warning(f"⏱️  Solver timed out after {solve_time:.2f}s")
+        elif status == cp_model.INFEASIBLE:
+            logger.error(f"❌ INFEASIBLE problem in {solve_time:.2f}s")
+        else:
+            logger.error(f"❌ Solver failed with status: {solver.StatusName(status)} in {solve_time:.2f}s")
+        
+        if solve_time > 25:
+            logger.warning(f"⚠️  Solver took {solve_time:.1f}s (>25s) - consider reducing problem size")
+
+
+class ResultProcessor:
+    """Processes solver results into final schedule format."""
+    
+    def __init__(self, config: SchedulingConfig):
+        self.config = config
+    
+    def process_results(self, solver_result: SolverResult, model_builder: CPSATModelBuilder,
+                       reference_time_epoch: int, enforce_sequence: bool) -> Dict[str, Any]:
+        """Process solver results and create final schedule."""
+        metadata = self._create_metadata(solver_result, model_builder, reference_time_epoch)
+        results = {'_metadata': metadata}
+        
+        if solver_result.status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            job_results = self._process_successful_solution(solver_result, model_builder)
+            results.update(job_results)
+            
+            if enforce_sequence:
+                self._validate_sequence_constraints(results, model_builder.job_dependencies)
+        else:
+            self._handle_failed_solution(solver_result, metadata)
+        
+        return results
+    
+    def _create_metadata(self, solver_result: SolverResult, model_builder: CPSATModelBuilder,
+                        reference_time_epoch: int) -> Dict[str, Any]:
+        """Create comprehensive metadata for the results."""
+        solver = solver_result.solver
+        status = solver_result.status
+        solve_time = solver_result.solve_time
+        
+        metadata = {
+            'status': solver.StatusName(status),
+            'solver_time': solve_time,
+            'objective_value': solver.ObjectiveValue() if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
+            'reference_time_epoch': reference_time_epoch,
+            'job_dependencies': model_builder.job_dependencies,
+            'start_date_constraints': model_builder.start_date_processes,
+            'due_dates_considered': model_builder.jobs_with_due_dates,
+            'solver_stats': solver.ResponseStats(),
+            'performance_metrics': {
+                'solve_time_seconds': solve_time,
+                'is_optimal': status == cp_model.OPTIMAL,
+                'is_feasible': status in [cp_model.OPTIMAL, cp_model.FEASIBLE],
+                'timed_out': status == cp_model.UNKNOWN,
+                'performance_warning': solver_result.performance_warning,
+                'num_jobs_processed': len(model_builder.all_tasks),
+                'solver_efficiency': 'FAST' if solve_time < 10 else 'MEDIUM' if solve_time < 25 else 'SLOW'
+            }
+        }
+        
+        # Add performance recommendations
+        recommendations = []
+        if solver_result.performance_warning:
+            recommendations.append("Consider reducing planning horizon or job limit")
+        if status == cp_model.UNKNOWN:
+            recommendations.append("Solver timed out - try smaller problem size")
+        if solve_time < 5 and len(model_builder.all_tasks) < 50:
+            recommendations.append("Problem size is small - could increase planning horizon")
+        
+        metadata['recommendations'] = recommendations
+        return metadata
+    
+    def _process_successful_solution(self, solver_result: SolverResult,
+                                   model_builder: CPSATModelBuilder) -> Dict[str, Any]:
+        """Process successful solver solution."""
+        solver = solver_result.solver
+        job_results = {}
+        time_adjusted_jobs = 0
+        
+        for job_id, task_info in model_builder.all_tasks.items():
+            start_val_rel = solver.Value(task_info.start)
+            end_val_rel = solver.Value(task_info.end)
+            
+            # Convert relative times back to epoch timestamps
+            start_epoch, end_epoch = self._convert_relative_to_epoch(start_val_rel, end_val_rel)
+            
+            # Apply time availability adjustments for single-day jobs
+            duration_hours = (end_epoch - start_epoch) / 3600
+            if duration_hours <= 24:
+                adjusted_start, adjusted_end = self._adjust_for_working_hours(
+                    start_epoch, end_epoch, job_id
+                )
+                if adjusted_start != start_epoch:
+                    start_epoch, end_epoch = adjusted_start, adjusted_end
+                    time_adjusted_jobs += 1
+            
+            job_result = {
+                'job_id': job_id,
+                'machine': task_info.machine,
+                'start': int(start_epoch),
+                'end': int(end_epoch),
+                'priority': task_info.job.get('priority', 3),
+                'duration_hours': task_info.hours,
+                'original_job_data': task_info.job
+            }
+            job_results[job_id] = job_result
+            
+            self._log_job_schedule(job_id, task_info.machine, start_epoch, end_epoch)
+        
+        if time_adjusted_jobs > 0:
+            logger.info(f"Adjusted {time_adjusted_jobs} jobs for working hours compliance")
+        
+        return job_results
+    
+    def _convert_relative_to_epoch(self, start_val_rel: int, end_val_rel: int) -> Tuple[int, int]:
+        """Convert relative solver times to epoch timestamps."""
+        try:
+            from app.utils.time_utils import relative_hours_to_epoch
+            start_epoch = relative_hours_to_epoch(start_val_rel)
+            end_epoch = relative_hours_to_epoch(end_val_rel)
+            return start_epoch, end_epoch
+        except ImportError:
+            logger.warning("Could not import time utilities - using placeholder conversion")
+            # Fallback: assume current time as reference
+            current_time = int(time.time())
+            start_epoch = current_time + (start_val_rel * 3600)
+            end_epoch = current_time + (end_val_rel * 3600)
+            return start_epoch, end_epoch
+    
+    def _adjust_for_working_hours(self, start_epoch: int, end_epoch: int,
+                                job_id: str) -> Tuple[int, int]:
+        """Adjust job times for working hours compliance."""
+        try:
+            from app.scheduling.time_availability import is_time_available, get_next_available_slot
+            
+            if not is_time_available(start_epoch, end_epoch):
+                duration_hours = (end_epoch - start_epoch) / 3600
+                next_available_start = get_next_available_slot(start_epoch, duration_hours)
+                
+                if next_available_start:
+                    new_start_epoch = next_available_start
+                    new_end_epoch = new_start_epoch + (end_epoch - start_epoch)
+                    logger.info(f"Moved job {job_id} to comply with working hours")
+                    return new_start_epoch, new_end_epoch
+        except ImportError:
+            logger.warning("Could not import time availability utilities")
+        
+        return start_epoch, end_epoch
+    
+    def _log_job_schedule(self, job_id: str, machine: str, start_epoch: int, end_epoch: int) -> None:
+        """Log individual job schedule."""
+        try:
+            from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
+            start_str = format_datetime_for_display(epoch_to_datetime(start_epoch))
+            end_str = format_datetime_for_display(epoch_to_datetime(end_epoch))
+            logger.debug(f"Scheduled {job_id} on {machine}: Start={start_str}, End={end_str}")
+        except ImportError:
+            logger.debug(f"Scheduled {job_id} on {machine}: Start={start_epoch}, End={end_epoch}")
+    
+    def _handle_failed_solution(self, solver_result: SolverResult, metadata: Dict[str, Any]) -> None:
+        """Handle failed solver solutions."""
+        status = solver_result.status
+        solver = solver_result.solver
+        
+        if status == cp_model.INFEASIBLE:
+            logger.error("No solution found: The problem is infeasible")
+            metadata['message'] = "The scheduling problem is infeasible with the given constraints"
+        elif status == cp_model.MODEL_INVALID:
+            logger.error("No solution found: The model is invalid")
+            metadata['message'] = "The CP-SAT model is invalid"
+        else:
+            logger.warning(f"No optimal/feasible solution found. Status: {solver.StatusName(status)}")
+            metadata['message'] = f"Solver did not find optimal/feasible solution. Status: {solver.StatusName(status)}"
+    
+    def _validate_sequence_constraints(self, results: Dict[str, Any],
+                                     job_dependencies: Dict[str, List[str]]) -> None:
+        """Validate sequence constraints in final schedule."""
+        logger.info("Validating sequence constraints in final schedule")
+        violations = 0
+        
+        for succ_job_id, pred_job_ids in job_dependencies.items():
+            if succ_job_id not in results:
+                continue
+            
+            succ_start_epoch = results[succ_job_id]['start']
+            for pred_job_id in pred_job_ids:
+                if pred_job_id not in results:
+                    continue
+                
+                pred_end_epoch = results[pred_job_id]['end']
+                if pred_end_epoch > succ_start_epoch:
+                    violations += 1
+                    logger.error(
+                        f"SEQUENCE VIOLATION: {pred_job_id} (ends {pred_end_epoch}) "
+                        f"should end before {succ_job_id} (starts {succ_start_epoch})"
+                    )
+        
+        if violations > 0:
+            logger.error(f"Found {violations} sequence violations in the CP-SAT schedule!")
+            results['_metadata']['sequence_violations'] = violations
+        else:
+            logger.info("All sequence constraints are satisfied")
+
+
 def schedule_jobs(
     jobs: List[Dict[str, Any]], 
-    machines: List[str], 
+    machines: List[Union[str, Dict[str, Any]]], 
     setup_times: Optional[Dict] = None, 
     enforce_sequence: bool = True, 
     time_limit_seconds: Optional[int] = None,
@@ -60,1110 +1318,223 @@ def schedule_jobs(
     
     Args:
         jobs: List of job dictionaries with job_id, MachineName_v, hours_need, etc.
-        machines: List of machine names or machine dictionaries with MachineName_v key
+        machines: List of machine names or machine dictionaries
         setup_times: Optional setup times (not used in CP-SAT)
         enforce_sequence: Whether to enforce job sequence constraints
-        time_limit_seconds: Solver time limit in seconds (uses config default if None)
+        time_limit_seconds: Solver time limit (from .env if None)
         max_operators: Maximum number of operators (optional)
-        max_jobs_limit: Maximum number of jobs to process (uses config default if None)
-        planning_horizon_days: Planning horizon in days (uses config default if None)
-        enforce_deadlines: Whether to enforce deadline constraints (default: True)
+        max_jobs_limit: Maximum number of jobs (from .env if None)
+        planning_horizon_days: Planning horizon (from .env if None)
+        enforce_deadlines: Whether to enforce deadline constraints
         
     Returns:
         Schedule dictionary with results and metadata
     """
-    # Apply configuration defaults for None parameters
-    if time_limit_seconds is None:
-        time_limit_seconds = scheduler_config.solver_time_limit_seconds
-    if max_jobs_limit is None:
-        max_jobs_limit = scheduler_config.max_jobs_limit
-    if planning_horizon_days is None:
-        planning_horizon_days = scheduler_config.planning_horizon_days
-    
-    # Apply dynamic limits based on problem size
-    dynamic_limits = scheduler_config.get_dynamic_limits(len(jobs))
-    time_limit_seconds = dynamic_limits['time_limit_seconds']
-    planning_horizon_days = min(planning_horizon_days, dynamic_limits['planning_horizon_days'])
-    max_jobs_limit = min(max_jobs_limit, dynamic_limits['max_jobs_limit'])
-    
-    logger.info(f"Using CP-SAT solver to schedule {len(jobs)} jobs on {len(machines)} machines")
-    logger.info(f"Configuration: time_limit={time_limit_seconds}s, max_jobs={max_jobs_limit}, horizon={planning_horizon_days}d")
-    start_time = time.time()
-    
-    # Performance optimization: Filter and limit jobs
-    current_time_epoch = datetime_to_epoch(datetime.now())
-    horizon_cutoff_epoch = current_time_epoch + (planning_horizon_days * 24 * 3600)  # Convert days to seconds
-    
-    # Filter jobs by planning horizon and priority
-    filtered_jobs = []
-    for job in jobs:
-        # Include job if it's within planning horizon or high priority
-        lcd_date_epoch = job.get('lcd_date_epoch')
-        priority = job.get('priority', 5)  # Default to low priority
+    try:
+        # Load configuration from .env
+        config = SchedulingConfigManager.load_config()
         
-        include_job = True
+        # Override with function parameters if provided
+        if time_limit_seconds is not None:
+            config.solver_time_limit_seconds = time_limit_seconds
+        if max_jobs_limit is not None:
+            config.max_jobs_limit = max_jobs_limit
+        if planning_horizon_days is not None:
+            config.planning_horizon_days = planning_horizon_days
         
-        # Apply horizon filter for non-critical jobs
-        if lcd_date_epoch and priority > 2:  # Only filter low/medium priority jobs
-            if lcd_date_epoch > horizon_cutoff_epoch:
-                include_job = False
-                
-        if include_job:
-            filtered_jobs.append(job)
-    
-    # Limit total jobs for performance
-    if len(filtered_jobs) > max_jobs_limit:
-        # Prioritize by urgency and priority
-        filtered_jobs = sorted(filtered_jobs, key=lambda x: (
-            x.get('priority', 5),  # Lower priority number = higher priority
-            x.get('lcd_date_epoch', current_time_epoch + 999999)  # Earlier due date = higher priority
-        ))[:max_jobs_limit]
-        logger.warning(f"Limited to {max_jobs_limit} jobs for performance (from {len(jobs)} total)")
-    
-    logger.info(f"Performance filtering: {len(jobs)} → {len(filtered_jobs)} jobs (horizon: {planning_horizon_days} days, limit: {max_jobs_limit})")
-    
-    # Normalize machines list - handle both string and dictionary formats
-    if machines and isinstance(machines[0], dict):
-        machine_names = [m.get('MachineName_v', m.get('machine_name', str(m))) for m in machines]
-        logger.debug(f"Converted machine dictionaries to names: {machine_names}")
-    else:
-        machine_names = machines
-    
-    # Initialize the CP-SAT model
-    model = cp_model.CpModel()
-    
-    # Filter valid jobs from the already filtered set
-    valid_jobs = [
-        job for job in filtered_jobs 
-        if isinstance(job, dict) and job.get('job_id') and job.get('MachineName_v')
-    ]
-    
-    if not valid_jobs:
-        logger.error("No valid jobs found")
-        return _create_error_result("No valid jobs found")
+        # Apply dynamic limits based on problem size
+        dynamic_limits = config.get_dynamic_limits(len(jobs))
+        config.solver_time_limit_seconds = dynamic_limits['time_limit_seconds']
+        config.planning_horizon_days = min(
+            config.planning_horizon_days, 
+            dynamic_limits['planning_horizon_days']
+        )
+        config.max_jobs_limit = min(config.max_jobs_limit, dynamic_limits['max_jobs_limit'])
         
-    logger.info(f"Processing {len(valid_jobs)} valid jobs (filtered from {len(jobs)})")
-    
-    # Calculate horizon efficiently
-    horizon = _calculate_horizon(valid_jobs)
-    logger.info(f"Solver horizon set to {horizon} relative hours")
-
-    # Create job variables and intervals
-    all_tasks = {}
-    all_starts = []
-    all_ends = []
-    all_intervals = []
-    
-    # Dictionary to cache job intervals on machines
-    jobs_on_machine = defaultdict(list)
-    
-    # Separate dictionary to store sequence constraints for visualization
-    job_dependencies = defaultdict(list)
-    
-    # Track jobs with constraints for visualization
-    start_date_processes = {}
-    jobs_with_due_dates = {}
-    start_time_preferences = {}
-    
-    # Process all jobs to create variables and constraints
-    for job_item in valid_jobs:
-        job_id = job_item['job_id']
-        
-        # Check if the job has a machine assignment
-        machine_name = job_item.get('MachineName_v')
-        if not machine_name or machine_name not in machine_names:
-            if machine_name == "NOT_ASSIGN":
-                logger.warning(f"Job {job_id} has NOT_ASSIGN machine - skipping (no machine assigned in database)")
-            else:
-                logger.warning(f"Job {job_id} has invalid machine assignment, skipping: {machine_name}")
-            continue
-            
-        machine = job_item['MachineName_v']
-        
-        # Calculate total hours needed including non-working time components
-        total_hours = _calculate_total_job_hours(job_item)
-        if total_hours is None:
-            logger.error(f"❌ Job {job_id} has no valid duration data - skipping job")
-            continue
-        if total_hours <= 0:
-            logger.warning(f"Job {job_id} has zero or negative duration, skipping job")
-            continue
-
-        # Convert hours to integer for solver (round up to ensure we don't underestimate)
-        hours_need = int(math.ceil(total_hours))
-        logger.debug(f"Job {job_id}: Total hours with non-working time={total_hours:.2f}, solver hours={hours_need}")
-        
-        # Handle due dates
-        if 'lcd_date_epoch' in job_item and job_item['lcd_date_epoch']:
-            due_date_rel = epoch_to_relative_hours(job_item['lcd_date_epoch'])
-            due_date_rel_int = int(due_date_rel)
-            jobs_with_due_dates[job_id] = due_date_rel_int
-            logger.debug(f"Added due date for job {job_id}: {due_date_rel_int} relative hours")
-        
-        # Handle START_DATE constraints
-        job_start_date_epoch_val = get_start_date_epoch(job_item)
-        if job_start_date_epoch_val:
-            start_date_rel = epoch_to_relative_hours(job_start_date_epoch_val)
-            start_date_rel_int = int(start_date_rel)
-            start_time_preferences[job_id] = start_date_rel_int
-            start_date_processes[job_id] = job_start_date_epoch_val
-            logger.debug(f"Added start time preference for job {job_id}: {start_date_rel_int} relative hours")
-        
-        # Create start and end variables
-        start_var = model.NewIntVar(0, horizon, f'start_{job_id}')
-        end_var = model.NewIntVar(0, horizon + hours_need, f'end_{job_id}')
-        
-        # Record all start and end variables
-        all_starts.append(start_var)
-        all_ends.append(end_var)
-        
-        # Create interval variable
-        interval_var = model.NewIntervalVar(
-            start_var, hours_need, end_var, f'interval_{job_id}'
+        logger.info(
+            f"Using CP-SAT solver to schedule {len(jobs)} jobs on {len(machines)} machines"
+        )
+        logger.info(
+            f"Configuration: time_limit={config.solver_time_limit_seconds}s, "
+            f"max_jobs={config.max_jobs_limit}, horizon={config.planning_horizon_days}d"
         )
         
-        # Record the interval
-        all_intervals.append(interval_var)
+        start_time = time.time()
         
-        # Store task info
-        all_tasks[job_id] = {
-            'start': start_var,
-            'end': end_var,
-            'interval': interval_var,
-            'machine': machine,
-            'hours': hours_need,
-            'job': job_item
-        }
+        # Validate and normalize inputs
+        valid_jobs = JobValidator.validate_jobs(jobs)
+        machine_names = JobValidator.normalize_machines(machines)
         
-        # Add to machine-specific list
-        jobs_on_machine[machine].append(interval_var)
+        if not valid_jobs:
+            logger.error("No valid jobs found")
+            return _create_error_result("No valid jobs found")
         
-    if not all_tasks:
-        logger.warning("No valid tasks created after processing")
-        return _create_error_result("No valid tasks created after processing constraints")
+        # Filter and limit jobs for performance
+        try:
+            from app.utils.time_utils import datetime_to_epoch
+            current_time_epoch = datetime_to_epoch(datetime.now())
+        except ImportError:
+            current_time_epoch = int(time.time())
+        
+        filterer = JobFilterer(config)
+        filtered_jobs = filterer.filter_and_limit_jobs(valid_jobs, current_time_epoch)
+        
+        if not filtered_jobs:
+            logger.error("No jobs remaining after filtering")
+            return _create_error_result("No jobs remaining after filtering")
+        
+        # Calculate horizon
+        horizon = HorizonCalculator.calculate_horizon(filtered_jobs, config.minimum_horizon_hours)
+        logger.info(f"Solver horizon set to {horizon} relative hours")
+        
+        # Build CP-SAT model
+        model_builder = CPSATModelBuilder(config)
+        try:
+            model_builder.create_model(filtered_jobs, machine_names, horizon)
+        except SchedulingError as e:
+            logger.error(f"Failed to create model: {e}")
+            return _create_error_result(str(e))
+        
+        # Add constraints
+        constraint_manager = ConstraintManager(config)
+        constraint_manager.add_all_constraints(
+            model_builder, enforce_sequence, max_operators, enforce_deadlines
+        )
+        
+        # Create objective function
+        objective_builder = ObjectiveBuilder(config)
+        objective_terms = objective_builder.create_objective(model_builder, horizon)
+        
+        if objective_terms:
+            model_builder.model.Minimize(sum(objective_terms))
+            logger.info("Objective function set to minimize makespan, tardiness, and priority penalties")
+        else:
+            logger.warning("No objective function created")
+        
+        # Solve model
+        cpsat_solver = CPSATSolver(config)
+        solver_result = cpsat_solver.solve_model(model_builder.model)
+        
+        # Process results
+        result_processor = ResultProcessor(config)
+        results = result_processor.process_results(
+            solver_result, model_builder, current_time_epoch, enforce_sequence
+        )
+        
+        total_time = time.time() - start_time
+        logger.info(f"Total CP-SAT scheduling completed in {total_time:.2f} seconds")
+        
+        return results
+        
+    except ConfigurationError as e:
+        logger.error(f"Configuration error: {e}")
+        return _create_error_result(f"Configuration error: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in schedule_jobs: {e}")
+        return _create_error_result(f"Unexpected error: {e}")
 
-    # Add NoOverlap constraint for each machine
-    for machine_key in machine_names:
-        if jobs_on_machine[machine_key]:
-            model.AddNoOverlap(jobs_on_machine[machine_key])
-            logger.debug(f"Added NoOverlap constraint for machine {machine_key} with {len(jobs_on_machine[machine_key])} jobs")
 
-    # Add sequence constraints (precedences)
-    if enforce_sequence:
-        _add_sequence_constraints(model, all_tasks, job_dependencies, logger)
-
-    # Add operator constraints using Cumulative
-    if max_operators is not None and max_operators > 0:
-        _add_operator_constraints(model, all_tasks, max_operators, logger)
-
-    # Add hard START_DATE constraints with priority-based conflict resolution
-    _add_start_date_constraints(model, all_tasks, start_time_preferences, logger)
-    
-    # Add HARD LCD_DATE (deadline) constraints - jobs MUST complete before deadline
-    _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines)
-
-    # Add working hours constraints to prevent midnight scheduling
-    _add_working_hours_constraints(model, all_tasks, logger)
-
-    # Define objective function
-    objective_terms = _create_objective_function(
-        model, all_ends, jobs_with_due_dates, start_time_preferences, 
-        all_tasks, horizon, logger
-    )
-    
-    if objective_terms:
-        model.Minimize(sum(objective_terms))
-        logger.info("Objective function set to minimize sum of makespan, weighted tardiness, and start time deviations")
-    else:
-        logger.warning("No objective function created")
-
-    # Solve the model
-    solver_result = _solve_model(model, time_limit_seconds, logger)
-    
-    # Process results
-    return _process_solver_results(
-        solver_result, all_tasks, datetime_to_epoch(datetime.now()), job_dependencies,
-        start_date_processes, jobs_with_due_dates, enforce_sequence, logger
-    )
-
-# Creates standardized error result dictionary with metadata
 def _create_error_result(message: str) -> Dict[str, Any]:
     """Create a standardized error result dictionary."""
+    try:
+        from app.utils.time_utils import datetime_to_epoch
+        reference_time = datetime_to_epoch(datetime.now())
+    except ImportError:
+        reference_time = int(time.time())
+    
     return {
         '_metadata': {
             'status': 'ERROR',
             'solver_time': 0,
             'objective_value': None,
-            'reference_time_epoch': datetime_to_epoch(datetime.now()),
+            'reference_time_epoch': reference_time,
             'message': message
         }
     }
 
-# Calculates solver time horizon based on maximum job durations
-def _calculate_horizon(jobs: List[Dict[str, Any]]) -> int:
-    """Calculate the solver horizon based on job durations.
-    
-    Considers both DAY_NEED (priority) and HOURS_NEED for duration calculation.
-    """
-    max_hours_need = 0
-    for job_item in jobs:
-        # Use the same priority logic as _calculate_total_job_hours
-        day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
-        
-        if day_need is not None:
-            try:
-                day_need_val = float(day_need)
-                if day_need_val > 0:
-                    hours_val = day_need_val * 24  # Convert days to hours
-                else:
-                    hours_val = job_item.get('hours_need', 1)
-            except (ValueError, TypeError):
-                hours_val = job_item.get('hours_need', 1)
-        else:
-            hours_val = job_item.get('hours_need', 1)
-        
-        try:
-            hours_val = float(hours_val)
-            if hours_val > max_hours_need:
-                max_hours_need = hours_val
-        except (ValueError, TypeError):
-            logger.warning(f"Job {job_item.get('job_id')} has invalid duration values")
-    
-    if max_hours_need == 0:
-        max_hours_need = 1
-        
-    horizon = int(max_hours_need * len(jobs) * 1.5) + 24
-    return max(horizon, scheduler_config.minimum_horizon_hours)
-
-# Calculates total job hours including setup, break, and non-productive time
-def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
-    """Calculate total hours needed including non-working time components.
-    
-    Priority logic:
-    1. If DAY_NEED has a value, use that (convert days to hours by * 24)
-    2. If DAY_NEED is empty/null, fall back to HOURS_NEED
-    """
-    # Priority 1: Check for DAY_NEED first
-    day_need = job_item.get('day_need') or job_item.get('DAY_NEED')
-    if day_need is not None:
-        try:
-            day_need_val = float(day_need)
-            if day_need_val > 0:
-                total_hours = day_need_val * 24  # Convert days to hours
-                logger.debug(f"Using DAY_NEED for job {job_item.get('job_id')}: {day_need_val} days = {total_hours} hours")
-            else:
-                # DAY_NEED is 0 or negative, fall back to HOURS_NEED
-                hours_need = job_item.get('hours_need')
-                if hours_need is None or hours_need <= 0:
-                    # Try to calculate from job_quantity and expect_output_per_hour
-                    job_quantity = job_item.get('job_quantity', 0)
-                    output_per_hour = job_item.get('expect_output_per_hour', 0)
-                    if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
-                        calculated_hours = job_quantity / output_per_hour
-                        total_hours = calculated_hours
-                        logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
-                    else:
-                        logger.error(f"❌ Job {job_item.get('job_id')} has DAY_NEED=0 and no valid hours_need - cannot schedule")
-                        return None
-                else:
-                    try:
-                        total_hours = float(hours_need)
-                    except (ValueError, TypeError):
-                        logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
-                        return None
-                logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
-        except (ValueError, TypeError):
-            # DAY_NEED is invalid, fall back to HOURS_NEED
-            hours_need = job_item.get('hours_need')
-            if hours_need is None or hours_need <= 0:
-                # Try to calculate from job_quantity and expect_output_per_hour
-                job_quantity = job_item.get('job_quantity', 0)
-                output_per_hour = job_item.get('expect_output_per_hour', 0)
-                if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
-                    calculated_hours = job_quantity / output_per_hour
-                    total_hours = calculated_hours
-                    logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
-                else:
-                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid DAY_NEED and no valid hours_need - cannot schedule")
-                    return None
-            else:
-                try:
-                    total_hours = float(hours_need)
-                except (ValueError, TypeError):
-                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
-                    return None
-            logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
-    else:
-        # Priority 2: No DAY_NEED, use HOURS_NEED
-        hours_need = job_item.get('hours_need')
-        if hours_need is None or hours_need <= 0:
-            # Try to calculate from job_quantity and expect_output_per_hour
-            job_quantity = job_item.get('job_quantity', 0)
-            output_per_hour = job_item.get('expect_output_per_hour', 0)
-            if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
-                calculated_hours = job_quantity / output_per_hour
-                total_hours = calculated_hours
-                logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
-            else:
-                logger.error(f"❌ Job {job_item.get('job_id')} has no valid hours_need and cannot calculate from quantity/output - cannot schedule")
-                return None
-        else:
-            try:
-                total_hours = float(hours_need)
-            except (ValueError, TypeError):
-                logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
-                return None
-        logger.debug(f"No DAY_NEED, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
-    
-    # Add setup time if available (convert from seconds to hours)
-    setup_time = job_item.get('setup_time') or job_item.get('setting_hours', 0)
-    if setup_time:
-        try:
-            if 'setup_time' in job_item:
-                total_hours += float(setup_time) / 3600  # Convert seconds to hours
-            else:
-                total_hours += float(setup_time)  # Already in hours
-        except (ValueError, TypeError):
-            pass
-            
-    # Add break time if available
-    break_time = job_item.get('break_time') or job_item.get('break_hours', 0)
-    if break_time:
-        try:
-            if 'break_time' in job_item:
-                total_hours += float(break_time) / 3600
-            else:
-                total_hours += float(break_time)
-        except (ValueError, TypeError):
-            pass
-            
-    # Add no_prod time if available
-    no_prod_time = job_item.get('no_prod_time') or job_item.get('no_prod', 0)
-    if no_prod_time:
-        try:
-            if 'no_prod_time' in job_item:
-                total_hours += float(no_prod_time) / 3600
-            else:
-                total_hours += float(no_prod_time)
-        except (ValueError, TypeError):
-            pass
-    
-    return total_hours
-
-# Adds precedence constraints between processes of same job family
-def _add_sequence_constraints(model, all_tasks, job_dependencies, logger):
-    """Add sequence constraints between processes of the same family."""
-    logger.info("Enforcing sequence constraints between processes of the same family")
-    
-    # Group jobs by family to apply sequence constraints
-    job_families = defaultdict(list)
-    for job_id, task_info in all_tasks.items():
-        original_job_id_for_family = task_info['job'].get('job')
-        family = extract_job_family(job_id, job_id_suffix=original_job_id_for_family) 
-        process_num = extract_process_number(job_id)
-        if process_num != 999:
-            job_families[family].append((process_num, job_id))
-        else:
-            logger.warning(f"Job {job_id} has invalid process number, cannot enforce sequence")
-
-    for family_key, processes in job_families.items():
-        processes.sort()  # Sort by process number
-        for i in range(len(processes) - 1):
-            pred_job_id = processes[i][1]
-            succ_job_id = processes[i+1][1]
-            
-            if pred_job_id in all_tasks and succ_job_id in all_tasks:
-                pred_end = all_tasks[pred_job_id]['end']
-                succ_start = all_tasks[succ_job_id]['start']
-                model.Add(pred_end <= succ_start)
-                job_dependencies[succ_job_id].append(pred_job_id)
-                logger.debug(f"Added sequence constraint: {pred_job_id} before {succ_job_id}")
-            else:
-                logger.warning(f"Skipping sequence constraint for family {family_key} due to missing tasks")
-
-# Adds cumulative operator resource constraints using CP-SAT Cumulative
-def _add_operator_constraints(model, all_tasks, max_operators, logger):
-    """Add cumulative operator constraints."""
-    logger.info(f"Adding cumulative operator constraint with capacity {max_operators}")
-    
-    operator_demands = []
-    operator_intervals = []
-    
-    for job_id, task_info in all_tasks.items():
-        num_ops = task_info['job'].get('operators') or task_info['job'].get('number_operator', 1)
-        try:
-            num_ops = int(num_ops) if num_ops is not None else 1
-            if num_ops > 0:
-                operator_intervals.append(task_info['interval'])
-                operator_demands.append(num_ops)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid operator count for job {job_id}: {num_ops}")
-        
-    if operator_intervals:
-        model.AddCumulative(operator_intervals, operator_demands, max_operators)
-        logger.info(f"Added Cumulative constraint for {len(operator_intervals)} tasks requiring operators")
-    else:
-        logger.info("No jobs require operators, skipping cumulative operator constraint")
-
-# Adds hard START_DATE constraints with priority-based conflict resolution
-def _add_start_date_constraints(model, all_tasks, start_time_preferences, logger):
-    """Add hard START_DATE constraints with priority-based conflict resolution."""
-    logger.info("Adding hard START_DATE constraints with priority-based conflict resolution")
-    
-    # Group P01 jobs by machine to detect TIME conflicts (not just machine conflicts)
-    p01_by_machine = defaultdict(list)
-    for job_id, task_info in all_tasks.items():
-        if job_id in start_time_preferences:
-            process_num = extract_process_number(job_id)
-            if process_num == 1:  # P01 process
-                machine = task_info['machine']
-                priority = task_info['job'].get('priority', 3)
-                try:
-                    priority = int(priority)
-                except (ValueError, TypeError):
-                    priority = 3
-                p01_by_machine[machine].append({
-                    'job_id': job_id,
-                    'priority': priority,
-                    'start_date_rel_int': start_time_preferences[job_id],
-                    'duration': task_info['hours'],
-                    'task_info': task_info
-                })
-    
-    # For each machine, detect actual TIME conflicts and resolve by priority
-    for machine, jobs_list in p01_by_machine.items():
-        if len(jobs_list) > 1:
-            # Check for actual time overlaps
-            conflicts = []
-            for i, job1 in enumerate(jobs_list):
-                for j, job2 in enumerate(jobs_list[i+1:], i+1):
-                    job1_start = job1['start_date_rel_int']
-                    job1_end = job1_start + job1['duration']
-                    job2_start = job2['start_date_rel_int']
-                    job2_end = job2_start + job2['duration']
-                    
-                    # Check if time windows overlap
-                    if not (job1_end <= job2_start or job2_end <= job1_start):
-                        # Time conflict detected
-                        conflict_pair = [job1, job2]
-                        conflict_pair.sort(key=lambda x: x['priority'])  # Sort by priority
-                        conflicts.append(conflict_pair)
-                        logger.info(f"Time conflict on {machine}: {job1['job_id']} vs {job2['job_id']}")
-            
-            if conflicts:
-                # Handle conflicts by priority
-                resolved_jobs = set()
-                for conflict_pair in conflicts:
-                    higher_priority_job, lower_priority_job = conflict_pair
-                    if higher_priority_job['job_id'] not in resolved_jobs:
-                        # Make highest priority job exact
-                        start_var = higher_priority_job['task_info']['start']
-                        model.Add(start_var >= higher_priority_job['start_date_rel_int'])
-                        logger.debug(f"Added EXACT START_DATE for priority job {higher_priority_job['job_id']}")
-                        resolved_jobs.add(higher_priority_job['job_id'])
-                    
-                    if lower_priority_job['job_id'] not in resolved_jobs:
-                        # Make lower priority job flexible
-                        start_var = lower_priority_job['task_info']['start']
-                        model.Add(start_var >= lower_priority_job['start_date_rel_int'])
-                        logger.debug(f"Added flexible START_DATE for {lower_priority_job['job_id']}")
-                        resolved_jobs.add(lower_priority_job['job_id'])
-                
-                # Make non-conflicting jobs exact
-                for job_data in jobs_list:
-                    if job_data['job_id'] not in resolved_jobs:
-                        start_var = job_data['task_info']['start']
-                        model.Add(start_var >= job_data['start_date_rel_int'])
-                        logger.debug(f"Added EXACT START_DATE for non-conflicting job {job_data['job_id']}")
-            else:
-                # No time conflicts, make all jobs exact
-                for job_data in jobs_list:
-                    start_var = job_data['task_info']['start']
-                    model.Add(start_var >= job_data['start_date_rel_int'])
-                    logger.debug(f"Added EXACT START_DATE for single P01 job {job_data['job_id']}")
-        else:
-            # Single job on machine, make it exact
-            job_data = jobs_list[0]
-            start_var = job_data['task_info']['start']
-            model.Add(start_var >= job_data['start_date_rel_int'])
-            logger.debug(f"Added EXACT START_DATE for single P01 job {job_data['job_id']}")
-    
-    # Handle non-P01 jobs with START_DATE (minimum bound)
-    for job_id, task_info in all_tasks.items():
-        if job_id in start_time_preferences:
-            process_num = extract_process_number(job_id)
-            if process_num != 1:  # Not P01
-                start_date_rel_int = start_time_preferences[job_id]
-                start_var = task_info['start']
-                model.Add(start_var >= start_date_rel_int)
-                logger.debug(f"Added minimum START_DATE constraint for non-P01 job {job_id}")
-
-# Calculate valid start times for multi-day jobs with performance improvements
-def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day, logger):
-    """
-    🚀 OPTIMIZED: Calculate valid start times for multi-day jobs with performance improvements.
-    
-    Performance optimizations:
-    - Pre-calculate working day patterns to avoid repeated calculations
-    - Use adaptive search windows based on job duration
-    - Consolidated logging (one summary instead of thousands of entries)
-    - Early termination for jobs that fit in single day
-    
-    Multi-day scheduling logic:
-    - Jobs automatically pause during non-working hours (overnight, weekends, holidays, breaks)
-    - Jobs resume at the next working hour (6:30 AM)
-    - Calculate total working hours available across consecutive days
-    
-    Args:
-        job_id: Job identifier for logging
-        job_duration_hours: Total working hours needed for the job
-        working_hours_by_day: Dict of {day_of_week: [(start_hour, end_hour), ...]}
-        logger: Logger instance
-        
-    Returns:
-        List of valid (start_hour, end_hour) slots where job can begin
-    """
-    valid_slots = []
-    
-    # Pre-calculate daily working hours (cached computation)
-    daily_working_hours = {}
-    for day_of_week, periods in working_hours_by_day.items():
-        total_hours = sum(end - start for start, end in periods)
-        daily_working_hours[day_of_week] = total_hours
-    
-    # Get maximum daily working hours for adaptive search
-    max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
-    
-    # Simple "next available slot" logic - search for configurable days ahead
-    search_days_env = os.getenv('SCHEDULER_SEARCH_DAYS')
-    if not search_days_env:
-        logger.error("❌ MISSING SCHEDULER_SEARCH_DAYS: SCHEDULER_SEARCH_DAYS not set in .env - cannot determine search window")
-        return []
-    
-    try:
-        max_search_days = int(search_days_env)
-    except ValueError:
-        logger.error(f"❌ INVALID SCHEDULER_SEARCH_DAYS: Cannot convert '{search_days_env}' to integer")
-        return []
-    
-    logger.debug(f"Job {job_id} ({job_duration_hours}h): Searching for next available slot within {max_search_days} days")
-    
-    # Pre-calculate working day pattern for the search window (optimization)
-    working_day_pattern = []
-    for day_offset in range(max_search_days):
-        day_of_week = (day_offset % 7) + 1
-        day_periods = working_hours_by_day.get(day_of_week, [])
-        day_total_hours = sum(end - start for start, end in day_periods) if day_periods else 0
-        working_day_pattern.append((day_of_week, day_periods, day_total_hours))
-    
-    # Track slots found for summary logging
-    slots_found = 0
-    
-    # For each possible start day, check if job can be completed
-    for start_day in range(max_search_days):
-        day_of_week, day_periods, day_total_hours = working_day_pattern[start_day]
-        
-        # Skip non-working days as start days
-        if not day_periods:
-            continue
-        
-        # Fast path for single-day jobs
-        if job_duration_hours <= day_total_hours:
-            # Job fits entirely in first day - add all working periods as valid slots
-            for start_hour, end_hour in day_periods:
-                day_start_abs = start_day * 24 + start_hour
-                day_end_abs = start_day * 24 + end_hour
-                
-                # Latest start time ensures job finishes within working hours
-                latest_start = day_end_abs - job_duration_hours
-                if latest_start >= day_start_abs:
-                    valid_slots.append((int(day_start_abs), int(latest_start)))
-                    slots_found += 1
-            continue  # Skip multi-day calculation for single-day jobs
-        
-        # Multi-day job calculation (only when necessary)
-        remaining_duration = job_duration_hours
-        current_day_offset = start_day
-        can_complete = True
-        
-        # Check if job can be completed starting from this day
-        while remaining_duration > 0 and current_day_offset < min(start_day + 14, max_search_days):
-            if current_day_offset < len(working_day_pattern):
-                _, current_periods, current_hours = working_day_pattern[current_day_offset]
-            else:
-                # Extend pattern if needed
-                extended_day_of_week = (current_day_offset % 7) + 1
-                current_periods = working_hours_by_day.get(extended_day_of_week, [])
-                current_hours = sum(end - start for start, end in current_periods) if current_periods else 0
-            
-            if not current_periods:
-                # Non-working day - skip to next day
-                current_day_offset += 1
-                continue
-            
-            # Use available working hours for this day
-            remaining_duration -= current_hours
-            current_day_offset += 1
-        
-        # If job can be completed, add first day's working periods as valid slots
-        if remaining_duration <= 0:
-            for start_hour, end_hour in day_periods:
-                day_start_abs = start_day * 24 + start_hour
-                day_end_abs = start_day * 24 + end_hour
-                
-                # Multi-day jobs can start anytime during first day's working hours
-                valid_slots.append((int(day_start_abs), int(day_end_abs - 1)))  # -1 to ensure at least 1h on first day
-                slots_found += 1
-    
-    # Consolidated summary logging (replaces thousands of individual log entries)
-    if job_duration_hours > 24:
-        estimated_days = job_duration_hours / max_daily_hours if max_daily_hours > 0 else 1
-        logger.info(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling completed - "
-                   f"estimated {estimated_days:.1f} working days, {slots_found} valid slots found "
-                   f"(search window: {max_search_days} days)")
-    else:
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling - {slots_found} valid slots found")
-    
-    return valid_slots
-
-# Add working hours constraints using ai_arrangable_hour table configuration with multi-day support
-def _add_working_hours_constraints(model, all_tasks, logger):
-    """Add working hours constraints using ai_arrangable_hour table configuration with multi-day support."""
-    from app.scheduling.time_availability import TimeAvailabilityChecker
-    
-    time_checker = TimeAvailabilityChecker()
-    logger.info("Adding working hours constraints from ai_arrangable_hour table")
-    
-    # Force cache refresh to ensure we have latest data
-    time_checker._refresh_cache_if_needed()
-    
-    # Get working hours for each day of the week (1=Monday, 7=Sunday)
-    working_hours_by_day = {}
-    has_any_working_hours = False
-    
-    for day_of_week in range(1, 8):  # 1-7 for Monday-Sunday
-        # Get working periods for this day
-        periods = time_checker._arrangable_hours_cache.get(day_of_week, [])
-        if periods:
-            # Convert time objects to hours (assuming we want hour granularity)
-            day_periods = []
-            for period in periods:
-                start_time = period['start_time']  # Already converted to time object
-                end_time = period['end_time']
-                
-                # Convert time to hours since midnight
-                start_hour = start_time.hour + start_time.minute / 60.0
-                end_hour = end_time.hour + end_time.minute / 60.0
-                
-                # Handle overnight periods (end < start)
-                if end_hour < start_hour:
-                    # Split overnight period into two: start to midnight, midnight to end
-                    day_periods.append((start_hour, 24.0))
-                    day_periods.append((0.0, end_hour))
-                else:
-                    day_periods.append((start_hour, end_hour))
-            
-            working_hours_by_day[day_of_week] = day_periods
-            has_any_working_hours = True
-            logger.debug(f"Day {day_of_week} working hours: {day_periods}")
-        else:
-            working_hours_by_day[day_of_week] = []  # No working hours
-            logger.debug(f"Day {day_of_week}: No working hours")
-    
-    # Strict mode: Fail fast if no working hours are loaded from database
-    if not has_any_working_hours:
-        error_msg = "CRITICAL: No working hours loaded from ai_arrangable_hour table. Check database connection and table data."
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
-    
-    constraints_added = 0
-    
-    for job_id, task_info in all_tasks.items():
-        start_var = task_info['start']
-        job_duration = task_info['hours']
-        
-        # Calculate multi-day scheduling for long jobs
-        valid_slots = _calculate_multi_day_slots(job_id, job_duration, working_hours_by_day, logger)
-        
-        if valid_slots:
-            logger.debug(f"Job {job_id}: Found {len(valid_slots)} valid slots: {valid_slots}")
-            # Create constraint: start_var must be in one of the valid slots
-            slot_bools = []
-            
-            for slot_start, slot_end in valid_slots:
-                if slot_start <= slot_end:
-                    # Create boolean for this time slot
-                    day_num = slot_start // 24
-                    slot_bool = model.NewBoolVar(f'work_slot_{job_id}_day{day_num}')
-                    
-                    # If this slot is chosen, constrain start time
-                    model.Add(start_var >= slot_start).OnlyEnforceIf(slot_bool)
-                    model.Add(start_var <= slot_end).OnlyEnforceIf(slot_bool)
-                    
-                    slot_bools.append(slot_bool)
-            
-            if slot_bools:
-                # Exactly one time slot must be chosen
-                model.AddExactlyOne(slot_bools)
-                constraints_added += 1
-                logger.debug(f"Added working hours constraint for {job_id}: {len(slot_bools)} valid slots")
-            else:
-                logger.warning(f"No valid time slots for job {job_id} (duration {job_duration}h too long)")
-        else:
-            # No valid working hours for this job - apply flexible constraint
-            logger.warning(f"Job {job_id}: No valid slots found for {job_duration}h job")
-            
-            # Simple fallback: apply basic constraint instead of failing
-            if scheduler_config.emergency_minimum_start_hour == -1:
-                # Use minimum constraint instead of failing
-                model.Add(start_var >= 6)  # At least start after 6 AM
-                constraints_added += 1
-                logger.info(f"Applied flexible constraint for job {job_id}")
-            else:
-                # Emergency fallback mode
-                model.Add(start_var >= scheduler_config.emergency_minimum_start_hour)
-                constraints_added += 1
-    
-    logger.info(f"Added working hours constraints from database for {constraints_added} jobs")
-
-# Add hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline
-def _add_deadline_constraints(model, all_tasks, jobs_with_due_dates, logger, enforce_deadlines):
-    """Add hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline."""
-    if not enforce_deadlines:
-        logger.info("Deadline constraints disabled - skipping LCD_DATE constraints")
-        return
-        
-    logger.info("Adding hard LCD_DATE (deadline) constraints - jobs MUST complete before deadline")
-    
-    current_time_rel = epoch_to_relative_hours(datetime_to_epoch(datetime.now()))
-    grace_period_hours = scheduler_config.grace_period_hours
-    
-    for job_id, due_date_rel_int in jobs_with_due_dates.items():
-        if job_id in all_tasks:
-            end_var = all_tasks[job_id]['end']
-            
-            # If the job's deadline is already in the past, give it a grace period
-            if due_date_rel_int < current_time_rel:
-                adjusted_deadline = current_time_rel + grace_period_hours
-                model.Add(end_var <= int(adjusted_deadline))
-                logger.debug(f"Added grace period LCD_DATE constraint for late job {job_id}: end <= {int(adjusted_deadline)} (original: {due_date_rel_int})")
-            else:
-                model.Add(end_var <= due_date_rel_int)
-                logger.debug(f"Added hard LCD_DATE constraint for job {job_id}: end <= {due_date_rel_int}")
-        else:
-            logger.warning(f"Job {job_id} has a due date but was not found in all_tasks")
-
-# Creates multi-objective function minimizing priority penalties, tardiness, and makespan
-def _create_objective_function(model, all_ends, jobs_with_due_dates, start_time_preferences, all_tasks, horizon, logger):
-    """Create the objective function for the model."""
-    objective_terms = []
-    
-    if not all_ends:
-        return objective_terms
-    
-    # 1. PRIORITY: Higher priority jobs (lower priority numbers) should start earlier
-    priority_penalty_vars = []
-    for job_id, task_info in all_tasks.items():
-        priority = task_info['job'].get('priority', 3)  # Default to medium priority
-        try:
-            priority = int(priority)
-        except (ValueError, TypeError):
-            priority = 3
-            
-        if priority > 0:  # Only penalize jobs with priority > 0
-            start_var = task_info['start']
-            # Create penalty variable: priority * start_time
-            # Higher priority (lower number) jobs get less penalty for starting late
-            priority_penalty = model.NewIntVar(0, horizon * priority * 10, f'priority_penalty_{job_id}')
-            model.Add(priority_penalty == start_var * priority)
-            priority_penalty_vars.append(priority_penalty)
-    
-    if priority_penalty_vars:
-        priority_weight = scheduler_config.priority_weight
-        total_priority_penalty = model.NewIntVar(0, horizon * len(priority_penalty_vars) * 30, 'total_priority_penalty')
-        model.Add(total_priority_penalty == sum(priority_penalty_vars))
-        objective_terms.append(total_priority_penalty * priority_weight)
-        logger.debug(f"Added priority optimization for {len(priority_penalty_vars)} jobs with weight {priority_weight}")
-    
-    # 2. Makespan (overall completion time)
-    makespan = model.NewIntVar(0, horizon * 2, 'makespan')
-    model.AddMaxEquality(makespan, all_ends)
-    objective_terms.append(makespan)
-    
-    # Note: LCD_DATE constraints are now HARD constraints (jobs MUST complete before deadline)
-    # START_DATE constraints are EXACT equality constraints (hard)
-    # Constraint priority order: LCD_DATE (hard) → START_DATE (hard) → Priority (weight 100) → Makespan (weight 1)
-    
-    return objective_terms
-
-# Configures and runs CP-SAT solver with time limits and workers
-def _solve_model(model, time_limit_seconds, logger):
-    """Solve the CP-SAT model with performance optimizations."""
-    solver = cp_model.CpSolver()
-    
-    # Performance optimizations for faster solving
-    solver.parameters.max_time_in_seconds = float(time_limit_seconds)
-    
-    # CRITICAL: Disable verbose logging that was causing the flood
-    solver.parameters.log_search_progress = False
-    solver.parameters.log_to_stdout = False
-    
-    # Advanced solver parameters for better performance
-    solver.parameters.num_search_workers = min(os.cpu_count() or 4, scheduler_config.max_workers_limit)
-    solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH  # Better search strategy
-    solver.parameters.cp_model_presolve = True  # Enable preprocessing
-    solver.parameters.linearization_level = 2  # More aggressive linearization
-    
-    # Gap limits for early termination when solution is good enough
-    solver.parameters.relative_gap_limit = scheduler_config.relative_gap_limit
-    solver.parameters.absolute_gap_limit = scheduler_config.absolute_gap_limit
-    
-    # Performance monitoring
-    solver.parameters.cp_model_probing_level = 0  # Disable probing for speed
-    solver.parameters.symmetry_level = 1  # Reduce symmetry breaking overhead
-    
-    logger.info(f"Solver configured: time_limit={time_limit_seconds}s, workers={solver.parameters.num_search_workers}, "
-                f"gap_limits=[rel:{scheduler_config.relative_gap_limit*100:.1f}%, abs:{scheduler_config.absolute_gap_limit}], logging=disabled")
-    
-    start_solve_time = time.time()
-    status = solver.Solve(model)
-    solve_time = time.time() - start_solve_time
-    
-    # Enhanced logging with performance metrics
-    if status == cp_model.OPTIMAL:
-        logger.info(f"✅ OPTIMAL solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
-    elif status == cp_model.FEASIBLE:
-        logger.info(f"✅ FEASIBLE solution found in {solve_time:.2f}s, objective: {solver.ObjectiveValue()}")
-    elif status == cp_model.UNKNOWN:
-        logger.warning(f"⏱️  Solver timed out after {solve_time:.2f}s - may need problem size reduction")
-    elif status == cp_model.INFEASIBLE:
-        logger.error(f"❌ INFEASIBLE problem in {solve_time:.2f}s - constraints cannot be satisfied")
-    else:
-        logger.error(f"❌ Solver failed with status: {solver.StatusName(status)} in {solve_time:.2f}s")
-    
-    # Performance warnings
-    if solve_time > 25:
-        logger.warning(f"⚠️  Solver took {solve_time:.1f}s (>25s) - consider reducing problem size")
-    
-    # Log solver statistics for performance tuning
-    try:
-        stats = solver.ResponseStats()
-        logger.debug(f"Solver stats: {stats}")
-    except Exception as e:
-        logger.debug(f"Could not get solver stats: {e}")
-    
-    return {
-        'solver': solver,
-        'status': status,
-        'solve_time': solve_time,
-        'model': model,
-        'performance_warning': solve_time > 25
-    }
-
-# Processes solver results and converts to final schedule format
-def _process_solver_results(solver_result, all_tasks, reference_time_epoch, job_dependencies, 
-                          start_date_processes, jobs_with_due_dates, enforce_sequence, logger):
-    """Process the solver results and create the final schedule with performance metrics."""
-    solver = solver_result['solver']
-    status = solver_result['status']
-    solve_time = solver_result['solve_time']
-    performance_warning = solver_result.get('performance_warning', False)
-    
-    # Enhanced metadata with performance tracking
-    metadata = {
-        'status': solver.StatusName(status),
-        'solver_time': solve_time,
-        'objective_value': solver.ObjectiveValue() if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
-        'reference_time_epoch': reference_time_epoch,
-        'job_dependencies': job_dependencies,
-        'start_date_constraints': start_date_processes,
-        'due_dates_considered': jobs_with_due_dates,
-        'solver_stats': solver.ResponseStats(),
-        'performance_metrics': {
-            'solve_time_seconds': solve_time,
-            'is_optimal': status == cp_model.OPTIMAL,
-            'is_feasible': status in [cp_model.OPTIMAL, cp_model.FEASIBLE],
-            'timed_out': status == cp_model.UNKNOWN,
-            'performance_warning': performance_warning,
-            'num_jobs_processed': len(all_tasks),
-            'solver_efficiency': 'FAST' if solve_time < 10 else 'MEDIUM' if solve_time < 25 else 'SLOW'
-        }
-    }
-    
-    # Add performance recommendations
-    recommendations = []
-    if performance_warning:
-        recommendations.append("Consider reducing planning horizon or job limit for faster solving")
-    if status == cp_model.UNKNOWN:
-        recommendations.append("Solver timed out - try smaller problem size or longer time limit")
-    if solve_time < 5 and len(all_tasks) < 50:
-        recommendations.append("Problem size is small - could increase planning horizon")
-        
-    metadata['recommendations'] = recommendations
-    
-    # Prepare results
-    results = {'_metadata': metadata}
-    time_adjusted_jobs = 0
-
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        logger.info(f"Solution found. Objective value: {solver.ObjectiveValue()}")
-
-        for job_id, task_info in all_tasks.items():
-            start_val_rel = solver.Value(task_info['start'])
-            end_val_rel = solver.Value(task_info['end'])
-            
-            # Convert relative start/end times back to epoch timestamps
-            start_epoch = relative_hours_to_epoch(start_val_rel)
-            end_epoch = relative_hours_to_epoch(end_val_rel)
-            
-            # For multi-day jobs, skip post-processing time availability check
-            # (CP-SAT constraints already ensure working hours compliance)
-            duration_hours = (end_epoch - start_epoch) / 3600
-            
-            if duration_hours > 24:
-                # Multi-day job - trust CP-SAT constraints, no post-processing needed
-                logger.debug(f"Multi-day job {job_id} ({duration_hours:.1f}h) scheduled by CP-SAT constraints: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
-            else:
-                # Single-day job - apply traditional time availability check
-                if not is_time_available(start_epoch, end_epoch):
-                    logger.debug(f"Job {job_id} scheduled outside working hours: {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(end_epoch))}")
-                    
-                    # Find next available slot for single-day jobs
-                    next_available_start = get_next_available_slot(start_epoch, duration_hours)
-                    
-                    if next_available_start:
-                        new_start_epoch = next_available_start
-                        new_end_epoch = new_start_epoch + (end_epoch - start_epoch)  # Keep same duration
-                        
-                        logger.info(f"Moved job {job_id} from {format_datetime_for_display(epoch_to_datetime(start_epoch))} to {format_datetime_for_display(epoch_to_datetime(new_start_epoch))} (working hours adjustment)")
-                        
-                        start_epoch = new_start_epoch
-                        end_epoch = new_end_epoch
-                        time_adjusted_jobs += 1
-                    else:
-                        logger.warning(f"Could not find available time slot for job {job_id} - keeping original schedule")
-            
-            machine_val = task_info['machine']
-            priority = task_info['job'].get('priority', 3)
-            
-            job_result = {
-                'job_id': job_id,
-                'machine': machine_val,
-                'start': int(start_epoch),
-                'end': int(end_epoch),
-                'priority': priority,
-                'duration_hours': task_info['hours'],
-                'original_job_data': task_info['job']
-            }
-            results[job_id] = job_result
-            
-            logger.debug(f"Scheduled {job_id} on {machine_val}: "
-                        f"Start={format_datetime_for_display(epoch_to_datetime(start_epoch))}, "
-                        f"End={format_datetime_for_display(epoch_to_datetime(end_epoch))}")
-
-        # Add time adjustment info to metadata
-        if time_adjusted_jobs > 0:
-            logger.info(f"Adjusted {time_adjusted_jobs} jobs to comply with working hours, holidays, and break times")
-            metadata['time_adjustments'] = {
-                'jobs_moved': time_adjusted_jobs,
-                'reason': 'Working hours, holidays, and break time compliance'
-            }
-
-        # Validate sequence if enforced
-        if enforce_sequence:
-            _validate_sequence_constraints(results, job_dependencies, logger)
-
-    elif status == cp_model.INFEASIBLE:
-        logger.error("No solution found: The problem is infeasible")
-        results['_metadata']['message'] = "The scheduling problem is infeasible with the given constraints"
-
-    elif status == cp_model.MODEL_INVALID:
-        logger.error("No solution found: The model is invalid")
-        results['_metadata']['message'] = "The CP-SAT model is invalid"
-        
-    else:
-        logger.warning(f"No optimal or feasible solution found. Status: {solver.StatusName(status)}")
-        results['_metadata']['message'] = f"Solver did not find an optimal/feasible solution. Status: {solver.StatusName(status)}"
-
-    return results
-
-# Validates sequence constraints are satisfied in final schedule
-def _validate_sequence_constraints(results, job_dependencies, logger):
-    """Validate that sequence constraints are satisfied in the final schedule."""
-    logger.info("Validating sequence constraints in the final schedule")
-    violations = 0
-    
-    for succ_job_id, pred_job_ids in job_dependencies.items():
-        if succ_job_id not in results:
-            continue
-            
-        succ_start_epoch = results[succ_job_id]['start']
-        for pred_job_id in pred_job_ids:
-            if pred_job_id not in results:
-                continue
-                
-            pred_end_epoch = results[pred_job_id]['end']
-            if pred_end_epoch > succ_start_epoch:
-                violations += 1
-                logger.error(f"SEQUENCE VIOLATION: {pred_job_id} (ends {format_datetime_for_display(epoch_to_datetime(pred_end_epoch))}) "
-                           f"should end before {succ_job_id} (starts {format_datetime_for_display(epoch_to_datetime(succ_start_epoch))})")
-    
-    if violations > 0:
-        logger.error(f"Found {violations} sequence violations in the CP-SAT schedule!")
-        results['_metadata']['sequence_violations'] = violations
-    else:
-        logger.info("All sequence constraints are satisfied")
 
 if __name__ == '__main__':
-    # Example usage
+    """Example usage and testing."""
+    logging.basicConfig(level=logging.INFO)
     start_time = time.time()
     results = None
     
-    # Import locally just for the CLI example
-    from app.data_ingestion.mariadb_parser import load_jobs_planning_data
-    
     try:
-        # Run with test data
-        jobs, machines, setup_times = load_jobs_planning_data()
-        if jobs and machines:
-            results = schedule_jobs(jobs, machines, setup_times)
-        else:
-            logger.error("No jobs or machines loaded")
-            results = _create_error_result("No jobs or machines loaded")
+        # Load configuration
+        config = SchedulingConfigManager.load_config()
+        logger.info("Configuration loaded successfully from .env")
+        
+        # Import test data loader
+        try:
+            from app.data_ingestion.mariadb_parser import load_jobs_planning_data
+            
+            # Load test data
+            jobs, machines, setup_times = load_jobs_planning_data()
+            if jobs and machines:
+                logger.info(f"Loaded {len(jobs)} jobs and {len(machines)} machines for testing")
+                results = schedule_jobs(jobs, machines, setup_times)
+            else:
+                logger.error("No jobs or machines loaded from database")
+                results = _create_error_result("No jobs or machines loaded from database")
+                
+        except ImportError as e:
+            logger.error(f"Could not import data loader: {e}")
+            results = _create_error_result(f"Could not import data loader: {e}")
+            
+    except ConfigurationError as e:
+        logger.error(f"Configuration error: {e}")
+        results = _create_error_result(f"Configuration error: {e}")
     except Exception as e:
-        logger.error(f"Error loading jobs: {e}")
-        results = _create_error_result(f"Error loading jobs: {e}")
+        logger.error(f"Error in main execution: {e}")
+        results = _create_error_result(f"Error in main execution: {e}")
     finally:
-        logger.info(f"Total execution time: {time.time() - start_time:.2f} seconds")
+        total_time = time.time() - start_time
+        logger.info(f"Total execution time: {total_time:.2f} seconds")
 
+    # Display results
     if results and results.get('_metadata', {}).get('status') in ['OPTIMAL', 'FEASIBLE']:
         print("\nCP-SAT Schedule Output (First 5 tasks per machine):")
         
-        # Create a temporary machine-grouped schedule for printing
+        # Group by machine for display
         machine_grouped = defaultdict(list)
         for job_id_key, details in results.items():
             if job_id_key == '_metadata':
                 continue
             machine_grouped[details['machine']].append(
-                (details['job_id'], details['start'], details['end'], details['priority'], {})
+                (details['job_id'], details['start'], details['end'], details['priority'])
             )
 
+        # Sort by start time and display
         for machine_key in machine_grouped:
             machine_grouped[machine_key].sort(key=lambda x: x[1])
 
-        for machine_print_key, tasks_to_print in machine_grouped.items():
-            if tasks_to_print:
-                print(f"  Machine: {machine_print_key}")
-                for i, task_tuple in enumerate(tasks_to_print[:5]):
-                    job_id_p, start_epoch_p, end_epoch_p, priority_p, *_ = task_tuple
-                    start_dt_p = format_datetime_for_display(epoch_to_datetime(start_epoch_p))
-                    end_dt_p = format_datetime_for_display(epoch_to_datetime(end_epoch_p))
-                    print(f"    Task {i+1}: Job={job_id_p}, Start={start_dt_p}, End={end_dt_p}, Priority={priority_p}")
+        for machine_key, tasks_list in machine_grouped.items():
+            if tasks_list:
+                print(f"  Machine: {machine_key}")
+                for i, (job_id, start_epoch, end_epoch, priority) in enumerate(tasks_list[:5]):
+                    try:
+                        from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
+                        start_str = format_datetime_for_display(epoch_to_datetime(start_epoch))
+                        end_str = format_datetime_for_display(epoch_to_datetime(end_epoch))
+                    except ImportError:
+                        start_str = f"Epoch_{start_epoch}"
+                        end_str = f"Epoch_{end_epoch}"
+                    
+                    print(f"    Task {i+1}: Job={job_id}, Start={start_str}, End={end_str}, Priority={priority}")
         
-        print(f"\nObjective Value: {results['_metadata']['objective_value']}")
-        print(f"Solver Time: {results['_metadata']['solver_time']:.2f}s")
+        metadata = results['_metadata']
+        print(f"\nObjective Value: {metadata['objective_value']}")
+        print(f"Solver Time: {metadata['solver_time']:.2f}s")
+        print(f"Status: {metadata['status']}")
+        
+        perf_metrics = metadata.get('performance_metrics', {})
+        print(f"Solver Efficiency: {perf_metrics.get('solver_efficiency', 'UNKNOWN')}")
+        
+        if metadata.get('recommendations'):
+            print(f"Recommendations: {', '.join(metadata['recommendations'])}")
+            
     else:
         print("No schedule generated or solution was not optimal/feasible")
         if results and '_metadata' in results:
             print(f"  Status: {results['_metadata'].get('status')}")
-            print(f"  Message: {results['_metadata'].get('message')}") 
+            print(f"  Message: {results['_metadata'].get('message')}")

@@ -42,9 +42,11 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
         
         try:
             batch_size = int(batch_size_env)
-        except ValueError:
-            logger.error(f"❌ INVALID CPSAT_BATCH_SIZE: Cannot convert '{batch_size_env}' to integer")
-            return {"_metadata": {"total_scheduled": 0, "message": "Invalid CPSAT_BATCH_SIZE configuration"}}
+            if batch_size <= 0:
+                raise ValueError("CPSAT_BATCH_SIZE must be positive")
+        except ValueError as e:
+            logger.error(f"❌ INVALID CPSAT_BATCH_SIZE: {e}")
+            return {"_metadata": {"total_scheduled": 0, "message": f"Invalid CPSAT_BATCH_SIZE configuration: {e}"}}
     
     # Split large job sets into smaller batches for CP-SAT solver
     logger.info(f"BATCH SCHEDULER: Processing {len(jobs)} jobs in batches of {batch_size}")
@@ -65,38 +67,64 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
         
         logger.debug(f"Processing batch {batch_num + 1}/{total_batches}: Jobs {start_idx+1}-{end_idx}")
         
-        # Schedule batch
+        # Schedule batch with proper error handling
         try:
+            # Get environment variables with validation
+            solver_time_limit = os.getenv('SOLVER_TIME_LIMIT_SECONDS')
+            planning_horizon = os.getenv('PLANNING_HORIZON_DAYS')
+            
+            if not solver_time_limit:
+                logger.error("❌ MISSING SOLVER_TIME_LIMIT_SECONDS in .env")
+                continue
+            if not planning_horizon:
+                logger.error("❌ MISSING PLANNING_HORIZON_DAYS in .env")
+                continue
+                
             batch_result = schedule_jobs(
                 batch_jobs,
                 machines,
                 setup_times,
-                time_limit_seconds=int(os.getenv('SOLVER_TIME_LIMIT_SECONDS')),
+                time_limit_seconds=int(solver_time_limit),
                 max_jobs=len(batch_jobs),
-                planning_horizon_days=int(os.getenv('PLANNING_HORIZON_DAYS'))
+                planning_horizon_days=int(planning_horizon)
             )
             
             scheduled_in_batch = 0
             
             if batch_result and isinstance(batch_result, dict):
-                # Convert CP-SAT format to our format
-                for machine, job_tuples in batch_result.items():
-                    for job_tuple in job_tuples:
-                        if len(job_tuple) >= 3:
-                            job_id = job_tuple[0]
-                            start_time_epoch = job_tuple[1]
-                            end_time_epoch = job_tuple[2]
-                            
-                            # Find original job data
-                            original_job = next((j for j in batch_jobs if j.get('job_id') == job_id), None)
-                            if original_job:
-                                all_scheduled_jobs[job_id] = {
-                                    'machine': machine,
-                                    'start': start_time_epoch,
-                                    'end': end_time_epoch,
-                                    'original_job': original_job
-                                }
-                                scheduled_in_batch += 1
+                # Handle new CP-SAT format: job_id -> {machine, start, end, ...}
+                for job_id, job_data in batch_result.items():
+                    if job_id == '_metadata':
+                        continue
+                        
+                    if isinstance(job_data, dict) and 'machine' in job_data:
+                        # New format: direct job data
+                        original_job = next((j for j in batch_jobs if j.get('job_id') == job_id), None)
+                        if original_job:
+                            all_scheduled_jobs[job_id] = {
+                                'machine': job_data['machine'],
+                                'start': job_data['start'],
+                                'end': job_data['end'],
+                                'original_job': original_job
+                            }
+                            scheduled_in_batch += 1
+                    elif isinstance(job_data, list):
+                        # Old format: machine -> [(job_id, start, end), ...]
+                        for job_tuple in job_data:
+                            if len(job_tuple) >= 3:
+                                tuple_job_id = job_tuple[0]
+                                start_time_epoch = job_tuple[1]
+                                end_time_epoch = job_tuple[2]
+                                
+                                original_job = next((j for j in batch_jobs if j.get('job_id') == tuple_job_id), None)
+                                if original_job:
+                                    all_scheduled_jobs[tuple_job_id] = {
+                                        'machine': job_id,  # job_id is actually machine name in old format
+                                        'start': start_time_epoch,
+                                        'end': end_time_epoch,
+                                        'original_job': original_job
+                                    }
+                                    scheduled_in_batch += 1
                 
                 if scheduled_in_batch > 0:
                     successful_batches += 1
@@ -153,7 +181,21 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
 
     # Strategy 1: Regular batch processing with smaller batches  
     logger.info("Strategy 1: Regular batch processing")
-    batch_size = int(os.getenv('BATCH_SIZE'))
+    
+    # FIXED: Use CPSAT_BATCH_SIZE instead of BATCH_SIZE
+    batch_size_env = os.getenv('CPSAT_BATCH_SIZE')
+    if not batch_size_env:
+        logger.error("❌ MISSING CPSAT_BATCH_SIZE: CPSAT_BATCH_SIZE not set in .env")
+        return {"_metadata": {"total_scheduled": 0, "message": "Missing CPSAT_BATCH_SIZE configuration"}}
+    
+    try:
+        batch_size = int(batch_size_env)
+        if batch_size <= 0:
+            raise ValueError("CPSAT_BATCH_SIZE must be positive")
+    except ValueError as e:
+        logger.error(f"❌ INVALID CPSAT_BATCH_SIZE: {e}")
+        return {"_metadata": {"total_scheduled": 0, "message": f"Invalid CPSAT_BATCH_SIZE configuration: {e}"}}
+    
     batch_result = batch_schedule_jobs(jobs, machines, setup_times, batch_size=batch_size)
     
     # Extract scheduled jobs from batch result
@@ -168,36 +210,68 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
     unscheduled_jobs = [job for job in jobs if job.get('job_id', '') not in all_scheduled_jobs]
     logger.info(f"Strategy 2: Single job fallback for {len(unscheduled_jobs)} remaining jobs")
     
-    for i, job in enumerate(unscheduled_jobs[:100]):  # Limit to prevent infinite processing
+    # Get environment variables with validation for Strategy 2
+    solver_time_limit_env = os.getenv('SOLVER_TIME_LIMIT_SECONDS')
+    planning_horizon_env = os.getenv('PLANNING_HORIZON_DAYS')
+    
+    if not solver_time_limit_env:
+        logger.error("❌ MISSING SOLVER_TIME_LIMIT_SECONDS for Strategy 2")
+    elif not planning_horizon_env:
+        logger.error("❌ MISSING PLANNING_HORIZON_DAYS for Strategy 2")
+    else:
         try:
-            # Use CP-SAT for single job scheduling with working hours constraints
-            single_job_result = schedule_jobs([job], machines, setup_times, 
-                                            time_limit_seconds=int(os.getenv('SOLVER_TIME_LIMIT_SECONDS')),
-                                            max_jobs=1, 
-                                            planning_horizon_days=int(os.getenv('PLANNING_HORIZON_DAYS')))
+            solver_time_limit = int(solver_time_limit_env)
+            planning_horizon = int(planning_horizon_env)
             
-            if single_job_result and isinstance(single_job_result, dict):
-                # Convert CP-SAT format to our format
-                for machine, job_tuples in single_job_result.items():
-                    for job_tuple in job_tuples:
-                        if len(job_tuple) >= 3:
-                            job_id = job_tuple[0]
-                            start_time_epoch = job_tuple[1]
-                            end_time_epoch = job_tuple[2]
-                            
-                            if job_id not in all_scheduled_jobs:
-                                all_scheduled_jobs[job_id] = {
-                                    'machine': machine,
-                                    'start': start_time_epoch,
-                                    'end': end_time_epoch,
-                                    'original_job': job
-                                }
-                                total_scheduled += 1
-                                break
-            
-        except Exception as e:
-            logger.debug(f"Single job scheduling failed for {job.get('job_id', 'unknown')}: {e}")
-            continue
+            for i, job in enumerate(unscheduled_jobs[:100]):  # Limit to prevent infinite processing
+                try:
+                    # Use CP-SAT for single job scheduling with working hours constraints
+                    single_job_result = schedule_jobs([job], machines, setup_times, 
+                                                    time_limit_seconds=solver_time_limit,
+                                                    max_jobs=1, 
+                                                    planning_horizon_days=planning_horizon)
+                    
+                    if single_job_result and isinstance(single_job_result, dict):
+                        # Handle new CP-SAT format: job_id -> {machine, start, end, ...}
+                        for result_job_id, job_data in single_job_result.items():
+                            if result_job_id == '_metadata':
+                                continue
+                                
+                            if isinstance(job_data, dict) and 'machine' in job_data:
+                                # New format: direct job data
+                                if result_job_id not in all_scheduled_jobs:
+                                    all_scheduled_jobs[result_job_id] = {
+                                        'machine': job_data['machine'],
+                                        'start': job_data['start'],
+                                        'end': job_data['end'],
+                                        'original_job': job
+                                    }
+                                    total_scheduled += 1
+                                    break
+                            elif isinstance(job_data, list):
+                                # Old format: machine -> [(job_id, start, end), ...]
+                                for job_tuple in job_data:
+                                    if len(job_tuple) >= 3:
+                                        tuple_job_id = job_tuple[0]
+                                        start_time_epoch = job_tuple[1]
+                                        end_time_epoch = job_tuple[2]
+                                        
+                                        if tuple_job_id not in all_scheduled_jobs:
+                                            all_scheduled_jobs[tuple_job_id] = {
+                                                'machine': result_job_id,  # result_job_id is machine name in old format
+                                                'start': start_time_epoch,
+                                                'end': end_time_epoch,
+                                                'original_job': job
+                                            }
+                                            total_scheduled += 1
+                                            break
+                    
+                except Exception as e:
+                    logger.debug(f"Single job scheduling failed for {job.get('job_id', 'unknown')}: {e}")
+                    continue
+                    
+        except ValueError as e:
+            logger.error(f"❌ INVALID environment variables for Strategy 2: {e}")
     
     logger.info(f"Strategy 2 completed: {total_scheduled} total jobs scheduled")
     
@@ -216,4 +290,4 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
         'message': f"Successfully scheduled {total_scheduled} out of {len(jobs)} jobs using multi-strategy approach"
     }
     
-    return all_scheduled_jobs 
+    return all_scheduled_jobs

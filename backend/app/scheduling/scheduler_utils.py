@@ -1,190 +1,254 @@
-# Helper functions for scheduling 
+"""
+scheduler_utils.py - PRODUCTION GRADE VERSION
+Helper functions for scheduling with optimized performance and error handling
+"""
 
 import logging
 import re
-from typing import Dict, List, Tuple, Any, Optional, Union
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
-def extract_process_number(job_id: str) -> int:
-    """
-    Extract the process sequence number from the format (e.g., 1 from '1/4' in 'CP08-342-1/4') or return 999 if not found.
-    We only care about the sequence number (before the /) and ignore the total count (after the /).
-    job_id is in the format job_process_code where process_code ends with 'number/total'.
-    
-    Args:
-        job_id: The job identifier string
-        
-    Returns:
-        Process sequence number or 999 if parsing fails
-    """
-    # Parse sequence number from job ID (P01, P02, etc.)
-    if not isinstance(job_id, str):
-        logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
-        return 999
-        
-    try:
-        process_code = job_id.split('_', 1)[1]  # Split on first underscore to get PROCESS_CODE
-    except IndexError:
-        logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
-        return 999
+# Compiled regex patterns for performance
+PROCESS_PATTERN = re.compile(r'(\d+)/\d+$')
+FAMILY_PATTERN = re.compile(r'(.*?)-\d+/\d+$')
+FAMILY_SPLIT_PATTERN = re.compile(r'-\d+/\d+$')
 
-    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3", "11/6")
-    # We only care about the sequence number (11) and ignore the total (6)
-    match = re.search(r'(\d+)/\d+$', str(process_code))
-    if match:
-        seq = int(match.group(1))
-        logger.debug(f"Extracted sequence number {seq} from job_id {job_id} (ignoring total count)")
-        return seq
-        
-    return 999  # Default if parsing fails
 
-def extract_total_processes(job_id: str) -> int:
-    """
-    Extract the total number of processes from the new format (e.g., 4 from '1/4' in 'CP08-342-1/4') or return 1 if not found.
-    NOTE: This function is not used for dependency logic. The scheduler ignores total counts and only uses sequence numbers.
-    
-    Args:
-        job_id: The job identifier string
-        
-    Returns:
-        Total number of processes or 1 if parsing fails
-    """
-    # Extract total process count from job ID format (not used for dependencies)
-    if not isinstance(job_id, str):
-        logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
-        return 1
-        
-    try:
-        process_code = job_id.split('_', 1)[1]  # Split on first underscore to get PROCESS_CODE
-    except IndexError:
-        logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
-        return 1
+class SchedulerUtilsError(Exception):
+    """Base exception for scheduler utilities errors."""
+    pass
 
-    # Look for pattern "number/total" at the end (e.g., "1/4", "2/3")
-    match = re.search(r'\d+/(\d+)$', str(process_code))
-    if match:
-        total = int(match.group(1))
-        return total
-        
-    return 1  # Default if parsing fails
 
-def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
-    """
-    Extract the job family from the job_id using the new format (e.g., 'CP33-333' from 'JOST333333_CP33-333-1/4').
-    If job_id_suffix is provided, it will be included in the family to distinguish between
-    different jobs that share the same process code pattern.
-    job_id is in the format PREFIX_FAMILY-PROCESS where PROCESS is 'number/total'.
-    
-    Args:
-        job_id: The job identifier string
-        job_id_suffix: Optional suffix to append to family name
-        
-    Returns:
-        Job family string
-    """
-    # Extract family name from job ID for grouping related processes
-    if not isinstance(job_id, str):
-        logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
-        if job_id_suffix:
-            return f"{job_id}_{job_id_suffix}"
-        return str(job_id)
-        
-    try:
-        # Split on first underscore to get the part after the prefix
-        process_code = job_id.split('_', 1)[1] if '_' in job_id else job_id
-    except IndexError:
-        logger.warning(f"Could not extract process_code from job_id {job_id}")
-        if job_id_suffix:
-            return f"{job_id}_{job_id_suffix}"
-        return job_id
+class JobValidationError(SchedulerUtilsError):
+    """Exception for job validation errors."""
+    pass
 
-    process_code = str(process_code).upper()
-    
-    # Match everything up to the new format "-number/total"
-    match = re.search(r'(.*?)-\d+/\d+$', process_code)
-    if match:
-        family = match.group(1)
-        logger.debug(f"Extracted family {family} from {job_id}")
-        if job_id_suffix:
-            return f"{family}_{job_id_suffix}"
-        return family
-    
-    # If regex fails, try splitting on the new format pattern
-    if re.search(r'-\d+/\d+$', process_code):
-        parts = re.split(r'-\d+/\d+$', process_code)
-        if len(parts) >= 1:
-            family = parts[0]
-            logger.debug(f"Extracted family {family} from {job_id} (using split)")
-            if job_id_suffix:
-                return f"{family}_{job_id_suffix}"
-            return family
-    
-    logger.warning(f"Could not extract family from {job_id}, using full code")
-    if job_id_suffix:
-        return f"{process_code}_{job_id_suffix}"
-    return process_code
 
-def validate_job_data(job: Dict[str, Any]) -> bool:
-    """
-    Validate that a job dictionary has required fields and valid data types.
+@dataclass
+class JobMetrics:
+    """Container for job processing metrics."""
+    total_jobs: int
+    valid_jobs: int
+    invalid_jobs: int
+    processing_time_ms: float
+
+
+@dataclass
+class ScheduleMetrics:
+    """Container for schedule performance metrics."""
+    total_jobs: int
+    total_machines: int
+    makespan_hours: float
+    average_utilization: float
+    machine_utilization: Dict[str, float]
+    earliest_start: float
+    latest_end: float
+
+
+class ProcessExtractor:
+    """Optimized process number extraction with caching."""
     
-    Args:
-        job: Job dictionary to validate
+    _cache: Dict[str, int] = {}
+    
+    @classmethod
+    def extract_process_number(cls, job_id: str) -> int:
+        """
+        Extract process sequence number with caching for performance.
         
-    Returns:
-        True if job is valid, False otherwise
-    """
-    # Check job has required fields and valid data types
-    if not isinstance(job, dict):
-        logger.error(f"Job must be a dictionary, got {type(job)}")
-        return False
-        
-    # Check required fields
-    required_fields = ['job_id']
-    for field in required_fields:
-        if field not in job or job[field] is None:
-            logger.error(f"Job missing required field '{field}': {job}")
-            return False
+        Args:
+            job_id: Job identifier string
             
-    # Validate job_id
-    if not isinstance(job['job_id'], str) or not job['job_id'].strip():
-        logger.error(f"Invalid job_id: {job.get('job_id')}")
-        return False
+        Returns:
+            Process sequence number or 999 if parsing fails
+        """
+        if not isinstance(job_id, str):
+            logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
+            return 999
         
-    # Validate numeric fields if present
-    numeric_fields = ['hours_need', 'priority', 'processing_time', 'setup_time', 'break_time']
-    for field in numeric_fields:
-        if field in job and job[field] is not None:
-            try:
-                float(job[field])
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid numeric value for {field} in job {job['job_id']}: {job[field]}")
-                # Don't fail validation, just warn and let caller handle
-                
-    return True
+        # Check cache first
+        if job_id in cls._cache:
+            return cls._cache[job_id]
+        
+        try:
+            process_code = job_id.split('_', 1)[1]
+        except IndexError:
+            logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
+            cls._cache[job_id] = 999
+            return 999
+        
+        # Use compiled regex for performance
+        match = PROCESS_PATTERN.search(process_code)
+        if match:
+            seq = int(match.group(1))
+            cls._cache[job_id] = seq
+            logger.debug(f"Extracted sequence number {seq} from job_id {job_id}")
+            return seq
+        
+        cls._cache[job_id] = 999
+        return 999
+    
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the process number cache."""
+        cls._cache.clear()
 
-def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize job field names and data types for consistent processing.
+
+class FamilyExtractor:
+    """Optimized family extraction with caching."""
     
-    Args:
-        job: Job dictionary to normalize
-        
-    Returns:
-        Normalized job dictionary
-    """
-    # Standardize field names and data types across different input formats
-    if not isinstance(job, dict):
-        logger.error("Job must be a dictionary")
-        return {}
-        
-    # Create a copy to avoid modifying original
-    normalized_job = job.copy()
+    _cache: Dict[str, str] = {}
     
-    # Map uppercase fields to lowercase for consistency
-    field_mappings = {
+    @classmethod
+    def extract_job_family(cls, job_id: str, job_id_suffix: Optional[str] = None) -> str:
+        """
+        Extract job family with caching for performance.
+        
+        Args:
+            job_id: Job identifier string
+            job_id_suffix: Optional suffix to append
+            
+        Returns:
+            Job family string
+        """
+        if not isinstance(job_id, str):
+            logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
+            family = str(job_id)
+            return f"{family}_{job_id_suffix}" if job_id_suffix else family
+        
+        # Create cache key
+        cache_key = f"{job_id}|{job_id_suffix or ''}"
+        if cache_key in cls._cache:
+            return cls._cache[cache_key]
+        
+        try:
+            process_code = job_id.split('_', 1)[1] if '_' in job_id else job_id
+        except IndexError:
+            logger.warning(f"Could not extract process_code from job_id {job_id}")
+            family = job_id
+            result = f"{family}_{job_id_suffix}" if job_id_suffix else family
+            cls._cache[cache_key] = result
+            return result
+        
+        process_code = process_code.upper()
+        
+        # Use compiled regex for performance
+        match = FAMILY_PATTERN.search(process_code)
+        if match:
+            family = match.group(1)
+            logger.debug(f"Extracted family {family} from {job_id}")
+        else:
+            # Fallback to split method
+            if FAMILY_SPLIT_PATTERN.search(process_code):
+                parts = FAMILY_SPLIT_PATTERN.split(process_code)
+                family = parts[0] if parts else process_code
+                logger.debug(f"Extracted family {family} from {job_id} (using split)")
+            else:
+                logger.warning(f"Could not extract family from {job_id}, using full code")
+                family = process_code
+        
+        result = f"{family}_{job_id_suffix}" if job_id_suffix else family
+        cls._cache[cache_key] = result
+        return result
+    
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the family extraction cache."""
+        cls._cache.clear()
+
+
+class JobValidator:
+    """Optimized job validation with batch processing."""
+    
+    # Required fields for job validation
+    REQUIRED_FIELDS = {'job_id'}
+    
+    # Numeric fields that should be validated
+    NUMERIC_FIELDS = {
+        'hours_need', 'priority', 'processing_time', 'setup_time', 
+        'break_time', 'day_need', 'no_prod', 'job_quantity', 'expect_output_per_hour'
+    }
+    
+    @staticmethod
+    def validate_job_data(job: Dict[str, Any]) -> bool:
+        """
+        Optimized job validation.
+        
+        Args:
+            job: Job dictionary to validate
+            
+        Returns:
+            True if job is valid, False otherwise
+        """
+        if not isinstance(job, dict):
+            logger.error(f"Job must be a dictionary, got {type(job)}")
+            return False
+        
+        # Check required fields
+        for field in JobValidator.REQUIRED_FIELDS:
+            if field not in job or job[field] is None:
+                logger.error(f"Job missing required field '{field}': {job}")
+                return False
+        
+        # Validate job_id
+        job_id = job['job_id']
+        if not isinstance(job_id, str) or not job_id.strip():
+            logger.error(f"Invalid job_id: {job_id}")
+            return False
+        
+        # Validate numeric fields (non-blocking)
+        for field in JobValidator.NUMERIC_FIELDS:
+            if field in job and job[field] is not None:
+                try:
+                    float(job[field])
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid numeric value for {field} in job {job_id}: {job[field]}")
+        
+        return True
+    
+    @staticmethod
+    def validate_jobs_batch(jobs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], JobMetrics]:
+        """
+        Batch validate multiple jobs for performance.
+        
+        Args:
+            jobs: List of job dictionaries
+            
+        Returns:
+            Tuple of (valid_jobs, metrics)
+        """
+        import time
+        start_time = time.time()
+        
+        valid_jobs = []
+        invalid_count = 0
+        
+        for job in jobs:
+            if JobValidator.validate_job_data(job):
+                valid_jobs.append(job)
+            else:
+                invalid_count += 1
+        
+        processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        metrics = JobMetrics(
+            total_jobs=len(jobs),
+            valid_jobs=len(valid_jobs),
+            invalid_jobs=invalid_count,
+            processing_time_ms=processing_time
+        )
+        
+        logger.info(f"Batch validation: {len(valid_jobs)}/{len(jobs)} valid jobs in {processing_time:.2f}ms")
+        return valid_jobs, metrics
+
+
+class JobNormalizer:
+    """Optimized job field normalization."""
+    
+    # Field mappings for normalization
+    FIELD_MAPPINGS = {
         'JOB_ID': 'job_id',
         'RSC_CODE': 'MachineName_v',
         'HOURS_NEED': 'hours_need',
@@ -193,303 +257,395 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
         'PROCESSING_TIME': 'processing_time',
         'SETUP_TIME': 'setup_time',
         'BREAK_TIME': 'break_time',
-        'NO_PROD': 'no_prod'
+        'NO_PROD': 'no_prod',
+        'JOB_QUANTITY': 'job_quantity',
+        'EXPECT_OUTPUT_PER_HOUR': 'expect_output_per_hour'
     }
     
-    # Copy uppercase fields to lowercase if they exist and lowercase doesn't
-    for upper_field, lower_field in field_mappings.items():
-        if upper_field in normalized_job and lower_field not in normalized_job:
-            normalized_job[lower_field] = normalized_job[upper_field]
-            
-    # Normalize numeric fields
-    numeric_fields = ['hours_need', 'day_need', 'priority', 'processing_time', 'setup_time', 'break_time', 'no_prod']
-    for field in numeric_fields:
-        if field in normalized_job and normalized_job[field] is not None:
-            try:
-                normalized_job[field] = float(normalized_job[field])
-            except (ValueError, TypeError):
-                logger.warning(f"Could not convert {field} to float for job {normalized_job.get('job_id')}: {normalized_job[field]}")
-                
-    # Set default values for missing fields
-    defaults = {
+    # Default values for missing fields
+    DEFAULTS = {
         'priority': 3,
-        'day_need': None,  # Default to None so HOURS_NEED takes precedence
-        'processing_time': None,  # Will be calculated from hours_need/day_need
+        'day_need': None,
+        'processing_time': None,
         'setup_time': 0,
         'break_time': 0,
         'no_prod': 0
     }
     
-    for field, default_value in defaults.items():
-        if field not in normalized_job or normalized_job[field] is None:
-            normalized_job[field] = default_value
-    
-    # Check if hours_need is missing - no default, log error instead
-    if ('hours_need' not in normalized_job or normalized_job['hours_need'] is None or normalized_job['hours_need'] <= 0):
-        logger.error(f"❌ MISSING HOURS_NEED for job {normalized_job.get('job_id')} - unable to schedule without duration")
-        normalized_job['hours_need'] = None  # Mark as invalid
+    @staticmethod
+    def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Optimized job field normalization.
+        
+        Args:
+            job: Job dictionary to normalize
             
-    return normalized_job
+        Returns:
+            Normalized job dictionary
+        """
+        if not isinstance(job, dict):
+            logger.error("Job must be a dictionary")
+            return {}
+        
+        # Create normalized copy
+        normalized_job = job.copy()
+        
+        # Apply field mappings efficiently
+        for upper_field, lower_field in JobNormalizer.FIELD_MAPPINGS.items():
+            if upper_field in normalized_job and lower_field not in normalized_job:
+                normalized_job[lower_field] = normalized_job[upper_field]
+        
+        # Normalize numeric fields in batch
+        for field in JobValidator.NUMERIC_FIELDS:
+            if field in normalized_job and normalized_job[field] is not None:
+                try:
+                    normalized_job[field] = float(normalized_job[field])
+                except (ValueError, TypeError):
+                    job_id = normalized_job.get('job_id', 'Unknown')
+                    logger.warning(f"Could not convert {field} to float for job {job_id}: {normalized_job[field]}")
+        
+        # Apply defaults efficiently
+        for field, default_value in JobNormalizer.DEFAULTS.items():
+            if field not in normalized_job or normalized_job[field] is None:
+                normalized_job[field] = default_value
+        
+        # Validate hours_need requirement
+        hours_need = normalized_job.get('hours_need')
+        if not hours_need or hours_need <= 0:
+            job_id = normalized_job.get('job_id', 'Unknown')
+            logger.error(f"❌ MISSING HOURS_NEED for job {job_id} - unable to schedule without duration")
+            normalized_job['hours_need'] = None
+        
+        return normalized_job
+    
+    @staticmethod
+    def normalize_jobs_batch(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Batch normalize multiple jobs for performance.
+        
+        Args:
+            jobs: List of job dictionaries
+            
+        Returns:
+            List of normalized job dictionaries
+        """
+        return [JobNormalizer.normalize_job_fields(job) for job in jobs]
 
-def convert_cpsat_to_greedy_format(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[Tuple]]:
-    """
-    Convert the CP-SAT solver schedule format to the greedy scheduler format.
-    The format should be: {machine: [(job_id, start, end, priority, additional_params), ...]}
+
+class TimestampValidator:
+    """Optimized timestamp validation."""
     
-    Args:
-        cpsat_schedule: Either CP-SAT format {job_id: {'machine': str, 'start': int, 'end': int, ...}, '_metadata': {...}}
-                              or greedy format {machine: [(job_id, start, end, priority), ...]}
+    MIN_VALID_TIMESTAMP = 1000  # Minimum valid timestamp
     
-    Returns:
-        Schedule in format {machine: [(job_id, start, end, priority, additional_params), ...]}
-    """
-    # Convert CP-SAT output format to standardized greedy format
-    logger.info("Converting CP-SAT schedule format to greedy format")
+    @staticmethod
+    def is_valid_timestamp(timestamp: Any, job_id: str = "Unknown", 
+                          machine: str = "Unknown", field_name: str = "timestamp") -> bool:
+        """
+        Validate timestamp efficiently.
+        
+        Args:
+            timestamp: Value to validate
+            job_id: Job ID for logging
+            machine: Machine name for logging
+            field_name: Field name for logging
+            
+        Returns:
+            True if timestamp is valid, False otherwise
+        """
+        if not isinstance(timestamp, (int, float)):
+            logger.error(f"Invalid {field_name} type for job {job_id} on {machine}: {type(timestamp)}")
+            return False
+        
+        if timestamp < TimestampValidator.MIN_VALID_TIMESTAMP:
+            logger.error(f"Invalid {field_name}: {timestamp} for job {job_id} on {machine}. Value too small.")
+            return False
+        
+        return True
+
+
+class ScheduleConverter:
+    """Optimized schedule format conversion."""
     
-    if not isinstance(cpsat_schedule, dict):
-        logger.error(f"Schedule must be a dictionary, got {type(cpsat_schedule)}")
-        return {}
-    
-    # If it's already in the right format (no _metadata), convert tuples to 5-tuples if needed
-    if '_metadata' not in cpsat_schedule:
+    @staticmethod
+    def convert_cpsat_to_greedy_format(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[Tuple]]:
+        """
+        Optimized CP-SAT to greedy format conversion.
+        
+        Args:
+            cpsat_schedule: CP-SAT schedule dictionary
+            
+        Returns:
+            Greedy format schedule
+        """
+        logger.info("Converting CP-SAT schedule format to greedy format")
+        
+        if not isinstance(cpsat_schedule, dict):
+            logger.error(f"Schedule must be a dictionary, got {type(cpsat_schedule)}")
+            return {}
+        
+        # Fast path: already in greedy format
+        if '_metadata' not in cpsat_schedule:
+            return ScheduleConverter._normalize_greedy_format(cpsat_schedule)
+        
+        # Convert from CP-SAT format
         greedy_format = {}
-        for machine, tasks in cpsat_schedule.items():
+        processed_jobs = 0
+        
+        for job_id, details in cpsat_schedule.items():
+            if job_id == '_metadata':
+                continue
+            
+            if not isinstance(details, dict):
+                logger.warning(f"Invalid details format for job {job_id}: {details}")
+                continue
+            
+            # Extract required fields
+            machine = details.get('machine')
+            start = details.get('start')
+            end = details.get('end')
+            priority = details.get('priority', 3)
+            
+            if not all(x is not None for x in [machine, start, end]):
+                logger.warning(f"Missing fields for job {job_id}: machine={machine}, start={start}, end={end}")
+                continue
+            
+            # Validate timestamps
+            if not TimestampValidator.is_valid_timestamp(start, job_id, machine, "start"):
+                continue
+            if not TimestampValidator.is_valid_timestamp(end, job_id, machine, "end"):
+                continue
+            
+            # Add to schedule
+            if machine not in greedy_format:
+                greedy_format[machine] = []
+            
+            greedy_format[machine].append((job_id, start, end, priority, {}))
+            processed_jobs += 1
+        
+        logger.info(f"Converted CP-SAT schedule: {processed_jobs} tasks scheduled")
+        return greedy_format
+    
+    @staticmethod
+    def _normalize_greedy_format(schedule: Dict[str, List]) -> Dict[str, List[Tuple]]:
+        """Normalize greedy format to ensure 5-tuple structure."""
+        normalized = {}
+        
+        for machine, tasks in schedule.items():
             if not isinstance(tasks, list):
                 logger.warning(f"Tasks for machine {machine} must be a list, got {type(tasks)}")
                 continue
-                
-            greedy_format[machine] = []
+            
+            normalized[machine] = []
             for task in tasks:
                 if not isinstance(task, (tuple, list)) or len(task) < 3:
                     logger.warning(f"Invalid task format for machine {machine}: {task}")
                     continue
-                    
-                # Handle both 4-tuple and 5-tuple formats
-                if len(task) == 4:
-                    job_id, start, end, priority = task
-                    # Validate timestamps
-                    if not _is_valid_timestamp(start, job_id, machine, "start"):
-                        continue
-                    if not _is_valid_timestamp(end, job_id, machine, "end"):
-                        continue
-                    greedy_format[machine].append((job_id, start, end, priority, {}))
-                elif len(task) == 5:
-                    job_id, start, end, priority, params = task
-                    # Validate timestamps before appending
-                    if not _is_valid_timestamp(start, job_id, machine, "start"):
-                        continue
-                    if not _is_valid_timestamp(end, job_id, machine, "end"):
-                        continue
-                    greedy_format[machine].append(task)  # Already in correct format
-                else:
-                    logger.warning(f"Unexpected task format for machine {machine}: {task}")
-                    if len(task) >= 3:
-                        job_id, start, end = task[:3]
-                        priority = task[3] if len(task) > 3 else 3  # Default priority
-                        # Validate timestamps
-                        if not _is_valid_timestamp(start, job_id, machine, "start"):
-                            continue
-                        if not _is_valid_timestamp(end, job_id, machine, "end"):
-                            continue
-                        greedy_format[machine].append((job_id, start, end, priority, {}))
-                    else:
-                        continue
-        return greedy_format
-    
-    # Create a new schedule without the _metadata
-    greedy_format = {}
-    
-    # Process each job in the CP-SAT schedule
-    for job_id, details in cpsat_schedule.items():
-        if job_id == '_metadata':
-            continue
-            
-        if not isinstance(details, dict):
-            logger.warning(f"Invalid details format for job {job_id}: {details}")
-            continue
-            
-        # Extract required fields
-        machine = details.get('machine')
-        start = details.get('start')
-        end = details.get('end')
-        priority = details.get('priority', 3)  # Default to medium priority
-        
-        if not all(x is not None for x in [machine, start, end]):
-            logger.warning(f"Missing required fields for job {job_id}: machine={machine}, start={start}, end={end}")
-            continue
-            
-        # Validate timestamps
-        if not _is_valid_timestamp(start, job_id, machine, "start"):
-            continue
-        if not _is_valid_timestamp(end, job_id, machine, "end"):
-            continue
-            
-        # Initialize machine list if needed
-        if machine not in greedy_format:
-            greedy_format[machine] = []
-            
-        # Add the job as a 5-tuple with empty additional params
-        greedy_format[machine].append((job_id, start, end, priority, {}))
-    
-    # Log conversion stats
-    total_tasks = sum(len(tasks) for tasks in greedy_format.values())
-    logger.info(f"Converted CP-SAT schedule: {total_tasks} tasks scheduled")
-    
-    return greedy_format
-
-def _is_valid_timestamp(timestamp: Any, job_id: str, machine: str, field_name: str) -> bool:
-    """
-    Internal helper to validate timestamps and prevent using small integers as timestamps.
-    
-    Args:
-        timestamp: Value to validate
-        job_id: Job ID for logging
-        machine: Machine name for logging
-        field_name: Field name for logging
-        
-    Returns:
-        True if timestamp is valid, False otherwise
-    """
-    # Validate timestamp is reasonable epoch time (not small integer)
-    if not isinstance(timestamp, (int, float)):
-        logger.error(f"Invalid {field_name} time type for job {job_id} on machine {machine}: {type(timestamp)}")
-        return False
-        
-    if timestamp < 1000:
-        logger.error(f"Invalid {field_name} time detected: {timestamp} for job {job_id} on machine {machine}. "
-                    "Value too small to be a timestamp.")
-        return False
-        
-    return True
-
-def build_schedule_from_logs(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[Tuple]]:
-    """
-    Build a schedule directly from the logging messages if the standard conversion fails.
-    This is a last resort when the CP-SAT solver returns a format we can't process directly.
-    
-    Args:
-        cpsat_schedule: CP-SAT schedule dictionary
-    
-    Returns:
-        The schedule in greedy scheduler format {machine: [(job_id, start, end, priority, additional_params), ...]}
-    """
-    # Fallback schedule builder from solver log messages
-    logger.info("Building schedule from solver log messages")
-    greedy_format = {}
-    
-    if not isinstance(cpsat_schedule, dict):
-        logger.error("Schedule must be a dictionary")
-        return {}
-    
-    # Create a list of dictionaries for all scheduled jobs
-    # Format should match what we see in the logs:
-    # "Scheduled JOST111111_CP11-111-P01-08 on PAINTING: start=34, end=54"
-    for job_id, details in cpsat_schedule.items():
-        if job_id == '_metadata':
-            continue
-            
-        if isinstance(details, dict) and 'machine' in details and 'start' in details and 'end' in details:
-            machine = details['machine']
-            start = details['start']
-            end = details['end']
-            priority = details.get('priority', 3)  # Default to medium priority
-            
-            # Validate timestamps
-            if not _is_valid_timestamp(start, job_id, machine, "start"):
-                continue
-            if not _is_valid_timestamp(end, job_id, machine, "end"):
-                continue
-            
-            if machine not in greedy_format:
-                greedy_format[machine] = []
                 
-            greedy_format[machine].append((job_id, start, end, priority, {}))  # Use 5-tuple with empty additional params
-    
-    # Count how many jobs we scheduled this way
-    total_after = sum(len(tasks) for machine, tasks in greedy_format.items())
-    logger.info(f"Built schedule from logs: {total_after} tasks scheduled")
-    
-    return greedy_format 
+                # Ensure 5-tuple format
+                if len(task) == 3:
+                    job_id, start, end = task
+                    normalized[machine].append((job_id, start, end, 3, {}))
+                elif len(task) == 4:
+                    job_id, start, end, priority = task
+                    normalized[machine].append((job_id, start, end, priority, {}))
+                elif len(task) == 5:
+                    normalized[machine].append(task)
+                else:
+                    job_id, start, end = task[:3]
+                    priority = task[3] if len(task) > 3 else 3
+                    normalized[machine].append((job_id, start, end, priority, {}))
+        
+        return normalized
 
-def group_jobs_by_family(jobs: List[Dict[str, Any]]) -> Dict[str, List[Tuple[int, str, Dict[str, Any]]]]:
-    """
-    Group jobs by family and sort by process number within each family.
-    
-    Args:
-        jobs: List of job dictionaries
-        
-    Returns:
-        Dictionary mapping family names to lists of (process_number, job_id, job_data) tuples
-    """
-    # Group related jobs by family for dependency tracking
-    job_families = defaultdict(list)
-    
-    for job in jobs:
-        if not validate_job_data(job):
-            continue
-            
-        job_id = job['job_id']
-        family = extract_job_family(job_id)
-        process_num = extract_process_number(job_id)
-        
-        job_families[family].append((process_num, job_id, job))
-    
-    # Sort jobs within each family by process number
-    for family in job_families:
-        job_families[family].sort(key=lambda x: x[0])
-        
-    return dict(job_families)
 
-def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> Dict[str, Any]:
-    """
-    Calculate basic metrics about a schedule.
+class JobGrouper:
+    """Optimized job grouping by family."""
     
-    Args:
-        schedule: Schedule in format {machine: [(job_id, start, end, priority, params), ...]}
+    @staticmethod
+    def group_jobs_by_family(jobs: List[Dict[str, Any]]) -> Dict[str, List[Tuple[int, str, Dict[str, Any]]]]:
+        """
+        Optimized job grouping by family.
         
-    Returns:
-        Dictionary with schedule metrics
-    """
-    # Calculate utilization, makespan, and other schedule performance metrics
-    if not isinstance(schedule, dict):
-        return {}
+        Args:
+            jobs: List of job dictionaries
+            
+        Returns:
+            Dictionary mapping families to sorted job lists
+        """
+        job_families = defaultdict(list)
         
-    total_jobs = 0
-    total_machines = len(schedule)
-    machine_utilization = {}
-    earliest_start = float('inf')
-    latest_end = 0
+        for job in jobs:
+            if not JobValidator.validate_job_data(job):
+                continue
+            
+            job_id = job['job_id']
+            family = FamilyExtractor.extract_job_family(job_id)
+            process_num = ProcessExtractor.extract_process_number(job_id)
+            
+            job_families[family].append((process_num, job_id, job))
+        
+        # Sort by process number efficiently
+        for family_jobs in job_families.values():
+            family_jobs.sort(key=lambda x: x[0])
+        
+        return dict(job_families)
+
+
+class ScheduleAnalyzer:
+    """Optimized schedule analysis and metrics calculation."""
     
-    for machine, tasks in schedule.items():
-        if not isinstance(tasks, list):
-            continue
-            
-        machine_jobs = len(tasks)
-        total_jobs += machine_jobs
+    @staticmethod
+    def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> ScheduleMetrics:
+        """
+        Optimized schedule metrics calculation.
         
-        if tasks:
-            machine_start = min(task[1] for task in tasks if len(task) >= 2)
-            machine_end = max(task[2] for task in tasks if len(task) >= 3)
+        Args:
+            schedule: Schedule dictionary
             
-            earliest_start = min(earliest_start, machine_start)
-            latest_end = max(latest_end, machine_end)
+        Returns:
+            ScheduleMetrics object
+        """
+        if not isinstance(schedule, dict):
+            return ScheduleMetrics(0, 0, 0, 0, {}, 0, 0)
+        
+        total_jobs = 0
+        total_machines = len(schedule)
+        machine_utilization = {}
+        earliest_start = float('inf')
+        latest_end = 0
+        
+        for machine, tasks in schedule.items():
+            if not isinstance(tasks, list) or not tasks:
+                machine_utilization[machine] = 0
+                continue
             
-            # Calculate machine utilization (total task time / total available time)
-            total_task_time = sum(task[2] - task[1] for task in tasks if len(task) >= 3)
-            if latest_end > earliest_start:
-                utilization = total_task_time / (latest_end - earliest_start)
-                machine_utilization[machine] = min(utilization, 1.0)  # Cap at 100%
+            machine_jobs = len(tasks)
+            total_jobs += machine_jobs
+            
+            # Extract start and end times efficiently
+            starts = []
+            ends = []
+            total_task_time = 0
+            
+            for task in tasks:
+                if len(task) >= 3:
+                    start, end = task[1], task[2]
+                    starts.append(start)
+                    ends.append(end)
+                    total_task_time += end - start
+            
+            if starts and ends:
+                machine_start = min(starts)
+                machine_end = max(ends)
+                
+                earliest_start = min(earliest_start, machine_start)
+                latest_end = max(latest_end, machine_end)
+                
+                # Calculate utilization
+                if machine_end > machine_start:
+                    utilization = total_task_time / (machine_end - machine_start)
+                    machine_utilization[machine] = min(utilization, 1.0)
+                else:
+                    machine_utilization[machine] = 0
             else:
                 machine_utilization[machine] = 0
-    
-    makespan = latest_end - earliest_start if earliest_start != float('inf') else 0
-    avg_utilization = sum(machine_utilization.values()) / len(machine_utilization) if machine_utilization else 0
-    
+        
+        # Calculate final metrics
+        makespan = latest_end - earliest_start if earliest_start != float('inf') else 0
+        avg_utilization = (
+            sum(machine_utilization.values()) / len(machine_utilization) 
+            if machine_utilization else 0
+        )
+        
+        return ScheduleMetrics(
+            total_jobs=total_jobs,
+            total_machines=total_machines,
+            makespan_hours=makespan / 3600,
+            average_utilization=avg_utilization,
+            machine_utilization=machine_utilization,
+            earliest_start=earliest_start if earliest_start != float('inf') else 0,
+            latest_end=latest_end
+        )
+
+
+# Public API functions for backward compatibility
+def extract_process_number(job_id: str) -> int:
+    """Extract process number from job ID."""
+    return ProcessExtractor.extract_process_number(job_id)
+
+
+def extract_job_family(job_id: str, job_id_suffix: Optional[str] = None) -> str:
+    """Extract job family from job ID."""
+    return FamilyExtractor.extract_job_family(job_id, job_id_suffix)
+
+
+def validate_job_data(job: Dict[str, Any]) -> bool:
+    """Validate job data."""
+    return JobValidator.validate_job_data(job)
+
+
+def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize job fields."""
+    return JobNormalizer.normalize_job_fields(job)
+
+
+def convert_cpsat_to_greedy_format(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[Tuple]]:
+    """Convert CP-SAT format to greedy format."""
+    return ScheduleConverter.convert_cpsat_to_greedy_format(cpsat_schedule)
+
+
+def group_jobs_by_family(jobs: List[Dict[str, Any]]) -> Dict[str, List[Tuple[int, str, Dict[str, Any]]]]:
+    """Group jobs by family."""
+    return JobGrouper.group_jobs_by_family(jobs)
+
+
+def calculate_schedule_metrics(schedule: Dict[str, List[Tuple]]) -> Dict[str, Any]:
+    """Calculate schedule metrics."""
+    metrics = ScheduleAnalyzer.calculate_schedule_metrics(schedule)
     return {
-        'total_jobs': total_jobs,
-        'total_machines': total_machines,
-        'makespan_hours': makespan / 3600,  # Convert from seconds to hours
-        'average_utilization': avg_utilization,
-        'machine_utilization': machine_utilization,
-        'earliest_start': earliest_start,
-    } 
+        'total_jobs': metrics.total_jobs,
+        'total_machines': metrics.total_machines,
+        'makespan_hours': metrics.makespan_hours,
+        'average_utilization': metrics.average_utilization,
+        'machine_utilization': metrics.machine_utilization,
+        'earliest_start': metrics.earliest_start,
+    }
+
+
+# Utility functions for cache management
+def clear_all_caches() -> None:
+    """Clear all internal caches for memory management."""
+    ProcessExtractor.clear_cache()
+    FamilyExtractor.clear_cache()
+    logger.info("Cleared all scheduler utility caches")
+
+
+# Legacy function for backward compatibility
+def build_schedule_from_logs(cpsat_schedule: Dict[str, Any]) -> Dict[str, List[Tuple]]:
+    """Legacy function - now uses optimized converter."""
+    logger.warning("build_schedule_from_logs is deprecated, use convert_cpsat_to_greedy_format")
+    return ScheduleConverter.convert_cpsat_to_greedy_format(cpsat_schedule)
+
+
+def extract_total_processes(job_id: str) -> int:
+    """Extract total processes (legacy function)."""
+    if not isinstance(job_id, str):
+        logger.warning(f"job_id must be string, got {type(job_id)}: {job_id}")
+        return 1
+    
+    try:
+        process_code = job_id.split('_', 1)[1]
+    except IndexError:
+        logger.warning(f"Could not extract PROCESS_CODE from job_id {job_id}")
+        return 1
+    
+    match = re.search(r'\d+/(\d+)$', str(process_code))
+    if match:
+        return int(match.group(1))
+    
+    return 1
+
+
+def _is_valid_timestamp(timestamp: Any, job_id: str, machine: str, field_name: str) -> bool:
+    """Legacy function - now uses optimized validator."""
+    return TimestampValidator.is_valid_timestamp(timestamp, job_id, machine, field_name)
