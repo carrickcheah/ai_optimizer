@@ -355,25 +355,43 @@ def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
                 # DAY_NEED is 0 or negative, fall back to HOURS_NEED
                 hours_need = job_item.get('hours_need')
                 if hours_need is None or hours_need <= 0:
-                    logger.error(f"❌ Job {job_item.get('job_id')} has DAY_NEED=0 and no valid hours_need - cannot schedule")
-                    return None
-                try:
-                    total_hours = float(hours_need)
-                except (ValueError, TypeError):
-                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
-                    return None
+                    # Try to calculate from job_quantity and expect_output_per_hour
+                    job_quantity = job_item.get('job_quantity', 0)
+                    output_per_hour = job_item.get('expect_output_per_hour', 0)
+                    if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
+                        calculated_hours = job_quantity / output_per_hour
+                        total_hours = calculated_hours
+                        logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
+                    else:
+                        logger.error(f"❌ Job {job_item.get('job_id')} has DAY_NEED=0 and no valid hours_need - cannot schedule")
+                        return None
+                else:
+                    try:
+                        total_hours = float(hours_need)
+                    except (ValueError, TypeError):
+                        logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
+                        return None
                 logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
         except (ValueError, TypeError):
             # DAY_NEED is invalid, fall back to HOURS_NEED
             hours_need = job_item.get('hours_need')
             if hours_need is None or hours_need <= 0:
-                logger.error(f"❌ Job {job_item.get('job_id')} has invalid DAY_NEED and no valid hours_need - cannot schedule")
-                return None
-            try:
-                total_hours = float(hours_need)
-            except (ValueError, TypeError):
-                logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
-                return None
+                # Try to calculate from job_quantity and expect_output_per_hour
+                job_quantity = job_item.get('job_quantity', 0)
+                output_per_hour = job_item.get('expect_output_per_hour', 0)
+                if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
+                    calculated_hours = job_quantity / output_per_hour
+                    total_hours = calculated_hours
+                    logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
+                else:
+                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid DAY_NEED and no valid hours_need - cannot schedule")
+                    return None
+            else:
+                try:
+                    total_hours = float(hours_need)
+                except (ValueError, TypeError):
+                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
+                    return None
             logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
     else:
         # Priority 2: No DAY_NEED, use HOURS_NEED
@@ -616,19 +634,19 @@ def _calculate_multi_day_slots(job_id, job_duration_hours, working_hours_by_day,
     # Get maximum daily working hours for adaptive search
     max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
     
-    # Extended search window: allow jobs to be scheduled far into the future
-    if job_duration_hours <= max_daily_hours:
-        # Single-day job: search 90 days ahead to find available slots
-        max_search_days = 90
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Single-day scheduling with 90-day search window")
-    elif job_duration_hours <= max_daily_hours * 90:  # Up to 90 days worth of work
-        # Multi-day job (up to 90 days): search 180 days ahead
-        max_search_days = 180
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling with 180-day search window")
-    else:
-        # Very long job (over 90 days): search full year ahead
-        max_search_days = 365
-        logger.debug(f"Job {job_id} ({job_duration_hours}h): Long-duration scheduling with 365-day search window")
+    # Simple "next available slot" logic - search for configurable days ahead
+    search_days_env = os.getenv('SCHEDULER_SEARCH_DAYS')
+    if not search_days_env:
+        logger.error("❌ MISSING SCHEDULER_SEARCH_DAYS: SCHEDULER_SEARCH_DAYS not set in .env - cannot determine search window")
+        return []
+    
+    try:
+        max_search_days = int(search_days_env)
+    except ValueError:
+        logger.error(f"❌ INVALID SCHEDULER_SEARCH_DAYS: Cannot convert '{search_days_env}' to integer")
+        return []
+    
+    logger.debug(f"Job {job_id} ({job_duration_hours}h): Searching for next available slot within {max_search_days} days")
     
     # Pre-calculate working day pattern for the search window (optimization)
     working_day_pattern = []

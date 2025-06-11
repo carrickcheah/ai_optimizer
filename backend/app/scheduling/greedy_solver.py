@@ -174,12 +174,8 @@ def greedy_schedule(
             if hours_need and hours_need > 0:
                 job_item['processing_time'] = float(hours_need) * 3600  # Convert hours to seconds
             else:
-                lead_time_d = job_item.get('LeadTime_d')
-                if lead_time_d is not None and float(lead_time_d) > 0:
-                    job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
-                else:
-                    logger.error(f"❌ Job {job_item.get('job_id')} has no valid duration (hours_need or LeadTime_d) - cannot schedule")
-                    continue  # Skip this job
+                logger.error(f"❌ MISSING HOURS_NEED: Job {job_item.get('job_id')} has no valid hours_need - cannot schedule without real duration data")
+                continue  # Skip this job
         
         start_search_time = machine_available_time.get(machine_id, current_time)
         
@@ -203,11 +199,14 @@ def greedy_schedule(
             continue
 
         if not job_item.get('processing_time'):
-            lead_time_d = job_item.get('LeadTime_d')
-            if lead_time_d is not None and float(lead_time_d) > 0:
-                job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
+            # Try to use hours_need first
+            hours_need = job_item.get('hours_need')
+            if hours_need and hours_need > 0:
+                job_item['processing_time'] = float(hours_need) * 3600  # Convert hours to seconds
             else:
-                job_item['processing_time'] = 3600
+                logger.error(f"❌ MISSING HOURS_NEED: Job {job_item.get('job_id')} has no valid hours_need - cannot schedule without real duration data")
+                unscheduled_jobs_list.append(job_item)
+                continue
 
         start_search_time = machine_available_time.get(machine_id, current_time)
         family = extract_job_family(job_id) or 'INDEPENDENT'
@@ -264,13 +263,9 @@ def greedy_schedule(
                 if hours_need and hours_need > 0:
                     job_item['processing_time'] = float(hours_need) * 3600  # Convert hours to seconds
                 else:
-                    lead_time_d = job_item.get('LeadTime_d')
-                    if lead_time_d is not None and float(lead_time_d) > 0:
-                        job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
-                    else:
-                        logger.error(f"❌ Job {job_item.get('job_id')} has no valid duration (hours_need or LeadTime_d) - cannot schedule")
-                        unscheduled_jobs_list.append(job_item)
-                        continue
+                    logger.error(f"❌ MISSING HOURS_NEED: Job {job_item.get('job_id')} has no valid hours_need - cannot schedule without real duration data")
+                    unscheduled_jobs_list.append(job_item)
+                    continue
             
             # Start search from the later of machine availability or dependency requirement
             start_search_time = max(machine_available_time.get(machine_id, current_time), earliest_start)
@@ -366,11 +361,26 @@ def _find_next_available_slot(job_item, machine_id, start_search_time, schedule,
                             process_end_times, family, process_num, max_operators, 
                             unscheduled_jobs_list):
     """Helper to find the next available slot for a job."""
-    # Search for available time slot within extended horizon window
+    # Search for next available slot within configurable search window
     job_id = job_item['job_id']
-    search_limit_hours = 8760  # Extended search window to 8760 hours (~365 days)
+    
+    # Get search days from environment
+    search_days_env = os.getenv('SCHEDULER_SEARCH_DAYS')
+    if not search_days_env:
+        logger.error("❌ MISSING SCHEDULER_SEARCH_DAYS: SCHEDULER_SEARCH_DAYS not set in .env - cannot determine search window")
+        return False
+    
+    try:
+        search_limit_days = int(search_days_env)
+        search_limit_hours = search_limit_days * 24
+    except ValueError:
+        logger.error(f"❌ INVALID SCHEDULER_SEARCH_DAYS: Cannot convert '{search_days_env}' to integer")
+        return False
+    
     current_search_time = start_search_time
     max_search_time = current_search_time + search_limit_hours * 3600
+    
+    logger.debug(f"Job {job_id}: Searching for next available slot within {search_limit_days} days")
 
     def can_schedule_job_internal(start_time_val):
         """Internal version of can_schedule_job for this search."""

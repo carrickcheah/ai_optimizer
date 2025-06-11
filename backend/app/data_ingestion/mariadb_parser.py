@@ -107,13 +107,13 @@ def convert_datetime_to_epoch(dt_value):
         logger.debug(f"Error converting datetime to epoch: {e} for value {dt_value}")
         return None
         
-def load_jobs_planning_data(max_jobs: int = 1500, planning_horizon_days: int = 180):
+def load_jobs_planning_data(max_jobs: int = None, planning_horizon_days: int = None):
     """
     Load job data for production planning from MariaDB using joined tables.
     
     Args:
-        max_jobs: Maximum number of jobs to load (default: 1500)
-        planning_horizon_days: Days ahead for planning horizon (default: 180)
+        max_jobs: Maximum number of jobs to load (from .env MAX_JOBS_LIMIT)
+        planning_horizon_days: Days ahead for planning horizon (from .env PLANNING_HORIZON_DAYS)
         
     Returns:
         Tuple of (jobs_list, machines_list, setup_times_dict) where:
@@ -121,6 +121,29 @@ def load_jobs_planning_data(max_jobs: int = 1500, planning_horizon_days: int = 1
             machines_list (list): List of available machine dictionaries.
             setup_times_dict (dict): Dictionary mapping machine transitions to setup times.
     """
+    # Get parameters from .env with no fallbacks
+    if max_jobs is None:
+        max_jobs_env = os.getenv('MAX_JOBS_LIMIT')
+        if not max_jobs_env:
+            logger.error("❌ MISSING MAX_JOBS_LIMIT: MAX_JOBS_LIMIT not set in .env - cannot determine job loading limit")
+            return [], [], {}
+        try:
+            max_jobs = int(max_jobs_env)
+        except ValueError:
+            logger.error(f"❌ INVALID MAX_JOBS_LIMIT: Cannot convert '{max_jobs_env}' to integer")
+            return [], [], {}
+    
+    if planning_horizon_days is None:
+        horizon_env = os.getenv('PLANNING_HORIZON_DAYS')
+        if not horizon_env:
+            logger.error("❌ MISSING PLANNING_HORIZON_DAYS: PLANNING_HORIZON_DAYS not set in .env - cannot determine planning horizon")
+            return [], [], {}
+        try:
+            planning_horizon_days = int(horizon_env)
+        except ValueError:
+            logger.error(f"❌ INVALID PLANNING_HORIZON_DAYS: Cannot convert '{horizon_env}' to integer")
+            return [], [], {}
+    
     logger.info(f"Starting to load jobs planning data from MariaDB using joined tables (max_jobs: {max_jobs}, planning_horizon: {planning_horizon_days} days)")
     conn = None
     jobs_list = []
@@ -135,8 +158,13 @@ def load_jobs_planning_data(max_jobs: int = 1500, planning_horizon_days: int = 1
 
         cursor = conn.cursor(dictionary=True)
 
+        # Get environment values for SQL query
+        default_break_hours = os.getenv('DEFAULT_BREAK_HOURS', '0')
+        default_no_prod_hours = os.getenv('DEFAULT_NO_PROD_HOURS', '0')
+        default_job_priority = os.getenv('DEFAULT_JOB_PRIORITY', '-1')
+        
         # New complex SQL query joining three tables
-        jobs_query = """
+        jobs_query = f"""
         SELECT
             jot.CreateDate_dt AS plan_date,
             jot.TargetDate_dd AS lcd_date,
@@ -161,20 +189,21 @@ def load_jobs_planning_data(max_jobs: int = 1500, planning_horizon_days: int = 1
                  THEN jop.LeadTime_d
                  ELSE NULL END AS day_need,
             jop.SetupTime_d AS setting_hours,
-            1 AS break_hours,
-            8 AS no_prod,
+            {default_break_hours} AS break_hours,
+            {default_no_prod_hours} AS no_prod,
             '' AS start_date,
             di.Qty_d AS accumulated_daily_output,
             (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS balance_quantity,
             jot.MaterialDate_dd AS material_arrival,
             1 AS job_dependency,
-            3 AS priority,
+            {default_job_priority} AS priority,
             0 AS reduce_operation_hours,
             NOW() AS created_at,
             NOW() AS updated_at
         FROM tbl_jo_process AS jop 
         INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
-        LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i
+        LEFT JOIN tbl_daily_item AS di ON di.JoId_i = jop.TxnId_i AND di.ProcessrowId_i = jop.RowId_i 
+            AND di.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         LEFT JOIN tbl_machine AS tm ON (
             tm.machine_id_v = jop.Machine_v
             OR tm.MachineId_i = jop.Machine_v
@@ -185,6 +214,7 @@ def load_jobs_planning_data(max_jobs: int = 1500, planning_horizon_days: int = 1
             AND jop.QtyStatus_c != 'FF' 
             AND jot.TargetDate_dd >= CURDATE()
             AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
+            AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
         LIMIT %s
         """

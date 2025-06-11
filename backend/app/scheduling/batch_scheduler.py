@@ -20,7 +20,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict, 
-                       batch_size: int = 50) -> Dict[str, Any]:
+                       batch_size: int = None) -> Dict[str, Any]:
     """
     PRODUCTION: Schedule jobs in small batches to work around CP-SAT batch size limitations.
     
@@ -28,11 +28,24 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
         jobs: List of job dictionaries
         machines: List of machine names
         setup_times: Setup times dictionary
-        batch_size: Size of each batch (default 5 based on testing)
+        batch_size: Size of each batch (from .env CPSAT_BATCH_SIZE)
     
     Returns:
         Combined results from all batches
     """
+    # Get batch size from environment
+    if batch_size is None:
+        batch_size_env = os.getenv('CPSAT_BATCH_SIZE')
+        if not batch_size_env:
+            logger.error("❌ MISSING CPSAT_BATCH_SIZE: CPSAT_BATCH_SIZE not set in .env - cannot determine batch size")
+            return {"_metadata": {"total_scheduled": 0, "message": "Missing CPSAT_BATCH_SIZE configuration"}}
+        
+        try:
+            batch_size = int(batch_size_env)
+        except ValueError:
+            logger.error(f"❌ INVALID CPSAT_BATCH_SIZE: Cannot convert '{batch_size_env}' to integer")
+            return {"_metadata": {"total_scheduled": 0, "message": "Invalid CPSAT_BATCH_SIZE configuration"}}
+    
     # Split large job sets into smaller batches for CP-SAT solver
     logger.info(f"BATCH SCHEDULER: Processing {len(jobs)} jobs in batches of {batch_size}")
     

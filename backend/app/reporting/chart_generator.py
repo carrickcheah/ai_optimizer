@@ -200,26 +200,9 @@ def get_machine_name_lookup() -> Dict[str, str]:
     except Exception as e:
         logger.warning(f"Could not load machine name lookup: {e}")
     
-    # If we still don't have enough mappings, add some fallback logic
-    # for common machine code patterns (based on your table data structure)
+    # Log warning if machine mappings are insufficient - no fallback patterns
     if len(machine_lookup) < 20:
-        logger.info("Adding fallback machine name patterns")
-        # Add common patterns observed in the chart
-        fallback_patterns = {
-            '2': 'AD02-50HP',
-            '50': 'AD02-50HP', 
-            '10': 'AC04-10HP',
-            '100': 'AC06-100HP',
-            '75': 'AD03-75HP',
-            '11': 'PP01-110T-C',
-            '110': 'PP01-110T-C',
-            '80': 'PP10-080T-C',
-            '60': 'PP02-060T-C',
-            '12': 'PB07-125T-3.2M'
-        }
-        for code, name in fallback_patterns.items():
-            if code not in machine_lookup:
-                machine_lookup[code] = name
+        logger.warning(f"❌ LIMITED MACHINE MAPPINGS: Only {len(machine_lookup)} machine name mappings found in database. Some machine codes may display as raw codes instead of friendly names. Check tbl_machine table for missing machine name mappings.")
     
     logger.info(f"Loaded machine name lookup for {len(machine_lookup)} machines")
     return machine_lookup
@@ -396,13 +379,31 @@ def calculate_buffer_hours(end_time: Union[int, float], due_date: Union[int, flo
 
 def determine_buffer_status(buffer_hours: float) -> str:
     """Determine buffer status based on hours remaining."""
+    import os
+    
+    critical_hours = os.getenv('CHART_BUFFER_CRITICAL_HOURS')
+    warning_hours = os.getenv('CHART_BUFFER_WARNING_HOURS')
+    caution_hours = os.getenv('CHART_BUFFER_CAUTION_HOURS')
+    
+    if not critical_hours or not warning_hours or not caution_hours:
+        logger.error("❌ MISSING BUFFER THRESHOLDS: CHART_BUFFER_CRITICAL_HOURS, CHART_BUFFER_WARNING_HOURS, or CHART_BUFFER_CAUTION_HOURS not set in .env")
+        return "Unknown"
+    
+    try:
+        critical_hours = float(critical_hours)
+        warning_hours = float(warning_hours)
+        caution_hours = float(caution_hours)
+    except ValueError:
+        logger.error("❌ INVALID BUFFER THRESHOLDS: Cannot convert buffer threshold values to float")
+        return "Unknown"
+    
     if buffer_hours < 0:
         return "Late"
-    elif buffer_hours < 8:
+    elif buffer_hours < critical_hours:
         return "Critical"
-    elif buffer_hours < 24:
+    elif buffer_hours < warning_hours:
         return "Warning"
-    elif buffer_hours < 72:
+    elif buffer_hours < caution_hours:
         return "Caution"
     else:
         return "OK"
