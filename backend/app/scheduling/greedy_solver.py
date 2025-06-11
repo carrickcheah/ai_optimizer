@@ -430,15 +430,26 @@ class SchedulingConstraints:
     
     def _check_time_availability(self, start_time: float, end_time: float, 
                                 job: Dict[str, Any]) -> bool:
-        """Check time availability (working hours, holidays, breaks)."""
+        """Check time availability - jobs can span multiple days during working hours."""
         try:
-            from app.scheduling.time_availability import is_time_available
-            if not is_time_available(start_time, end_time):
+            from app.scheduling.time_availability import is_time_available_for_scheduling
+            from datetime import datetime
+            import pytz
+            
+            # For long jobs, just check if the start time is during working hours
+            # The job will automatically span multiple working days as needed
+            singapore_tz = pytz.timezone('Asia/Singapore')
+            start_dt = datetime.fromtimestamp(start_time, tz=singapore_tz)
+            
+            if not is_time_available_for_scheduling(start_dt):
                 job_id = job.get('job_id', 'Unknown')
-                logger.debug(f"Job {job_id} conflicts with non-working hours, holidays, or breaks")
+                logger.debug(f"Job {job_id} start time {start_dt} is not during working hours")
                 return False
+                
         except ImportError:
             logger.warning("Could not import time availability checker - skipping time constraints")
+        except Exception as e:
+            logger.warning(f"Time availability check failed: {e} - allowing scheduling")
         
         return True
 
@@ -637,6 +648,21 @@ class GreedyScheduler:
                 )
                 return True
             
+            # Try to use time availability module to jump to next available slot
+            try:
+                from app.scheduling.time_availability import get_next_available_slot
+                processing_time_hours = job.get('processing_time', 3600) / 3600  # Convert seconds to hours
+                next_available = get_next_available_slot(current_search_time, processing_time_hours)
+                
+                if next_available and next_available > current_search_time:
+                    # Jump to next available time slot
+                    current_search_time = next_available
+                    logger.debug(f"Job {job_id}: Jumped to next available slot at epoch {next_available}")
+                    continue
+            except ImportError:
+                pass
+            
+            # Fallback to incremental search
             current_search_time += increment
             attempts += 1
             
