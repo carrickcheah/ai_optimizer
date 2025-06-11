@@ -213,7 +213,6 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     # Set default values for missing fields
     defaults = {
         'priority': 3,
-        'hours_need': 1.0,
         'day_need': None,  # Default to None so HOURS_NEED takes precedence
         'processing_time': None,  # Will be calculated from hours_need/day_need
         'setup_time': 0,
@@ -224,6 +223,11 @@ def normalize_job_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     for field, default_value in defaults.items():
         if field not in normalized_job or normalized_job[field] is None:
             normalized_job[field] = default_value
+    
+    # Check if hours_need is missing - no default, log error instead
+    if ('hours_need' not in normalized_job or normalized_job['hours_need'] is None or normalized_job['hours_need'] <= 0):
+        logger.error(f"❌ MISSING HOURS_NEED for job {normalized_job.get('job_id')} - unable to schedule without duration")
+        normalized_job['hours_need'] = None  # Mark as invalid
             
     return normalized_job
 

@@ -182,6 +182,9 @@ def schedule_jobs(
         
         # Calculate total hours needed including non-working time components
         total_hours = _calculate_total_job_hours(job_item)
+        if total_hours is None:
+            logger.error(f"❌ Job {job_id} has no valid duration data - skipping job")
+            continue
         if total_hours <= 0:
             logger.warning(f"Job {job_id} has zero or negative duration, skipping job")
             continue
@@ -350,27 +353,48 @@ def _calculate_total_job_hours(job_item: Dict[str, Any]) -> float:
                 logger.debug(f"Using DAY_NEED for job {job_item.get('job_id')}: {day_need_val} days = {total_hours} hours")
             else:
                 # DAY_NEED is 0 or negative, fall back to HOURS_NEED
-                total_hours = job_item.get('hours_need', 1)
+                hours_need = job_item.get('hours_need')
+                if hours_need is None or hours_need <= 0:
+                    logger.error(f"❌ Job {job_item.get('job_id')} has DAY_NEED=0 and no valid hours_need - cannot schedule")
+                    return None
                 try:
-                    total_hours = float(total_hours)
+                    total_hours = float(hours_need)
                 except (ValueError, TypeError):
-                    total_hours = 1.0
+                    logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
+                    return None
                 logger.debug(f"DAY_NEED is 0/negative, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
         except (ValueError, TypeError):
             # DAY_NEED is invalid, fall back to HOURS_NEED
-            total_hours = job_item.get('hours_need', 1)
+            hours_need = job_item.get('hours_need')
+            if hours_need is None or hours_need <= 0:
+                logger.error(f"❌ Job {job_item.get('job_id')} has invalid DAY_NEED and no valid hours_need - cannot schedule")
+                return None
             try:
-                total_hours = float(total_hours)
+                total_hours = float(hours_need)
             except (ValueError, TypeError):
-                total_hours = 1.0
+                logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
+                return None
             logger.debug(f"DAY_NEED is invalid, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
     else:
         # Priority 2: No DAY_NEED, use HOURS_NEED
-        total_hours = job_item.get('hours_need', 1)
-        try:
-            total_hours = float(total_hours)
-        except (ValueError, TypeError):
-            total_hours = 1.0
+        hours_need = job_item.get('hours_need')
+        if hours_need is None or hours_need <= 0:
+            # Try to calculate from job_quantity and expect_output_per_hour
+            job_quantity = job_item.get('job_quantity', 0)
+            output_per_hour = job_item.get('expect_output_per_hour', 0)
+            if job_quantity and output_per_hour and job_quantity > 0 and output_per_hour > 0:
+                calculated_hours = job_quantity / output_per_hour
+                total_hours = calculated_hours
+                logger.info(f"Calculated hours_need for job {job_item.get('job_id')}: {calculated_hours} hours from {job_quantity} qty / {output_per_hour} per hour")
+            else:
+                logger.error(f"❌ Job {job_item.get('job_id')} has no valid hours_need and cannot calculate from quantity/output - cannot schedule")
+                return None
+        else:
+            try:
+                total_hours = float(hours_need)
+            except (ValueError, TypeError):
+                logger.error(f"❌ Job {job_item.get('job_id')} has invalid hours_need: {hours_need} - cannot schedule")
+                return None
         logger.debug(f"No DAY_NEED, using HOURS_NEED for job {job_item.get('job_id')}: {total_hours} hours")
     
     # Add setup time if available (convert from seconds to hours)

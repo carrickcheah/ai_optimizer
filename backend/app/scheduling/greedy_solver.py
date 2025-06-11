@@ -169,11 +169,17 @@ def greedy_schedule(
         
         # Calculate processing time if missing
         if not job_item.get('processing_time'):
-            lead_time_d = job_item.get('LeadTime_d')
-            if lead_time_d is not None and float(lead_time_d) > 0:
-                job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
+            # Try to use hours_need first
+            hours_need = job_item.get('hours_need')
+            if hours_need and hours_need > 0:
+                job_item['processing_time'] = float(hours_need) * 3600  # Convert hours to seconds
             else:
-                job_item['processing_time'] = 3600
+                lead_time_d = job_item.get('LeadTime_d')
+                if lead_time_d is not None and float(lead_time_d) > 0:
+                    job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
+                else:
+                    logger.error(f"❌ Job {job_item.get('job_id')} has no valid duration (hours_need or LeadTime_d) - cannot schedule")
+                    continue  # Skip this job
         
         start_search_time = machine_available_time.get(machine_id, current_time)
         
@@ -253,11 +259,18 @@ def greedy_schedule(
             
             # Calculate processing time if missing
             if not job_item.get('processing_time'):
-                lead_time_d = job_item.get('LeadTime_d')
-                if lead_time_d is not None and float(lead_time_d) > 0:
-                    job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
+                # Try to use hours_need first
+                hours_need = job_item.get('hours_need')
+                if hours_need and hours_need > 0:
+                    job_item['processing_time'] = float(hours_need) * 3600  # Convert hours to seconds
                 else:
-                    job_item['processing_time'] = 3600
+                    lead_time_d = job_item.get('LeadTime_d')
+                    if lead_time_d is not None and float(lead_time_d) > 0:
+                        job_item['processing_time'] = float(lead_time_d) * NORMAL_WORKING_HOURS * 3600
+                    else:
+                        logger.error(f"❌ Job {job_item.get('job_id')} has no valid duration (hours_need or LeadTime_d) - cannot schedule")
+                        unscheduled_jobs_list.append(job_item)
+                        continue
             
             # Start search from the later of machine availability or dependency requirement
             start_search_time = max(machine_available_time.get(machine_id, current_time), earliest_start)
