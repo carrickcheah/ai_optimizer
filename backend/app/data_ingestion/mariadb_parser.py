@@ -26,6 +26,17 @@ DB_PASSWORD = os.getenv("MARIADB_PASSWORD")
 DB_NAME = os.getenv("MARIADB_DATABASE")
 DB_PORT = os.getenv("MARIADB_PORT", "3306")
 
+# Get scheduling configuration
+NORMAL_WORKING_HOURS = os.getenv("NORMAL_WORKING_HOURS")
+if not NORMAL_WORKING_HOURS:
+    logger.error("❌ MISSING NORMAL_WORKING_HOURS: NORMAL_WORKING_HOURS not set in .env")
+    raise ValueError("NORMAL_WORKING_HOURS is required in .env file")
+try:
+    NORMAL_WORKING_HOURS = float(NORMAL_WORKING_HOURS)
+except ValueError:
+    logger.error(f"❌ INVALID NORMAL_WORKING_HOURS: Cannot convert '{NORMAL_WORKING_HOURS}' to float")
+    raise ValueError(f"NORMAL_WORKING_HOURS must be a valid number, got: {NORMAL_WORKING_HOURS}")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -168,6 +179,9 @@ def build_jobs_query() -> str:
                  ELSE NULL END AS expect_output_per_hour,
             CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
                  THEN jot.JoQty_d / (jop.CapQty_d * 60) 
+                 WHEN (jop.Machine_v IS NULL OR jop.Machine_v = '' OR jop.Machine_v = '0') 
+                      AND jop.LeadTime_d IS NOT NULL AND jop.LeadTime_d > 0
+                 THEN jop.LeadTime_d * %s
                  ELSE NULL END AS hours_need,
             CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d != 0 
                  THEN jot.JoQty_d / (jop.CapQty_d * 60 * 24)
@@ -183,8 +197,8 @@ def build_jobs_query() -> str:
             %s AS break_hours,
             %s AS no_prod,
             '' AS start_date,
-            di.Qty_d AS accumulated_daily_output,
-            (jot.JoQty_d - COALESCE(di.Qty_d, 0)) AS balance_quantity,
+            SUM(di.Qty_d) AS accumulated_daily_output,
+            (jot.JoQty_d - COALESCE(SUM(di.Qty_d), 0)) AS balance_quantity,
             jot.MaterialDate_dd AS material_arrival,
             1 AS job_dependency,
             %s AS priority,
@@ -207,8 +221,11 @@ def build_jobs_query() -> str:
               AND jot.TargetDate_dd >= CURDATE()
               AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
               AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY jop.TxnId_i, jop.RowId_i, jot.CreateDate_dt, jot.TargetDate_dd, 
+                 jot.DocRef_v, jop.Task_v, tm.MachineName_v, jop.ManCount_i, 
+                 jot.JoQty_d, jop.CapQty_d, jop.CapMin_d, jop.LeadTime_d, 
+                 jop.SetupTime_d, jot.MaterialDate_dd, jop.Machine_v
         ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
-        LIMIT %s
     """
 
 
@@ -361,6 +378,12 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
         if not job.get("balance_quantity"):
             job["balance_quantity"] = job_quantity - accumulated
     
+    # Map hours_need to processing_time for scheduler compatibility
+    hours_need = job.get("hours_need")
+    if hours_need and hours_need > 0:
+        job["processing_time"] = float(hours_need) * 3600  # Convert hours to seconds
+        logger.debug(f"Mapped hours_need to processing_time for job {composite_job_id}: {hours_need} hours = {job['processing_time']} seconds")
+    
     return job
 
 
@@ -485,7 +508,7 @@ def load_jobs_planning_data(
     
     logger.info(
         f"Starting to load jobs planning data from MariaDB using joined tables "
-        f"(max_jobs: {max_jobs}, planning_horizon: {planning_horizon_days} days)"
+        f"(planning_horizon: {planning_horizon_days} days, no job limit)"
     )
     
     conn = None
@@ -504,11 +527,11 @@ def load_jobs_planning_data(
         # Build query and parameters
         jobs_query = build_jobs_query()
         query_params = (
+            NORMAL_WORKING_HOURS,
             config['break_hours'],
             config['no_prod_hours'], 
             config['job_priority'],
-            planning_horizon_days,
-            max_jobs
+            planning_horizon_days
         )
         
         # Run EXPLAIN to analyze query performance
@@ -534,8 +557,7 @@ def load_jobs_planning_data(
         
         logger.info(
             f"Query executed in {query_time:.3f}s - "
-            f"Fetched {len(raw_jobs)} raw job records from joined tables "
-            f"(requested max: {max_jobs})."
+            f"Fetched {len(raw_jobs)} raw job records from joined tables."
         )
         
         # Process the results

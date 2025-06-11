@@ -42,6 +42,11 @@ class SchedulerConfig(BaseSettings):
         ge=0,
         description="Grace period in hours for already late jobs"
     )
+    scheduler_search_days: int = Field(
+        default=90,
+        gt=0,
+        description="Maximum days to search ahead for next available slot"
+    )
     minimum_horizon_hours: int = Field(
         default=24 * 7,  # 1 week
         gt=0,
