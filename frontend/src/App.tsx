@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider, ProtectedRoute } from './auth';
 import InputForm from './components/form/input';
 import Header from './components/header';
 import Dashboard from './components/form/dashboard';
@@ -11,11 +12,13 @@ import ResourceChart from './components/resource_chart';
 
 function App() {
   return (
-    <Router>
-      <div className="app-container bg-gray-100 min-h-screen">
-        <Header title="AI Optimizer" />
-        <main className="main-content p-4">
-          <Routes>
+    <AuthProvider>
+      <Router>
+        <ProtectedRoute>
+          <div className="app-container bg-gray-100 min-h-screen">
+            <Header title="AI Optimizer" />
+            <main className="main-content p-4">
+              <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/page/ai_optimizer" element={<Dashboard />} />
             <Route path="/input" element={<InputForm />} />
@@ -42,10 +45,12 @@ function App() {
                 <ResourceChart title="Machine Allocation (Resource View)" />
               </div>
             } />
-          </Routes>
-        </main>
-      </div>
-    </Router>
+              </Routes>
+            </main>
+          </div>
+        </ProtectedRoute>
+      </Router>
+    </AuthProvider>
   );
 }
 

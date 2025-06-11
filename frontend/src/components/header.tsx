@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useAuth } from '@/auth';
+import { Button } from '@/components/ui/button';
+import { UserProfile } from '@/auth/UserProfile';
 import './header.css';
 
 interface HeaderProps {
@@ -6,8 +9,15 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ title }) => {
+  const { user, signOut } = useAuth();
+  const [showProfile, setShowProfile] = useState(false);
+
   const navItemClasses = (pageTitle: string): string => {
     return `nav-item ${title === pageTitle ? 'active' : ''}`;
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
   };
 
   return (
@@ -40,6 +50,36 @@ const Header: React.FC<HeaderProps> = ({ title }) => {
         <a href="/page/ai_optimizer" className={navItemClasses('AI Optimizer')}>
           <i className="fas fa-cog"></i> AI Optimizer
         </a>
+      </div>
+      
+      {/* User Profile Section */}
+      <div className="user-section flex items-center space-x-4 mr-4">
+        <span className="text-sm text-gray-600">
+          Welcome, {user?.email}
+        </span>
+        <div className="relative">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowProfile(!showProfile)}
+            className="text-xs"
+          >
+            Profile
+          </Button>
+          {showProfile && (
+            <div className="absolute right-0 top-full mt-2 z-50">
+              <UserProfile />
+            </div>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSignOut}
+          className="text-xs"
+        >
+          Sign Out
+        </Button>
       </div>
     </div>
   );
