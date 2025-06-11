@@ -7,7 +7,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { API_BASE_URL } from '../config';
+import { useDataCache } from '../contexts/DataCacheContext';
 import './DetailedScheduleTable.css';
 
 // Helper function to format column headers with newlines
@@ -239,11 +239,8 @@ const columns = [
 ];
 
 const DetailedScheduleTable: React.FC = () => {
-  const [data, setData] = useState<ScheduleTableRow[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: cacheData, refreshData, clearError } = useDataCache();
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [pagination, setPagination] = useState<{
     currentPage: number;
     totalPages: number;
@@ -256,6 +253,17 @@ const DetailedScheduleTable: React.FC = () => {
     itemsPerPage: 500, // Default to 500 to show all jobs
   });
 
+  // Use cached data instead of local state
+  const allData = cacheData.detailedSchedule;
+  const isLoading = cacheData.isLoading;
+  const error = cacheData.error;
+  const lastRefresh = cacheData.lastRefresh;
+
+  // Apply client-side pagination to cached data
+  const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
+  const endIndex = startIndex + pagination.itemsPerPage;
+  const data = allData.slice(startIndex, endIndex);
+
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
   // Data loading strategy parameters (for display only - reports endpoint uses its own config)
@@ -265,65 +273,24 @@ const DetailedScheduleTable: React.FC = () => {
     refreshIntervalMinutes: 60 // Refresh every 60 minutes
   };
 
+  // No automatic data loading - user must click refresh button
+
+  // Update pagination when cached data changes
   useEffect(() => {
-    const fetchData = async (currentPage = pagination.currentPage, itemsPerPage = pagination.itemsPerPage) => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Use the reports endpoint that has the correct field format with scheduling data
-        const scheduleUrl = `${API_BASE_URL}/reports/detailed-schedule`;
+    if (allData.length > 0) {
+      console.log(`[DetailedScheduleTable] Using cached data: ${allData.length} schedule items`);
+      
+      // Update pagination state for client-side pagination
+      setPagination(prev => ({
+        ...prev,
+        totalPages: Math.ceil(allData.length / prev.itemsPerPage),
+        totalItems: allData.length
+      }));
+    } else if (!isLoading) {
+      console.warn('[DetailedScheduleTable] No cached data available');
+    }
+  }, [allData, isLoading]);
 
-        const scheduleResponse = await fetch(scheduleUrl);
-
-        if (!scheduleResponse.ok) {
-          const errorData = await scheduleResponse.json();
-          throw new Error(errorData.detail || `Failed to fetch table data: ${scheduleResponse.statusText}`);
-        }
-        
-        // The reports endpoint returns an array directly, not paginated data
-        const scheduleResult = await scheduleResponse.json(); 
-        const resultData = Array.isArray(scheduleResult) ? scheduleResult : [];
-        
-        // Apply client-side pagination since reports endpoint doesn't support server-side pagination
-        const startIndex = (currentPage - 1) * itemsPerPage;
-        const endIndex = startIndex + itemsPerPage;
-        const paginatedData = resultData.slice(startIndex, endIndex);
-        
-        setData(paginatedData);
-        setLastRefresh(new Date());
-        
-        // Update pagination state for client-side pagination
-        setPagination(prev => ({
-          ...prev,
-          currentPage: currentPage,
-          totalPages: Math.ceil(resultData.length / itemsPerPage),
-          totalItems: resultData.length,
-          itemsPerPage: itemsPerPage,
-        }));
-        
-      } catch (err) {
-        if (err instanceof Error) {
-            setError(err.message);
-        } else {
-            setError('An unknown error occurred while fetching table data.');
-        }
-        console.error("Error fetching detailed schedule data:", err);
-      }
-      setIsLoading(false);
-    };
-
-    // Initial fetch
-    fetchData();
-
-    // Set up automatic refresh every 60 minutes
-    const refreshInterval = setInterval(() => {
-      console.log(`Auto-refreshing schedule data... (Buffer: ${DATA_LOADING_CONFIG.bufferDays} days, Horizon: ${DATA_LOADING_CONFIG.planningHorizonDays} days)`);
-      fetchData(pagination.currentPage, pagination.itemsPerPage);
-    }, DATA_LOADING_CONFIG.refreshIntervalMinutes * 60 * 1000); // Convert minutes to milliseconds
-
-    // Cleanup interval on component unmount
-    return () => clearInterval(refreshInterval);
-  }, [pagination.currentPage, pagination.itemsPerPage]); // Re-fetch when page or itemsPerPage changes
 
   const handleRowsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newItemsPerPage = parseInt(e.target.value);
@@ -334,6 +301,13 @@ const DetailedScheduleTable: React.FC = () => {
   const handlePageChange = (pageNumber: number) => {
     if (pageNumber < 1 || pageNumber > pagination.totalPages) return;
     setPagination(prev => ({ ...prev, currentPage: pageNumber }));
+  };
+
+  // Manual refresh function using shared cache
+  const handleManualRefresh = async () => {
+    console.log('[DetailedScheduleTable] Manual refresh triggered by user');
+    clearError();
+    await refreshData();
   };
 
   const renderTableInfo = () => {
@@ -441,12 +415,21 @@ const DetailedScheduleTable: React.FC = () => {
 
   return (
     <div className="container-fluid">
-      <button 
-        className="back-button" 
-        onClick={() => window.history.back()}
-      >
-        <i className="fas fa-arrow-left"></i> Back
-      </button>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <button 
+          className="back-button" 
+          onClick={() => window.history.back()}
+        >
+          <i className="fas fa-arrow-left"></i> Back
+        </button>
+        <button 
+          className="btn btn-primary" 
+          onClick={handleManualRefresh}
+          disabled={isLoading}
+        >
+          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
+        </button>
+      </div>
       
       <div className="card">
         <div className="card-header">
@@ -454,7 +437,7 @@ const DetailedScheduleTable: React.FC = () => {
           <div className="header-info">
             <small className="text-light">
               Auto-moving window: {DATA_LOADING_CONFIG.bufferDays} days back to {DATA_LOADING_CONFIG.planningHorizonDays} days ahead | 
-              Auto-refresh: {DATA_LOADING_CONFIG.refreshIntervalMinutes} min | 
+              Auto-refresh: Daily at 6:00 AM (Singapore time) | 
               Last refresh: {lastRefresh.toLocaleTimeString()}
             </small>
           </div>

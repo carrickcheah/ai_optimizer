@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
-import { API_BASE_URL } from '../config';
 import { PlotData } from 'plotly.js';
+import { useDataCache } from '../contexts/DataCacheContext';
 import './resource_chart.css'; // Import the CSS file for this component
 
 interface TaskData {
@@ -23,21 +23,15 @@ interface ResourceChartProps {
 }
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
-  const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const { data, refreshData, clearError } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('all');
-  const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
-  const [overview, setOverview] = useState<{
-    total_jobs: number;
-    buffer_status_counts: {
-      Late: number;
-      Warning: number;
-      Caution: number;
-      OK: number;
-    };
-  } | null>(null);
+
+  // Use cached data instead of local state
+  const tasks = data.ganttResourceView;
+  const isLoading = data.isLoading;
+  const error = data.error;
+  const overview = data.scheduleOverview;
 
 
 
@@ -57,88 +51,59 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     }
   };
 
+  // No automatic data loading - user must click refresh button
+  
+  // Log data when available  
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      setError(null);
-      const ganttEndpoint = `${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}`;
-      const overviewEndpoint = `${API_BASE_URL}/reports/schedule-overview?solver=${solver}`;
+    if (tasks.length > 0) {
+      console.log('[ResourceChart] Using cached data:', tasks.length, 'tasks');
       
-      console.log('[ResourceChart] Fetching data from API:', ganttEndpoint);
-
-      try {
-        const [ganttResponse, overviewResponse] = await Promise.all([
-          fetch(ganttEndpoint),
-          fetch(overviewEndpoint)
-        ]);
+      // Log a sample task to inspect the date format
+      console.log('[ResourceChart] Sample task from cache:', tasks[0]);
+      
+      // Calculate date range from the cached data
+      const dates = tasks.flatMap(task => [
+        new Date(task.Start),
+        new Date(task.Finish)
+      ]).filter(date => !isNaN(date.getTime()));
+      
+      if (dates.length > 0) {
+        const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+        let maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
         
-        if (!ganttResponse.ok) {
-          const errorData = await ganttResponse.json();
-          throw new Error(errorData.detail || `Failed to fetch chart data: ${ganttResponse.statusText}`);
+        console.log('[ResourceChart] Data date range:', {
+          earliest: minDate.toISOString(),
+          latest: maxDate.toISOString(),
+          span: Math.round((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+        });
+        
+        // Ensure date range is at most 1 year
+        const oneYearFromMin = new Date(minDate);
+        oneYearFromMin.setFullYear(oneYearFromMin.getFullYear() + 1);
+        
+        if (maxDate > oneYearFromMin) {
+          console.log('[ResourceChart] Limiting max date to one year from min date');
+          maxDate = oneYearFromMin;
         }
         
-        const data: TaskData[] = await ganttResponse.json();
-        console.log('[ResourceChart] API response data:', data.length, 'tasks');
-        
-        if (data.length === 0) {
-          console.warn("[ResourceChart] No data returned from API for Gantt chart (Resource View)");
-        } else {
-          // Log a sample task to inspect the date format
-          console.log('[ResourceChart] Sample task from API:', data[0]);
-          
-          // Calculate date range from the actual data
-          const dates = data.flatMap(task => [
-            new Date(task.Start),
-            new Date(task.Finish)
-          ]).filter(date => !isNaN(date.getTime()));
-          
-          if (dates.length > 0) {
-            const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
-            let maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
-            
-            console.log('[ResourceChart] Data date range:', {
-              earliest: minDate.toISOString(),
-              latest: maxDate.toISOString(),
-              span: Math.round((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
-            });
-            
-            // Ensure date range is at most 1 year
-            const oneYearFromMin = new Date(minDate);
-            oneYearFromMin.setFullYear(oneYearFromMin.getFullYear() + 1);
-            
-            if (maxDate > oneYearFromMin) {
-              console.log('[ResourceChart] Limiting max date to one year from min date');
-              maxDate = oneYearFromMin;
-            }
-            
-            setDateRange({
-              start: minDate,
-              end: maxDate
-            });
-          } else {
-            console.warn('[ResourceChart] No valid dates found in task data!');
-          }
-        }
-        setTasks(data);
-        
-        // Handle overview response
-        if (overviewResponse.ok) {
-          const overviewData = await overviewResponse.json();
-          setOverview(overviewData);
-        }
-      } catch (err) {
-        if (err instanceof Error) {
-            setError(err.message);
-        } else {
-            setError('An unknown error occurred');
-        }
-        console.error("[ResourceChart] Error fetching resource chart data:", err);
+        setDateRange({
+          start: minDate,
+          end: maxDate
+        });
+      } else {
+        console.warn('[ResourceChart] No valid dates found in cached data!');
       }
-      setIsLoading(false);
-    };
+    } else if (!isLoading) {
+      console.warn('[ResourceChart] No cached data available');
+    }
+  }, [tasks, isLoading]);
 
-    fetchData();
-  }, [solver]); // Re-fetch when solver changes
+  // Manual refresh function
+  const handleManualRefresh = async () => {
+    console.log('[ResourceChart] Manual refresh triggered by user');
+    clearError();
+    await refreshData();
+  };
 
   // Sort tasks first by resource, then by start time
   const sortedTasks = [...tasks].sort((a, b) => {
@@ -249,11 +214,28 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     );
   }
 
-  if (tasks.length === 0) {
+  if (!isLoading && tasks.length === 0) {
     return (
-      <div className="p-4 bg-white shadow-md rounded-lg">
-        <div className="empty-state">
-          No data available to display the Resource View chart. Please check your data source or try again later.
+      <div className="gantt-container">
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <button 
+            className="back-button" 
+            onClick={() => window.history.back()}
+          >
+            <i className="fas fa-arrow-left"></i> Back
+          </button>
+          <button 
+            className="btn btn-primary" 
+            onClick={handleManualRefresh}
+            disabled={isLoading}
+          >
+            <i className="fas fa-sync-alt"></i> Load Data
+          </button>
+        </div>
+        <div className="text-center p-4">
+          <h3>No Data Available</h3>
+          <p>Click the "Load Data" button above to load schedule data.</p>
+          <p><small>Data will be shared across all pages once loaded.</small></p>
         </div>
       </div>
     );
@@ -679,12 +661,21 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   
   return (
     <div className="gantt-container">
-      <button 
-        className="back-button" 
-        onClick={() => window.history.back()}
-      >
-        <i className="fas fa-arrow-left"></i> Back
-      </button>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <button 
+          className="back-button" 
+          onClick={() => window.history.back()}
+        >
+          <i className="fas fa-arrow-left"></i> Back
+        </button>
+        <button 
+          className="btn btn-primary" 
+          onClick={handleManualRefresh}
+          disabled={isLoading}
+        >
+          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
+        </button>
+      </div>
       <div className="flat-time-selector">
         <div className="flat-button-group">
           <button 

@@ -152,6 +152,11 @@ except Exception as e:
     logger.error(f"❌ FAILED to initialize reporting configuration: {e}")
     raise
 
+# Simple cache to prevent multiple solver runs for the same solver type
+_SCHEDULE_CACHE = {}
+_CACHE_TIMESTAMP = {}
+CACHE_DURATION_SECONDS = 300  # 5 minutes cache
+
 class ScheduleValidator:
     """Validates schedule data with strict checks - NO FALLBACKS."""
     
@@ -262,6 +267,17 @@ async def get_schedule_and_job_data(solver_type: str) -> tuple:
     try:
         # Validate solver type
         solver_type = ScheduleValidator.validate_solver_type(solver_type)
+        
+        # Check cache first
+        cache_key = solver_type
+        current_time = datetime.now().timestamp()
+        
+        if (cache_key in _SCHEDULE_CACHE and 
+            cache_key in _CACHE_TIMESTAMP and 
+            current_time - _CACHE_TIMESTAMP[cache_key] < CACHE_DURATION_SECONDS):
+            
+            logger.info(f"✅ Using cached schedule data for solver '{solver_type}' (age: {int(current_time - _CACHE_TIMESTAMP[cache_key])}s)")
+            return _SCHEDULE_CACHE[cache_key]
         
         logger.info(f"🔄 Loading jobs data (max: {REPORTING_CONFIG.max_jobs_limit}, horizon: {REPORTING_CONFIG.planning_horizon_days} days)")
         
@@ -392,7 +408,13 @@ async def get_schedule_and_job_data(solver_type: str) -> tuple:
         total_scheduled = sum(len(jobs) for jobs in schedule_output.values())
         logger.info(f"✅ Final schedule ready: {total_scheduled} jobs scheduled")
         
-        return schedule_output, jobs_data
+        # Store in cache
+        result = (schedule_output, jobs_data)
+        _SCHEDULE_CACHE[cache_key] = result
+        _CACHE_TIMESTAMP[cache_key] = current_time
+        logger.info(f"✅ Cached schedule data for solver '{solver_type}'")
+        
+        return result
         
     except HTTPException:
         raise  # Re-raise HTTP exceptions

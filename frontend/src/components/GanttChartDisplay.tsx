@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
-import { API_BASE_URL } from '../config'; // Assuming your API base URL is configured here
 import { PlotData } from 'plotly.js';
+import { useDataCache } from '../contexts/DataCacheContext';
 import './GanttChartDisplay.css'; // Import the CSS file
 
 interface TaskData {
@@ -61,21 +61,15 @@ const formatDateTime = (dateTimeString: string): string => {
 };
 
 const GanttChartDisplay: React.FC = () => {
-  const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const { data, refreshData, loadDataIfNeeded, clearError } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('all');
-  const [solver] = useState<string>('cpsat'); // Always use CP-SAT solver
   const [chartTitle, setChartTitle] = useState<string>('Production Planning System');
-  const [overview, setOverview] = useState<{
-    total_jobs: number;
-    buffer_status_counts: {
-      Late: number;
-      Warning: number;
-      Caution: number;
-      OK: number;
-    };
-  } | null>(null);
+
+  // Use cached data instead of local state
+  const tasks = data.ganttPriorityView;
+  const isLoading = data.isLoading;
+  const error = data.error;
+  const overview = data.scheduleOverview;
 
   // Buffer status color mapping
   const bufferStatusColors: Record<string, string> = {
@@ -85,64 +79,40 @@ const GanttChartDisplay: React.FC = () => {
     'OK': '#7FFF00'         // Bright lime green
   };
 
-  useEffect(() => {
-    const fetchTasks = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        console.log('[GanttChart] Fetching task data from API...');
-        const [ganttResponse, overviewResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}`),
-          fetch(`${API_BASE_URL}/reports/schedule-overview?solver=${solver}`)
-        ]);
-        
-        if (!ganttResponse.ok) {
-          throw new Error(`HTTP error! status: ${ganttResponse.status}`);
-        }
-        
-        const data = await ganttResponse.json();
-        console.log('[GanttChart] API response data:', data.length, 'tasks');
-        
-        if (data.length > 0) {
-          // Log a sample task to inspect the date format
-          console.log('[GanttChart] Sample task from API:', data[0]);
-          
-          // Check date ranges in the data to debug filtering issues
-          const dates = data.map(task => [new Date(task.Start).getTime(), new Date(task.Finish).getTime()]);
-          const validDates = dates.filter(([start, end]) => !isNaN(start) && !isNaN(end));
-          
-          if (validDates.length > 0) {
-            const earliestDate = new Date(Math.min(...validDates.map(d => d[0])));
-            const latestDate = new Date(Math.max(...validDates.map(d => d[1])));
-            console.log('[GanttChart] Data date range:', {
-              earliest: earliestDate.toISOString(),
-              latest: latestDate.toISOString(),
-              span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
-            });
-          } else {
-            console.warn('[GanttChart] No valid dates found in task data!');
-          }
-        } else {
-          console.warn('[GanttChart] API returned empty task list');
-        }
-        
-        setTasks(data);
-        
-        // Handle overview response
-        if (overviewResponse.ok) {
-          const overviewData = await overviewResponse.json();
-          setOverview(overviewData);
-        }
-      } catch (e) {
-        setError(`Failed to fetch task data: ${e instanceof Error ? e.message : String(e)}`);
-        console.error('[GanttChart] Error fetching tasks:', e);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // No automatic data loading - user must click refresh button
 
-    fetchTasks();
-  }, [solver]);
+  // Log data when available
+  useEffect(() => {
+    if (tasks.length > 0) {
+      console.log('[GanttChart] Using cached data:', tasks.length, 'tasks');
+      
+      // Log a sample task to inspect the date format
+      console.log('[GanttChart] Sample task from cache:', tasks[0]);
+      
+      // Check date ranges in the data
+      const dates = tasks.map(task => [new Date(task.Start).getTime(), new Date(task.Finish).getTime()]);
+      const validDates = dates.filter(([start, end]) => !isNaN(start) && !isNaN(end));
+      
+      if (validDates.length > 0) {
+        const earliestDate = new Date(Math.min(...validDates.map(d => d[0])));
+        const latestDate = new Date(Math.max(...validDates.map(d => d[1])));
+        console.log('[GanttChart] Data date range:', {
+          earliest: earliestDate.toISOString(),
+          latest: latestDate.toISOString(),
+          span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+        });
+      }
+    } else if (!isLoading) {
+      console.warn('[GanttChart] No cached data available');
+    }
+  }, [tasks, isLoading]);
+
+  // Manual refresh function
+  const handleManualRefresh = async () => {
+    console.log('[GanttChart] Manual refresh triggered by user');
+    clearError();
+    await refreshData();
+  };
 
   // Sort tasks by job ID for consistency
   const sortedTasks = [...tasks].sort((a, b) => {
@@ -608,12 +578,21 @@ const GanttChartDisplay: React.FC = () => {
 
   return (
     <div className="gantt-container">
-      <button 
-        className="back-button" 
-        onClick={() => window.history.back()}
-      >
-        <i className="fas fa-arrow-left"></i> Back
-      </button>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <button 
+          className="back-button" 
+          onClick={() => window.history.back()}
+        >
+          <i className="fas fa-arrow-left"></i> Back
+        </button>
+        <button 
+          className="btn btn-primary" 
+          onClick={handleManualRefresh}
+          disabled={isLoading}
+        >
+          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
+        </button>
+      </div>
       <div className="flat-time-selector">
         <div className="flat-button-group">
           <button 
@@ -820,7 +799,15 @@ const GanttChartDisplay: React.FC = () => {
       {isLoading && <div className="loading">Loading chart data...</div>}
       {error && <div className="error">{error}</div>}
       
-      {!isLoading && !error && (
+      {!isLoading && !error && tasks.length === 0 && (
+        <div className="text-center p-4">
+          <h3>No Data Available</h3>
+          <p>Click the "Refresh Data" button above to load schedule data.</p>
+          <p><small>Data will be shared across all pages once loaded.</small></p>
+        </div>
+      )}
+      
+      {!isLoading && !error && tasks.length > 0 && (
         <Plot
           data={getTimeFilteredData()}
           layout={adjustedLayout}
