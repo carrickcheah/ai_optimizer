@@ -398,11 +398,12 @@ class SchedulingConstraints:
         return True
     
     def _check_deadline_constraints(self, job: Dict[str, Any], end_time: float) -> bool:
-        """Check LCD date deadline constraints."""
+        """Check LCD date deadline constraints - more flexible for long jobs."""
         if 'lcd_date_epoch' not in job or not job['lcd_date_epoch']:
             return True
         
         lcd_deadline = job['lcd_date_epoch']
+        processing_time_hours = job.get('processing_time', 3600) / 3600
         
         try:
             from app.utils.time_utils import datetime_to_epoch
@@ -411,6 +412,14 @@ class SchedulingConstraints:
             current_time = time.time()
         
         grace_period_seconds = self.config.grace_period_hours * 3600
+        
+        # For very long jobs (>=12 hours), be more lenient with deadlines
+        if processing_time_hours >= 12:
+            logger.debug(f"Long job {job.get('job_id')} ({processing_time_hours:.1f}h) - using extended deadline flexibility")
+            # Allow scheduling even if significantly late, just log it
+            if lcd_deadline < current_time:
+                logger.info(f"Scheduling late long job {job.get('job_id')} - original deadline was {lcd_deadline}")
+            return True
         
         # Handle overdue jobs with grace period
         if lcd_deadline < current_time:
@@ -430,13 +439,13 @@ class SchedulingConstraints:
     
     def _check_time_availability(self, start_time: float, end_time: float, 
                                 job: Dict[str, Any]) -> bool:
-        """Check time availability - jobs can span multiple days during working hours."""
+        """Check time availability - jobs must start during working hours."""
         try:
             from app.scheduling.time_availability import is_time_available_for_scheduling
             from datetime import datetime
             import pytz
             
-            # For long jobs, just check if the start time is during working hours
+            # For all jobs, check if the start time is during working hours
             # The job will automatically span multiple working days as needed
             singapore_tz = pytz.timezone('Asia/Singapore')
             start_dt = datetime.fromtimestamp(start_time, tz=singapore_tz)
