@@ -39,6 +39,7 @@ class GreedyConfig:
     emergency_minimum_start_hour: int
     grace_period_hours: int
     scheduler_search_days: int
+    overloaded_machine_search_days: int
     urgent_buffer_threshold_hours: int
     urgent_reduction_factor: float
     buffer_critical_hours: int
@@ -62,6 +63,7 @@ class GreedyConfigManager:
             'EMERGENCY_MINIMUM_START_HOUR': 'emergency_minimum_start_hour',
             'GRACE_PERIOD_HOURS': 'grace_period_hours',
             'SCHEDULER_SEARCH_DAYS': 'scheduler_search_days',
+            'OVERLOADED_MACHINE_SEARCH_DAYS': 'overloaded_machine_search_days',
             'URGENT_BUFFER_THRESHOLD_HOURS': 'urgent_buffer_threshold_hours',
             'URGENT_REDUCTION_FACTOR': 'urgent_reduction_factor',
             'BUFFER_CRITICAL_HOURS': 'buffer_critical_hours',
@@ -97,6 +99,7 @@ class GreedyConfigManager:
                 emergency_minimum_start_hour=int(config_values['emergency_minimum_start_hour']),
                 grace_period_hours=int(config_values['grace_period_hours']),
                 scheduler_search_days=int(config_values['scheduler_search_days']),
+                overloaded_machine_search_days=int(config_values['overloaded_machine_search_days']),
                 urgent_buffer_threshold_hours=int(config_values['urgent_buffer_threshold_hours']),
                 urgent_reduction_factor=float(config_values['urgent_reduction_factor']),
                 buffer_critical_hours=int(config_values['buffer_critical_hours']),
@@ -123,6 +126,7 @@ class GreedyConfigManager:
             (config.emergency_ot_hours >= config.ot_working_hours, "EMERGENCY_OT_HOURS must be >= OT_WORKING_HOURS"),
             (config.grace_period_hours >= 0, "GRACE_PERIOD_HOURS must be non-negative"),
             (config.scheduler_search_days > 0, "SCHEDULER_SEARCH_DAYS must be positive"),
+            (config.overloaded_machine_search_days > 0, "OVERLOADED_MACHINE_SEARCH_DAYS must be positive"),
             (config.urgent_buffer_threshold_hours >= 0, "URGENT_BUFFER_THRESHOLD_HOURS must be non-negative"),
             (0.0 <= config.urgent_reduction_factor <= 1.0, "URGENT_REDUCTION_FACTOR must be between 0 and 1"),
             (config.buffer_critical_hours >= 0, "BUFFER_CRITICAL_HOURS must be non-negative"),
@@ -632,14 +636,20 @@ class GreedyScheduler:
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
                               max_operators: int) -> bool:
-        """Find next available slot and schedule job."""
+        """Find next available slot and schedule job - with extended search for overloaded machines."""
         job_id = job['job_id']
         
-        # Calculate search limits
-        search_limit_hours = self.config.scheduler_search_days * 24
-        max_search_time = start_search_time + search_limit_hours * 3600
+        # Detect overloaded machines and extend search window
+        machine_tasks = len(schedule_state['schedule'].get(machine_id, []))
         
-        logger.debug(f"Job {job_id}: Searching for slot within {self.config.scheduler_search_days} days")
+        if machine_tasks > 20:  # Machine is overloaded
+            search_limit_hours = self.config.overloaded_machine_search_days * 24
+            logger.info(f"Job {job_id}: Machine {machine_id} overloaded ({machine_tasks} tasks), extending search to {self.config.overloaded_machine_search_days} days")
+        else:
+            search_limit_hours = self.config.scheduler_search_days * 24
+            logger.debug(f"Job {job_id}: Searching for slot within {self.config.scheduler_search_days} days")
+        
+        max_search_time = start_search_time + search_limit_hours * 3600
         
         current_search_time = start_search_time
         increment = 3600  # Start with 1 hour increments
@@ -683,7 +693,7 @@ class GreedyScheduler:
                 attempts = 0
         
         # Could not schedule job
-        logger.warning(f"Could not find available slot for job {job_id}")
+        logger.warning(f"Could not find available slot for job {job_id} on machine {machine_id} within {search_limit_hours/24:.0f} days")
         schedule_state['unscheduled_jobs'].append(job)
         return False
     
