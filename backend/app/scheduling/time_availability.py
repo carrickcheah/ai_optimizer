@@ -528,11 +528,20 @@ class TimeAvailabilityChecker:
                 if day_offset == 0 and period_start < start_datetime:
                     period_start = start_datetime
                 
-                # Check if duration fits in period
-                job_end_time = period_start + timedelta(hours=duration_hours)
+                # For long jobs that span multiple days, just check if we can start during working hours
+                duration_seconds = duration_hours * 3600
+                job_end_time = period_start + timedelta(seconds=duration_seconds)
                 
-                if job_end_time <= period_end and self.is_time_range_available(period_start, job_end_time):
-                    return period_start
+                # If job is longer than normal scheduling period, allow it to span multiple days
+                if duration_hours >= 8:  # Jobs that may need flexible scheduling
+                    # Just check if start time is available during working hours
+                    if self.is_time_available_for_scheduling(period_start):
+                        logger.debug(f"Long job ({duration_hours}h) can start at {period_start}")
+                        return period_start
+                else:
+                    # Normal jobs must fit within working period
+                    if job_end_time <= period_end and self.is_time_range_available(period_start, job_end_time):
+                        return period_start
         
         return None
     
