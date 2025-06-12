@@ -1,6 +1,25 @@
 """
 mariadb_parser.py - FIXED VERSION
 Functions for loading job data from MariaDB with security and lint fixes
+
+ Your MariaDB parser will load jobs that are:
+  1. Created within the last 100 days
+  2. Due tomorrow or later (not today, not overdue)
+  3. Due within the next 100 days (planning horizon)
+  4. Not completed/cancelled (DocStatus_c, QtyStatus_c filters)
+  5. Not voided (Void_c filter)
+
+  ⏺ 📊 Complete Lookback Analysis Results:
+
+  | Lookback Days | Total Jobs | Performance  |
+  |---------------|------------|--------------|
+  | 30 days       | 811 jobs   | Fast         |
+  | 60 days       | 811 jobs   | Fast         |
+  | 90 days       | 1019 jobs  | ⭐ Sweet spot |
+  | 120 days      | 1019 jobs  | Same         |
+  | 180 days      | 1019 jobs  | Same         |
+  | 270 days      | 1019 jobs  | Same         |
+  | 365 days      | 1019 jobs  | Same         |
 """
 
 import logging
@@ -218,9 +237,9 @@ def build_jobs_query() -> str:
         WHERE jot.Void_c != 1 
               AND jot.DocStatus_c NOT IN ('CP', 'CX') 
               AND jop.QtyStatus_c != 'FF' 
-              AND jot.TargetDate_dd > CURDATE()  -- Exclude today's jobs (can't be scheduled in time)
+              AND jot.TargetDate_dd > CURDATE()  -- Only jobs with target dates after today
               AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
-              AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+              AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 100 DAY)  -- Only jobs created in last 100 days
         GROUP BY jop.TxnId_i, jop.RowId_i, jot.CreateDate_dt, jot.TargetDate_dd, 
                  jot.DocRef_v, jop.Task_v, tm.MachineName_v, jop.ManCount_i, 
                  jot.JoQty_d, jop.CapQty_d, jop.CapMin_d, jop.LeadTime_d, 

@@ -437,8 +437,8 @@ class SchedulingConstraints:
             adjusted_deadline = current_time + extended_grace
             return end_time <= adjusted_deadline
         else:
-            # Future deadlines get small buffer for flexibility
-            buffer_seconds = 24 * 3600  # 24 hour buffer
+            # Future deadlines get larger buffer for flexibility  
+            buffer_seconds = 14 * 24 * 3600  # 14 day buffer
             return end_time <= (lcd_deadline + buffer_seconds)
     
     def _check_time_availability(self, start_time: float, end_time: float, 

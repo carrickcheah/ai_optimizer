@@ -1,177 +1,368 @@
 #!/usr/bin/env python3
+"""
+debug_deep_dive.py - CP-SAT Solver Testing and Evaluation
+Tests the CP-SAT solver with loaded job data and evaluates scheduling performance
+
+
+⏺ Looking at the cache refresh error in the CP-SAT solver, I can see the issue. The code is calling time_checker._refresh_cache_if_needed() but the correct
+  method is time_checker.cache.refresh_if_needed() based on the TimeAvailabilityChecker class structure.
+
+  Let me fix this:
+
+⏺ Update(app/scheduling/cpsat_solver.py)
+  ⎿  Updated app/scheduling/cpsat_solver.py with 1 addition and 1 removal
+     797           logger.info("Adding working hours constraints from ai_arrangable_hour table")
+     798 
+     799           # Force cache refresh
+     800 -         time_checker._refresh_cache_if_needed()
+     800 +         time_checker.cache.refresh_if_needed()
+     801 
+     802           # Get working hours for each day (1=Monday, 7=Sunday)
+     803           working_hours_by_day = self._get_working_hours_by_day(time_checker)
+  ⎿  Claude usage limit reached. Your limit will reset at 4am (Asia/Kuala_Lumpur).
+"""
 
 import sys
 import os
-import logging
 from datetime import datetime
+from typing import Dict, List, Any
+import time
 
-# --- Robust Path Correction ---
-def find_backend_dir(start_path):
-    path = os.path.abspath(start_path)
-    while True:
-        # We are looking for the 'ai_optimizer' directory, which is the project root
-        if os.path.basename(path) == 'ai_optimizer':
-            backend_dir = os.path.join(path, 'backend')
-            if os.path.isdir(backend_dir):
-                return backend_dir
-        parent = os.path.dirname(path)
-        if parent == path:
-            return None
-        path = parent
+# Add the parent directory to sys.path to import from app
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-script_dir = os.path.dirname(__file__)
-backend_path = find_backend_dir(script_dir)
-
-if backend_path and backend_path not in sys.path:
-    sys.path.insert(0, backend_path)
-else:
-    # As a fallback for different structures, just add the parent of 'backend'
-    # This handles running from within 'ai_optimizer/backend'
-    potential_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
-    if os.path.basename(potential_root) == 'ai_optimizer':
-         if os.path.join(potential_root, 'backend') not in sys.path:
-            sys.path.insert(0, os.path.join(potential_root, 'backend'))
-
-# Correct import from the actual data ingestion module
 from app.data_ingestion.mariadb_parser import load_jobs_planning_data
-from app.scheduling.greedy_solver import GreedyScheduler, GreedyConfigManager
-from app.utils.time_utils import epoch_to_datetime
+from app.scheduling.cpsat_solver import schedule_jobs, SchedulingConfigManager
 
-# Set up detailed logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(module)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
-def debug_joaw25060047_failure():
-    """Debugs why job JOAW25060047_CD11-026C-1/2 fails to schedule."""
+def print_separator(title: str, char: str = "=", width: int = 80):
+    """Print a formatted separator with title"""
+    print(f"\n{char * width}")
+    print(f"{title:^{width}}")
+    print(f"{char * width}")
+
+
+def print_subsection(title: str, char: str = "-", width: int = 60):
+    """Print a formatted subsection header"""
+    print(f"\n{char * width}")
+    print(f" {title}")
+    print(f"{char * width}")
+
+
+def analyze_job_data(jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze job data before scheduling"""
+    if not jobs:
+        return {}
     
-    job_id_to_debug = "JOAW25060047_CD11-026C-1/2"
-    machine_id_to_debug = "WS01"
+    analysis = {
+        'total_jobs': len(jobs),
+        'jobs_with_processing_time': 0,
+        'jobs_without_processing_time': 0,
+        'total_processing_hours': 0,
+        'machine_distribution': {},
+        'priority_distribution': {},
+        'avg_processing_time': 0,
+        'jobs_with_deadlines': 0,
+        'urgent_jobs': 0,  # jobs due within 7 days
+        'processing_time_distribution': {
+            '0-1 hours': 0,
+            '1-5 hours': 0, 
+            '5-10 hours': 0,
+            '10-20 hours': 0,
+            '20-50 hours': 0,
+            '50+ hours': 0
+        },
+        'processing_times_raw': []
+    }
     
-    logger.info(f"--- Starting Deep Dive for Job: {job_id_to_debug} on Machine: {machine_id_to_debug} ---")
-
-    try:
-        # 1. Load all data using the correct function
-        logger.info("Loading production data using 'load_jobs_planning_data'...")
-        all_jobs, all_machines, _ = load_jobs_planning_data()
-        
-        if not all_jobs:
-            logger.error("No jobs loaded. Aborting debug.")
-            return
-
-        # Pre-process jobs to ensure 'processing_time' key exists, as requested
-        for job in all_jobs:
-            if 'processing_time' not in job:
-                job['processing_time'] = 0.0
-                logger.warning(f"Patched Job {job.get('job_id', 'Unknown')}: missing 'processing_time', defaulted to 0.")
-
-        # 2. Find the specific job
-        target_job = next((j for j in all_jobs if j['job_id'] == job_id_to_debug), None)
-        if not target_job:
-            logger.error(f"Could not find job '{job_id_to_debug}' in loaded data.")
-            return
-
-        logger.info(f"Found Job: {target_job['job_id']}")
-        logger.info(f"  - Target Date (LCD): {target_job.get('lcd_date_str')}")
-        logger.info(f"  - Material Arrival: {target_job.get('material_arrival_str')}")
-        
-        # Use the 'processing_time' field which is already in seconds
-        processing_time_seconds = target_job.get('processing_time', 0)
-        setup_time_seconds = target_job.get('setting_hours', 0) * 3600 # setting_hours is in hours
-        total_required_time = processing_time_seconds + setup_time_seconds
-
-        logger.info(f"  - Processing Time: {processing_time_seconds / 3600:.2f} hours")
-        logger.info(f"  - Setup Time: {setup_time_seconds / 3600:.2f} hours")
-        logger.info(f"  - Total Required Time (incl. setup): {total_required_time / 3600:.2f} hours")
-
-        # 3. Load config and initialize the scheduler correctly
-        logger.info("Loading config and initializing the Greedy Scheduler...")
-        config = GreedyConfigManager.load_config()
-        scheduler = GreedyScheduler(config)
-
-        # 4. Run the full scheduler to get the machine state
-        logger.info("Running the full scheduler to populate machine calendars...")
-        # The `run` method in the original script seems to be a wrapper. 
-        # The actual scheduling logic is in `schedule_jobs`.
-        final_schedule = scheduler.schedule_jobs(all_jobs, [m['MachineName_v'] for m in all_machines])
-
-        # 5. Get the state of the target machine from the final schedule
-        logger.info(f"Inspecting final calendar for machine '{machine_id_to_debug}'...")
-        machine_schedule = final_schedule.get(machine_id_to_debug, [])
+    current_time = datetime.now().timestamp()
+    seven_days = 7 * 24 * 3600  # 7 days in seconds
+    
+    for job in jobs:
+        # Processing time analysis
+        processing_time = job.get('processing_time', 0)
+        if processing_time and processing_time > 0:
+            analysis['jobs_with_processing_time'] += 1
+            hours = processing_time / 3600  # Convert to hours
+            analysis['total_processing_hours'] += hours
+            analysis['processing_times_raw'].append(hours)
             
-        logger.info(f"Final state of '{machine_id_to_debug}' calendar:")
-        if not machine_schedule:
-            logger.info("  - Machine calendar is empty or job was not scheduled on it.")
+            # Categorize processing time
+            if hours <= 1:
+                analysis['processing_time_distribution']['0-1 hours'] += 1
+            elif hours <= 5:
+                analysis['processing_time_distribution']['1-5 hours'] += 1
+            elif hours <= 10:
+                analysis['processing_time_distribution']['5-10 hours'] += 1
+            elif hours <= 20:
+                analysis['processing_time_distribution']['10-20 hours'] += 1
+            elif hours <= 50:
+                analysis['processing_time_distribution']['20-50 hours'] += 1
+            else:
+                analysis['processing_time_distribution']['50+ hours'] += 1
         else:
-            for i, scheduled_job_tuple in enumerate(sorted(machine_schedule, key=lambda x: x[1])):
-                try:
-                    # Correctly unpack the 5-item tuple from the scheduler
-                    job_id, start_epoch, end_epoch, _priority, _details = scheduled_job_tuple
-                    
-                    logger.info(f"  - Slot {i+1}: Job {job_id}")
-                    logger.info(f"    - Start: {epoch_to_datetime(start_epoch)}")
-                    logger.info(f"    - End:   {epoch_to_datetime(end_epoch)}")
-                except ValueError:
-                    logger.error(f"Could not unpack tuple: {scheduled_job_tuple}. It has {len(scheduled_job_tuple)} items.")
-                    logger.info(f"  - Slot {i+1}: Raw Data {scheduled_job_tuple}")
+            analysis['jobs_without_processing_time'] += 1
         
-        # 6. Analyze the gaps
-        logger.info(f"Analyzing calendar gaps for a {total_required_time / 3600:.2f}hr slot...")
+        # Machine distribution
+        machine = job.get('MachineName_v', 'Unknown')
+        analysis['machine_distribution'][machine] = analysis['machine_distribution'].get(machine, 0) + 1
         
-        now_epoch = int(datetime.now().timestamp())
-        deadline_epoch = target_job.get('lcd_date_epoch', now_epoch + 3600 * 24 * 30)
+        # Priority distribution
+        priority = job.get('priority', 'Unknown')
+        analysis['priority_distribution'][priority] = analysis['priority_distribution'].get(priority, 0) + 1
         
-        found_slot = False
-        last_end_time = now_epoch
-        
-        sorted_schedule = sorted(machine_schedule, key=lambda x: x[1])
+        # Deadline analysis
+        lcd_epoch = job.get('lcd_date_epoch')
+        if lcd_epoch:
+            analysis['jobs_with_deadlines'] += 1
+            if lcd_epoch - current_time <= seven_days:
+                analysis['urgent_jobs'] += 1
+    
+    # Calculate averages
+    if analysis['jobs_with_processing_time'] > 0:
+        analysis['avg_processing_time'] = analysis['total_processing_hours'] / analysis['jobs_with_processing_time']
+    
+    return analysis
 
-        # Check gap before first job
-        first_start = sorted_schedule[0][1] if sorted_schedule else deadline_epoch
-        if first_start - last_end_time >= total_required_time:
-            logger.info(f"Found a potential slot at the beginning of the calendar ({ (first_start - last_end_time)/3600:.2f} hrs).")
-            found_slot = True
+
+def display_job_analysis(analysis: Dict[str, Any]):
+    """Display job data analysis"""
+    print_subsection("Job Data Analysis")
+    
+    print(f"Total Jobs: {analysis['total_jobs']}")
+    print(f"Jobs with Processing Time: {analysis['jobs_with_processing_time']}")
+    print(f"Jobs without Processing Time: {analysis['jobs_without_processing_time']}")
+    print(f"Total Processing Hours: {analysis['total_processing_hours']:.1f} hours")
+    print(f"Average Processing Time: {analysis['avg_processing_time']:.1f} hours")
+    print(f"🚨 WARNING: {analysis['total_processing_hours']:.0f} hours = {analysis['total_processing_hours']/8:.0f} working days!")
+    
+    # Show distribution of processing times
+    print(f"\nProcessing Time Distribution:")
+    for range_str, count in analysis['processing_time_distribution'].items():
+        print(f"  • {range_str}: {count} jobs")
+    
+    # Show some sample processing times
+    if analysis['processing_times_raw']:
+        raw_times = sorted(analysis['processing_times_raw'])
+        print(f"\nSample Processing Times (hours):")
+        print(f"  • Min: {raw_times[0]:.1f}h")
+        print(f"  • Max: {raw_times[-1]:.1f}h") 
+        print(f"  • Median: {raw_times[len(raw_times)//2]:.1f}h")
+        print(f"  • Top 5 longest: {[f'{t:.1f}h' for t in raw_times[-5:]]}")
         
-        if not found_slot:
-            for i, scheduled_job_tuple in enumerate(sorted_schedule):
-                job_id, start_epoch, end_epoch = scheduled_job_tuple
-                gap_start = last_end_time
-                gap_end = start_epoch
-                gap_duration = gap_end - gap_start
-                
-                logger.debug(f"Checking gap before job {job_id}: from {epoch_to_datetime(gap_start)} to {epoch_to_datetime(gap_end)} ({gap_duration/3600:.2f} hrs)")
-                if gap_duration >= total_required_time:
-                    logger.info(f"Found a potential {gap_duration/3600:.2f}hr slot before job {job_id}. This should be enough.")
-                    found_slot = True
-                    break
-                last_end_time = end_epoch
-
-        if not found_slot and sorted_schedule:
-             last_job_end_time = sorted_schedule[-1][2]
-             gap_duration = deadline_epoch - last_job_end_time
-             logger.debug(f"Checking gap at the end of calendar: from {epoch_to_datetime(last_job_end_time)} to {epoch_to_datetime(deadline_epoch)} ({gap_duration/3600:.2f} hrs)")
-             if gap_duration >= total_required_time:
-                 logger.info(f"Found potential slot at the end of the calendar.")
-                 found_slot = True
+        # Show my calculation step by step
+        print(f"\n🔍 MY CALCULATION BREAKDOWN:")
+        print(f"  • Total jobs with processing_time: {analysis['jobs_with_processing_time']}")
+        print(f"  • Sum of all processing times: {analysis['total_processing_hours']:.1f} hours")
+        print(f"  • Average per job: {analysis['total_processing_hours'] / analysis['jobs_with_processing_time']:.1f} hours")
         
-        # Check if our target job was actually scheduled
-        job_was_scheduled = any(s_job[0] == job_id_to_debug for s_job in machine_schedule)
+        # Count how many 87.5-hour jobs
+        count_87_5 = sum(1 for t in raw_times if abs(t - 87.5) < 0.1)
+        count_122_5 = sum(1 for t in raw_times if abs(t - 122.5) < 0.1)
+        print(f"  • Jobs with exactly 87.5 hours: {count_87_5}")
+        print(f"  • Jobs with exactly 122.5 hours: {count_122_5}")
+        print(f"  • Contribution from 87.5h jobs: {count_87_5 * 87.5:.1f} hours")
+        print(f"  • Contribution from 122.5h jobs: {count_122_5 * 122.5:.1f} hours")
+        
+        # Show the math
+        total_from_these = (count_87_5 * 87.5) + (count_122_5 * 122.5)
+        print(f"  • Total from these patterns: {total_from_these:.1f} hours")
+        print(f"  • Remaining from other jobs: {analysis['total_processing_hours'] - total_from_these:.1f} hours")
+    print(f"Jobs with Deadlines: {analysis['jobs_with_deadlines']}")
+    print(f"Urgent Jobs (due <=7 days): {analysis['urgent_jobs']}")
+    
+    # Top machines
+    print(f"\nTop 5 Machines by Job Count:")
+    top_machines = sorted(analysis['machine_distribution'].items(), key=lambda x: x[1], reverse=True)[:5]
+    for machine, count in top_machines:
+        percentage = (count / analysis['total_jobs']) * 100
+        print(f"  • {machine}: {count} jobs ({percentage:.1f}%)")
+    
+    # Priority distribution
+    print(f"\nPriority Distribution:")
+    for priority, count in sorted(analysis['priority_distribution'].items()):
+        percentage = (count / analysis['total_jobs']) * 100
+        print(f"  • Priority {priority}: {count} jobs ({percentage:.1f}%)")
 
-        if job_was_scheduled:
-            logger.info("🎉 SUCCESS: The job WAS scheduled on this machine. The 'unscheduled' warning must be for a different reason or from a different run.")
-        elif found_slot:
-            logger.info("CONCLUSION: A sufficient time slot EXISTS on the calendar.")
-            logger.error("REAL ISSUE: The scheduling failure is due to a LOGIC FLAW. The simple gap check found a spot, but the scheduler's complex logic is failing. This often happens with how the scheduler handles jobs that span multiple days, especially over weekends or non-working hours. It might be calculating the 'end time' incorrectly when it crosses a day boundary and then failing a deadline check.")
-        else:
-            logger.info("CONCLUSION: No single continuous slot of {total_required_time / 3600:.2f} hours exists.")
-            logger.error("REAL ISSUE: The machine is fully booked with higher priority jobs. The unscheduled warning is correct because there is no available capacity.")
 
+def test_scheduler_config():
+    """Test scheduler configuration loading"""
+    print_subsection("Scheduler Configuration Test")
+    
+    try:
+        config = SchedulingConfigManager.load_config()
+        print("✅ Scheduler configuration loaded successfully")
+        print(f"  • Solver Time Limit: {config.solver_time_limit_seconds}s")
+        print(f"  • Max Jobs Limit: {config.max_jobs_limit}")
+        print(f"  • Planning Horizon: {config.planning_horizon_days} days")
+        print(f"  • Max Workers: {config.max_workers_limit}")
+        print(f"  • Normal Working Hours: {config.normal_working_hours}")
+        return config
     except Exception as e:
-        logger.critical(f"An unexpected error occurred during the debug script: {e}", exc_info=True)
+        print(f"❌ Scheduler configuration failed: {e}")
+        return None
+
+
+def run_scheduler_test(jobs: List[Dict[str, Any]], machines: List[Dict[str, str]], 
+                      setup_times: Dict[str, Dict[str, float]], config):
+    """Run the CP-SAT scheduler with loaded data"""
+    print_subsection("CP-SAT Solver Test")
+    
+    try:
+        print(f"✅ Scheduler function available")
+        
+        # Run scheduling
+        print(f"Starting scheduling for {len(jobs)} jobs...")
+        start_time = time.time()
+        
+        result = schedule_jobs(
+            jobs=jobs,
+            machines=machines,
+            setup_times=setup_times,
+            time_limit_seconds=60,  # Short test
+            max_operators=config.max_workers_limit,
+            max_jobs_limit=50,  # Small test batch
+            planning_horizon_days=180  # Use your real planning horizon
+        )
+        
+        end_time = time.time()
+        solving_time = end_time - start_time
+        
+        print(f"Scheduling completed in {solving_time:.2f} seconds")
+        
+        return result, solving_time
+        
+    except Exception as e:
+        print(f"❌ Scheduler failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, 0
+
+
+def analyze_scheduling_result(result: Dict[str, Any], solving_time: float):
+    """Analyze and display scheduling results"""
+    print_subsection("Scheduling Results Analysis")
+    
+    if not result:
+        print("❌ No scheduling result to analyze")
+        return
+    
+    # Basic statistics
+    status = result.get('status', 'Unknown')
+    objective_value = result.get('objective_value', 0)
+    scheduled_jobs = result.get('scheduled_jobs', [])
+    unscheduled_jobs = result.get('unscheduled_jobs', [])
+    
+    print(f"Scheduling Status: {status}")
+    print(f"Objective Value: {objective_value}")
+    print(f"Scheduled Jobs: {len(scheduled_jobs)}")
+    print(f"Unscheduled Jobs: {len(unscheduled_jobs)}")
+    print(f"Solving Time: {solving_time:.2f} seconds")
+    
+    if scheduled_jobs:
+        # Calculate scheduling efficiency
+        total_jobs = len(scheduled_jobs) + len(unscheduled_jobs)
+        efficiency = (len(scheduled_jobs) / total_jobs) * 100 if total_jobs > 0 else 0
+        print(f"Scheduling Efficiency: {efficiency:.1f}%")
+        
+        # Analyze machine utilization
+        machine_usage = {}
+        total_scheduled_time = 0
+        
+        for job in scheduled_jobs:
+            machine = job.get('machine', 'Unknown')
+            duration = job.get('duration', 0)
+            machine_usage[machine] = machine_usage.get(machine, 0) + duration
+            total_scheduled_time += duration
+        
+        print(f"\nMachine Utilization (Top 5):")
+        top_machines = sorted(machine_usage.items(), key=lambda x: x[1], reverse=True)[:5]
+        for machine, usage_seconds in top_machines:
+            usage_hours = usage_seconds / 3600
+            percentage = (usage_seconds / total_scheduled_time) * 100 if total_scheduled_time > 0 else 0
+            print(f"  • {machine}: {usage_hours:.1f} hours ({percentage:.1f}%)")
+        
+        # Timeline analysis
+        if scheduled_jobs:
+            start_times = [job.get('start_time', 0) for job in scheduled_jobs if job.get('start_time')]
+            end_times = [job.get('end_time', 0) for job in scheduled_jobs if job.get('end_time')]
+            
+            if start_times and end_times:
+                earliest_start = min(start_times)
+                latest_end = max(end_times)
+                total_span = latest_end - earliest_start
+                
+                print(f"\nTimeline Analysis:")
+                print(f"  • Earliest Start: {datetime.fromtimestamp(earliest_start).strftime('%Y-%m-%d %H:%M')}")
+                print(f"  • Latest End: {datetime.fromtimestamp(latest_end).strftime('%Y-%m-%d %H:%M')}")
+                print(f"  • Total Span: {total_span / 3600:.1f} hours")
+    
+    # Show unscheduled jobs summary
+    if unscheduled_jobs:
+        print(f"\nUnscheduled Jobs Analysis:")
+        print(f"  • Count: {len(unscheduled_jobs)}")
+        
+        # Group by reason if available
+        reasons = {}
+        for job in unscheduled_jobs:
+            reason = job.get('reason', 'Unknown')
+            reasons[reason] = reasons.get(reason, 0) + 1
+        
+        for reason, count in sorted(reasons.items(), key=lambda x: x[1], reverse=True):
+            print(f"  • {reason}: {count} jobs")
+
+
+def main():
+    """Main test execution"""
+    print_separator("CP-SAT Scheduler Deep Dive Test", "=", 80)
+    print(f"Test started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Step 1: Load job data
+    print_subsection("Loading Job Data")
+    
+    try:
+        jobs, machines, setup_times = load_jobs_planning_data(
+            max_jobs=None,  # Load all jobs
+            planning_horizon_days=180
+        )
+        print(f"✅ Loaded {len(jobs)} jobs, {len(machines)} machines")
+    except Exception as e:
+        print(f"❌ Failed to load job data: {e}")
+        return
+    
+    # Step 2: Analyze job data
+    analysis = analyze_job_data(jobs)
+    display_job_analysis(analysis)
+    
+    # Step 3: Test scheduler configuration
+    config = test_scheduler_config()
+    if not config:
+        print("❌ Cannot proceed without valid configuration")
+        return
+    
+    # Step 4: Run scheduler
+    result, solving_time = run_scheduler_test(jobs, machines, setup_times, config)
+    
+    # Step 5: Analyze results
+    if result:
+        analyze_scheduling_result(result, solving_time)
+    
+    # Summary
+    print_separator("Test Summary", "=", 80)
+    print("✅ CP-SAT Scheduler deep dive test completed!")
+    
+    if result:
+        scheduled_count = len(result.get('scheduled_jobs', []))
+        total_count = len(jobs)
+        efficiency = (scheduled_count / total_count) * 100 if total_count > 0 else 0
+        
+        print(f"\nFinal Results:")
+        print(f"  • Total Jobs: {total_count}")
+        print(f"  • Scheduled: {scheduled_count}")
+        print(f"  • Efficiency: {efficiency:.1f}%")
+        print(f"  • Solving Time: {solving_time:.2f}s")
+        print(f"  • Status: {result.get('status', 'Unknown')}")
+
 
 if __name__ == "__main__":
-    # Activate venv and run
-    # source /Users/carrickcheah/llms_project/services/ai_optimizer/.venv/bin/activate && python debug_deep_dive.py
-    debug_joaw25060047_failure() 
+    main()

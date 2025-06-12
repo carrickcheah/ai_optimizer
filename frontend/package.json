@@ -35,6 +35,8 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@types/plotly.js": "^3.0.0",
+    "@types/react-plotly.js": "^2.6.3",
     "@vitejs/plugin-react": "^4.4.1",
     "lucide-react": "^0.503.0",
     "recharts": "^2.15.3",

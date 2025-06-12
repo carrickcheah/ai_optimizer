@@ -145,18 +145,26 @@ const GanttChartDisplay: React.FC = () => {
     orientation: 'h',
     marker: {
       color: sortedTasks.map(task => {
-        // Use actual buffer status color only
+        // For subcontractor tasks, use a distinct pattern by modifying the color
+        if (task.Resource === 'Subcon') {
+          const baseColor = task.Color || 
+                           (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+          // Use a lighter/striped version for subcon tasks or a distinct color scheme
+          return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
+        }
+        // Use actual buffer status color for machine tasks
         return task.Color || 
                (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
       })
     },
     text: sortedTasks.map(task => {
+      const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
       const tooltipParts = [
         `<b>${task.Task}</b>`,
         `<b>Start:</b> ${formatDateTime(task.Start)}`,
         `<b>End:</b> ${formatDateTime(task.Finish)}`,
         `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`,
-        `<b>Resource:</b> ${task.Resource}`,
+        `<b>Resource:</b> ${task.Resource} ${resourceType}`,
         `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
       ];
       if (task.JobFamily) {
@@ -201,17 +209,25 @@ const GanttChartDisplay: React.FC = () => {
         orientation: 'h',
         marker: {
           color: sortedTasks.map(task => {
+            // For subcontractor tasks, use a distinct pattern by modifying the color
+            if (task.Resource === 'Subcon') {
+              const baseColor = task.Color || 
+                               (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+              // Use a lighter/striped version for subcon tasks or a distinct color scheme
+              return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
+            }
             return task.Color || 
                   (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
           })
         },
         text: sortedTasks.map(task => {
+          const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
           const tooltipParts = [
             `<b>${task.Task}</b>`,
             `<b>Start:</b> ${formatDateTime(task.Start)}`,
             `<b>End:</b> ${formatDateTime(task.Finish)}`,
             `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`,
-            `<b>Resource:</b> ${task.Resource}`,
+            `<b>Resource:</b> ${task.Resource} ${resourceType}`,
             `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
           ];
           if (task.JobFamily) {
@@ -331,17 +347,25 @@ const GanttChartDisplay: React.FC = () => {
       orientation: 'h',
               marker: {
           color: filteredTasks.map(task => {
+            // For subcontractor tasks, use a distinct pattern by modifying the color
+            if (task.Resource === 'Subcon') {
+              const baseColor = task.Color || 
+                               (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+              // Use a lighter/striped version for subcon tasks or a distinct color scheme
+              return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
+            }
             return task.Color || 
                   (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
           })
         },
       text: filteredTasks.map(task => {
+        const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
         const tooltipParts = [
           `<b>${task.Task}</b>`,
           `<b>Start:</b> ${formatDateTime(task.Start)}`,
           `<b>End:</b> ${formatDateTime(task.Finish)}`,
           `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`,
-          `<b>Resource:</b> ${task.Resource}`,
+          `<b>Resource:</b> ${task.Resource} ${resourceType}`,
           `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
         ];
         if (task.JobFamily) {

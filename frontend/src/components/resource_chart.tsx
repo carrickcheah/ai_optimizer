@@ -25,10 +25,9 @@ interface ResourceChartProps {
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const { data, refreshData, clearError } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('all');
-  const [dateRange, setDateRange] = useState<{start: Date, end: Date} | null>(null);
 
   // Use cached data instead of local state
-  const tasks = data.ganttResourceView;
+  const tasks: TaskData[] = data.ganttResourceView;
   const isLoading = data.isLoading;
   const error = data.error;
   const overview = data.scheduleOverview;
@@ -86,10 +85,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           maxDate = oneYearFromMin;
         }
         
-        setDateRange({
-          start: minDate,
-          end: maxDate
-        });
+
       } else {
         console.warn('[ResourceChart] No valid dates found in cached data!');
       }
@@ -105,26 +101,21 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     await refreshData();
   };
 
-  // Sort tasks first by resource, then by start time
-  const sortedTasks = [...tasks].sort((a, b) => {
+  // Filter out subcontractor tasks and sort by resource, then by start time
+  const machineOnlyTasks = tasks.filter(task => task.Resource !== 'Subcon');
+  const sortedTasks = [...machineOnlyTasks].sort((a, b) => {
     if (a.Resource !== b.Resource) {
       return a.Resource.localeCompare(b.Resource);
     }
     return new Date(a.Start).getTime() - new Date(b.Start).getTime();
   });
 
-  // Custom sorting function to put 'Subcon' last
-  const sortResourcesWithSubconLast = (resources: string[]): string[] => {
-    return resources.sort((a, b) => {
-      // Always put 'Subcon' last
-      if (a === 'Subcon' && b !== 'Subcon') return 1;
-      if (b === 'Subcon' && a !== 'Subcon') return -1;
-      // For all other resources, sort alphabetically
-      return a.localeCompare(b);
-    });
+  // Simple alphabetical sorting for machine resources only
+  const sortMachineResources = (resources: string[]): string[] => {
+    return resources.sort((a, b) => a.localeCompare(b));
   };
 
-  const resourceGroups = sortResourcesWithSubconLast([...new Set(sortedTasks.map(task => task.Resource))]);
+  const resourceGroups = sortMachineResources([...new Set(sortedTasks.map(task => task.Resource))]);
   
   console.log('[ResourceChart] Sorted tasks:', sortedTasks.length);
   console.log('[ResourceChart] Resource groups:', resourceGroups);
@@ -174,7 +165,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       }),
       hoverinfo: 'text',
       showlegend: false
-    });
+    } as any);
   });
 
   console.log('[ResourceChart] Generated plotData:', plotData.length, 'series');
@@ -184,7 +175,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   if (plotData.length > 0 && plotData[0]) {
     console.log('[ResourceChart] First series x values (durations):', plotData[0].x);
     console.log('[ResourceChart] First series y values (resources):', plotData[0].y);
-    console.log('[ResourceChart] First series base values (start times):', plotData[0].base);
+    console.log('[ResourceChart] First series base values (start times):', (plotData[0] as any).base);
   }
 
   const chartTitle = title || 'Production Planning System (by Resource)';
@@ -363,7 +354,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const filteredPlotData: Partial<PlotData>[] = [];
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = sortResourcesWithSubconLast([...new Set(filteredTasks.map(task => task.Resource))]);
+    const filteredResourceGroups = sortMachineResources([...new Set(filteredTasks.map(task => task.Resource))]);
     
     filteredResourceGroups.forEach(resource => {
       const resourceTasks = filteredTasks.filter(task => task.Resource === resource);
@@ -399,7 +390,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           }),
           hoverinfo: 'text',
           showlegend: false
-        });
+        } as any);
       }
     });
     
@@ -429,7 +420,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       categoryorder: 'array' as const,
-      categoryarray: sortResourcesWithSubconLast([...resourceGroups]),
+      categoryarray: sortMachineResources([...resourceGroups]),
       autorange: 'reversed' as const,
     },
     autosize: true,
@@ -462,7 +453,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // For "all" timeframe, we can just use all tasks
     if (timeRange === 'all') {
       // Get all unique resources for the y-axis
-      const allResourceGroups = sortResourcesWithSubconLast([...new Set(sortedTasks.map(task => task.Resource))]);
+      const allResourceGroups = sortMachineResources([...new Set(sortedTasks.map(task => task.Resource))]);
       
       // Calculate the actual data range for 'all' timeframe
       const allValidDates = sortedTasks
@@ -509,7 +500,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           ...layout.yaxis,
           type: 'category',
           categoryorder: 'array' as const,
-                  categoryarray: sortResourcesWithSubconLast([...allResourceGroups]),
+                  categoryarray: sortMachineResources([...allResourceGroups]),
           autorange: 'reversed' as const,
         },
         shapes: [{
@@ -603,7 +594,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     });
     
     // Get unique resources from filtered tasks
-    const filteredResourceGroups = sortResourcesWithSubconLast([...new Set(filteredTasksForLayout.map(task => task.Resource))]);
+    const filteredResourceGroups = sortMachineResources([...new Set(filteredTasksForLayout.map(task => task.Resource))]);
     
     // Set the x-axis range to show our filtered window
     const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
@@ -638,7 +629,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         ...layout.yaxis,
         type: 'category',
         categoryorder: 'array' as const,
-        categoryarray: sortResourcesWithSubconLast([...filteredResourceGroups]),
+        categoryarray: sortMachineResources([...filteredResourceGroups]),
         autorange: 'reversed' as const,
       },
       shapes: [{

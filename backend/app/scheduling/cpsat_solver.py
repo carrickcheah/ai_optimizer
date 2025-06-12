@@ -788,16 +788,16 @@ class ConstraintManager:
     def _add_working_hours_constraints(self, model_builder: CPSATModelBuilder) -> None:
         """Add working hours constraints from ai_arrangable_hour table."""
         try:
-            from app.scheduling.time_availability import TimeAvailabilityChecker
+            from app.scheduling.time_availability import TimeAvailabilityManager
         except ImportError:
-            logger.warning("Could not import TimeAvailabilityChecker - skipping working hours constraints")
+            logger.warning("Could not import TimeAvailabilityManager - skipping working hours constraints")
             return
         
-        time_checker = TimeAvailabilityChecker()
+        time_checker = TimeAvailabilityManager.get_instance()
         logger.info("Adding working hours constraints from ai_arrangable_hour table")
         
         # Force cache refresh
-        time_checker._refresh_cache_if_needed()
+        time_checker.cache.refresh_if_needed()
         
         # Get working hours for each day (1=Monday, 7=Sunday)
         working_hours_by_day = self._get_working_hours_by_day(time_checker)
