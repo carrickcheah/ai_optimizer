@@ -262,22 +262,28 @@ def normalize_schedule_format(schedule_output: Dict[str, List]) -> Dict[str, Lis
         logger.error(f"❌ SCHEDULE NORMALIZATION FAILED: {e}")
         raise ValueError(f"Schedule normalization failed: {e}")
 
-async def get_schedule_and_job_data(solver_type: str) -> tuple:
+async def get_schedule_and_job_data(solver_type: str, force_refresh: bool = False) -> tuple:
     """Load job data and run scheduler with strict validation - HANDLES BATCH SCHEDULER PARAMETER MISMATCH."""
     try:
         # Validate solver type
         solver_type = ScheduleValidator.validate_solver_type(solver_type)
         
-        # Check cache first
+        # Check cache first (unless force_refresh is True)
         cache_key = solver_type
         current_time = datetime.now().timestamp()
         
-        if (cache_key in _SCHEDULE_CACHE and 
+        if (not force_refresh and 
+            cache_key in _SCHEDULE_CACHE and 
             cache_key in _CACHE_TIMESTAMP and 
             current_time - _CACHE_TIMESTAMP[cache_key] < CACHE_DURATION_SECONDS):
             
             logger.info(f"✅ Using cached schedule data for solver '{solver_type}' (age: {int(current_time - _CACHE_TIMESTAMP[cache_key])}s)")
             return _SCHEDULE_CACHE[cache_key]
+        
+        if force_refresh:
+            logger.info(f"🔄 Force refresh requested - bypassing cache for solver '{solver_type}'")
+        else:
+            logger.info(f"🔄 No valid cache found for solver '{solver_type}' - generating fresh data")
         
         logger.info(f"🔄 Loading jobs data (max: {REPORTING_CONFIG.max_jobs_limit}, horizon: {REPORTING_CONFIG.planning_horizon_days} days)")
         
@@ -424,13 +430,14 @@ async def get_schedule_and_job_data(solver_type: str) -> tuple:
 
 @router.get("/gantt/priority-view", response_model=List[Dict[str, Any]])
 async def get_gantt_priority_data(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)")
+    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get Gantt chart data colored by priority with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh)
         
         logger.info("🔄 Preparing Gantt priority view data")
         chart_data = prepare_gantt_data_priority_view(schedule_output, jobs_input_data)
@@ -450,13 +457,14 @@ async def get_gantt_priority_data(
 
 @router.get("/gantt/resource-view", response_model=List[Dict[str, Any]])
 async def get_gantt_resource_data(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)")
+    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get Gantt chart data grouped by resource with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh)
         
         logger.info("🔄 Preparing Gantt resource view data")
         chart_data = prepare_gantt_data_resource_view(schedule_output, jobs_input_data)
@@ -476,13 +484,14 @@ async def get_gantt_resource_data(
 
 @router.get("/detailed-schedule", response_model=List[Dict[str, Any]])
 async def get_detailed_schedule_table(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)")
+    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get detailed schedule table data with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh)
         
         logger.info("🔄 Preparing detailed schedule table data")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)
@@ -502,13 +511,14 @@ async def get_detailed_schedule_table(
 
 @router.get("/schedule-overview", response_model=Dict[str, Any])
 async def get_schedule_overview(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)")
+    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get schedule overview with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh)
         
         logger.info("🔄 Preparing schedule overview")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)
@@ -588,13 +598,14 @@ async def get_schedule_overview(
 
 @router.get("/data-quality-analysis", response_model=Dict[str, Any])
 async def get_data_quality_analysis(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)")
+    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Analyze data quality with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh)
         
         logger.info("🔄 Performing data quality analysis")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)

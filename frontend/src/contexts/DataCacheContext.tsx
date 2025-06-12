@@ -150,6 +150,16 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     }
   };
 
+  // Clear localStorage cache
+  const clearDataFromLocalStorage = () => {
+    try {
+      localStorage.removeItem('scheduleDataCache');
+      console.log('[DataCache] Cleared data from localStorage');
+    } catch (error) {
+      console.warn('[DataCache] Failed to clear data from localStorage:', error);
+    }
+  };
+
   // Calculate time until next 6am Singapore time
   const getTimeUntilNext6AMSingapore = () => {
     const now = new Date();
@@ -175,6 +185,9 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
   const refreshData = async () => {
     console.log('[DataCache] Starting data refresh...');
     
+    // Clear previous cache when manually refreshing
+    clearDataFromLocalStorage();
+    
     setData(prev => ({ 
       ...prev, 
       isLoading: true, 
@@ -182,17 +195,17 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     }));
 
     try {
-      // Fetch all data in parallel
+      // Fetch all data in parallel with force_refresh=true for manual refreshes
       const [
         ganttPriorityResponse,
         ganttResourceResponse,
         scheduleOverviewResponse,
         detailedScheduleResponse
       ] = await Promise.all([
-        fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}`),
-        fetch(`${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}`),
-        fetch(`${API_BASE_URL}/reports/schedule-overview?solver=${solver}`),
-        fetch(`${API_BASE_URL}/reports/detailed-schedule?solver=${solver}`)
+        fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/reports/schedule-overview?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/reports/detailed-schedule?solver=${solver}&force_refresh=true`)
       ]);
 
       // Check if all responses are ok
@@ -227,8 +240,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
       console.log('[DataCache] Gantt Resource tasks:', ganttResourceData.length);
       console.log('[DataCache] Detailed schedule rows:', detailedScheduleData.length);
 
-      setData(prev => ({
-        ...prev,
+      const newData = {
         ganttPriorityView: ganttPriorityData,
         ganttResourceView: ganttResourceData,
         scheduleOverview: scheduleOverviewData,
@@ -236,23 +248,29 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
         lastRefresh: new Date(),
         isLoading: false,
         error: null,
-      }));
+      };
 
+      setData(newData);
+      saveDataToLocalStorage(newData);
       setHasInitiallyLoaded(true);
 
     } catch (error) {
       console.error('[DataCache] Error refreshing data:', error);
-      setData(prev => ({
-        ...prev,
+      const errorData = {
+        ...data,
         isLoading: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
-      }));
+      };
+      setData(errorData);
+      saveDataToLocalStorage(errorData);
       setHasInitiallyLoaded(true);
     }
   };
 
   const clearError = () => {
-    setData(prev => ({ ...prev, error: null }));
+    const clearedData = { ...data, error: null };
+    setData(clearedData);
+    saveDataToLocalStorage(clearedData);
   };
 
   // One-time initial load when first needed
@@ -271,10 +289,12 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     
     const dailyRefreshTimeout = setTimeout(() => {
       console.log('[DataCache] Daily 6AM Singapore time auto-refresh triggered');
+      clearDataFromLocalStorage(); // Clear cache before refreshing
       refreshData();
       
       // Schedule next day's 6am refresh
       const nextDayTimeout = setTimeout(() => {
+        clearDataFromLocalStorage(); // Clear cache before refreshing
         refreshData();
       }, 24 * 60 * 60 * 1000); // 24 hours
       
