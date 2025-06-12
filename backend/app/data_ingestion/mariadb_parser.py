@@ -26,6 +26,13 @@ DB_PASSWORD = os.getenv("MARIADB_PASSWORD")
 DB_NAME = os.getenv("MARIADB_DATABASE")
 DB_PORT = os.getenv("MARIADB_PORT", "3306")
 
+# Configure logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # Get scheduling configuration
 NORMAL_WORKING_HOURS = os.getenv("NORMAL_WORKING_HOURS")
 if not NORMAL_WORKING_HOURS:
@@ -36,13 +43,6 @@ try:
 except ValueError:
     logger.error(f"❌ INVALID NORMAL_WORKING_HOURS: Cannot convert '{NORMAL_WORKING_HOURS}' to float")
     raise ValueError(f"NORMAL_WORKING_HOURS must be a valid number, got: {NORMAL_WORKING_HOURS}")
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 def validate_environment_config() -> Dict[str, Union[int, float]]:
@@ -218,7 +218,7 @@ def build_jobs_query() -> str:
         WHERE jot.Void_c != 1 
               AND jot.DocStatus_c NOT IN ('CP', 'CX') 
               AND jop.QtyStatus_c != 'FF' 
-              AND jot.TargetDate_dd >= CURDATE()
+              AND jot.TargetDate_dd > CURDATE()  -- Exclude today's jobs (can't be scheduled in time)
               AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
               AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         GROUP BY jop.TxnId_i, jop.RowId_i, jot.CreateDate_dt, jot.TargetDate_dd, 
@@ -334,6 +334,7 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
             )
     
     job["MachineName_v"] = machine_name
+    job["machine_id"] = machine_name  # Scheduler expects machine_id field
 
     # Add other columns with proper type conversion
     numeric_int_fields = {
@@ -519,7 +520,7 @@ def load_jobs_planning_data(
     
     logger.info(
         f"Starting to load jobs planning data from MariaDB using joined tables "
-        f"(planning_horizon: {planning_horizon_days} days, no job limit)"
+        f"(planning_horizon: {planning_horizon_days} days, excluding today's jobs, no job limit)"
     )
     
     conn = None

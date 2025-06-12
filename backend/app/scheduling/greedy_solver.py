@@ -482,8 +482,21 @@ class GreedyScheduler:
         logger.info(f"Starting greedy scheduling for {len(jobs)} jobs on {len(machines)} machines")
         logger.info(f"Configuration: enforce_sequence={enforce_sequence}, max_operators={max_operators}")
         
+        # Count jobs per machine for overload detection
+        machine_job_counts = {}
+        for job in jobs:
+            machine_id = job.get('machine_id') or job.get('MachineName_v')
+            if machine_id and machine_id != 'NOT_ASSIGN':
+                machine_job_counts[machine_id] = machine_job_counts.get(machine_id, 0) + 1
+        
         # Initialize scheduling state
         schedule_state = self._initialize_schedule_state(machines)
+        schedule_state['machine_job_counts'] = machine_job_counts
+        
+        # Log machine workloads for debugging
+        overloaded_machines = {m: count for m, count in machine_job_counts.items() if count > 20}
+        if overloaded_machines:
+            logger.info(f"Overloaded machines (>20 jobs): {dict(sorted(overloaded_machines.items(), key=lambda x: x[1], reverse=True))}")
         
         # Categorize jobs
         job_categories = JobCategorizer.categorize_jobs(jobs)
@@ -640,11 +653,12 @@ class GreedyScheduler:
         job_id = job['job_id']
         
         # Detect overloaded machines and extend search window
-        machine_tasks = len(schedule_state['schedule'].get(machine_id, []))
+        # Count total jobs assigned to this machine (not just currently scheduled)
+        total_machine_jobs = schedule_state.get('machine_job_counts', {}).get(machine_id, 0)
         
-        if machine_tasks > 20:  # Machine is overloaded
+        if total_machine_jobs > 20:  # Machine is overloaded
             search_limit_hours = self.config.overloaded_machine_search_days * 24
-            logger.info(f"Job {job_id}: Machine {machine_id} overloaded ({machine_tasks} tasks), extending search to {self.config.overloaded_machine_search_days} days")
+            logger.info(f"Job {job_id}: Machine {machine_id} overloaded ({total_machine_jobs} total jobs), extending search to {self.config.overloaded_machine_search_days} days")
         else:
             search_limit_hours = self.config.scheduler_search_days * 24
             logger.debug(f"Job {job_id}: Searching for slot within {self.config.scheduler_search_days} days")
