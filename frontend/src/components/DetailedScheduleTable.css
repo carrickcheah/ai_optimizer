@@ -147,29 +147,25 @@ body {
   background-color: rgba(6, 105, 244, 0.05);
 }
 
-/* Specific column widths - Total: 100% (22 columns) */
+/* Specific column widths - Total: 100% (18 columns) */
 .schedule-table th:nth-child(1), .schedule-table td:nth-child(1) { width: 2%; } /* No (sequence number) */
 .schedule-table th:nth-child(2), .schedule-table td:nth-child(2) { width: 5%; } /* Plan Date */
 .schedule-table th:nth-child(3), .schedule-table td:nth-child(3) { width: 5%; } /* Start Time */
 .schedule-table th:nth-child(4), .schedule-table td:nth-child(4) { width: 5%; } /* End Time */
 .schedule-table th:nth-child(5), .schedule-table td:nth-child(5) { width: 5%; } /* LCD Date */
-.schedule-table th:nth-child(6), .schedule-table td:nth-child(6) { width: 5%; } /* Req. Start */
-.schedule-table th:nth-child(7), .schedule-table td:nth-child(7) { width: 3%; } /* Depend */
-.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 6%; } /* Job Name */
-.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 6%; } /* Process Code */
-.schedule-table th:nth-child(10), .schedule-table td:nth-child(10) { width: 8%; } /* Machine Name */
-.schedule-table th:nth-child(11), .schedule-table td:nth-child(11) { width: 3%; } /* Operator */
-.schedule-table th:nth-child(12), .schedule-table td:nth-child(12) { width: 5%; } /* Job Qty */
-.schedule-table th:nth-child(13), .schedule-table td:nth-child(13) { width: 5%; } /* Output/Hr */
-.schedule-table th:nth-child(14), .schedule-table td:nth-child(14) { width: 4%; } /* Priority */
-.schedule-table th:nth-child(15), .schedule-table td:nth-child(15) { width: 5%; } /* Hours Need */
-.schedule-table th:nth-child(16), .schedule-table td:nth-child(16) { width: 4%; } /* Setting Hr */
-.schedule-table th:nth-child(17), .schedule-table td:nth-child(17) { width: 4%; } /* Break Hr */
-.schedule-table th:nth-child(18), .schedule-table td:nth-child(18) { width: 4%; } /* No Prod Hr */
-.schedule-table th:nth-child(19), .schedule-table td:nth-child(19) { width: 5%; } /* Accum. Output */
-.schedule-table th:nth-child(20), .schedule-table td:nth-child(20) { width: 5%; } /* Bal. Qty */
-.schedule-table th:nth-child(21), .schedule-table td:nth-child(21) { width: 4%; } /* Bal Hr */
-.schedule-table th:nth-child(22), .schedule-table td:nth-child(22) { width: 5%; } /* Buffer Status */
+.schedule-table th:nth-child(6), .schedule-table td:nth-child(6) { width: 8%; } /* Job Name */
+.schedule-table th:nth-child(7), .schedule-table td:nth-child(7) { width: 7%; } /* Process Code */
+.schedule-table th:nth-child(8), .schedule-table td:nth-child(8) { width: 9%; } /* Machine Name */
+.schedule-table th:nth-child(9), .schedule-table td:nth-child(9) { width: 4%; } /* Operator */
+.schedule-table th:nth-child(10), .schedule-table td:nth-child(10) { width: 6%; } /* Job Qty */
+.schedule-table th:nth-child(11), .schedule-table td:nth-child(11) { width: 6%; } /* Output/Hr */
+.schedule-table th:nth-child(12), .schedule-table td:nth-child(12) { width: 5%; } /* Priority */
+.schedule-table th:nth-child(13), .schedule-table td:nth-child(13) { width: 6%; } /* Hours Need */
+.schedule-table th:nth-child(14), .schedule-table td:nth-child(14) { width: 5%; } /* Setting Hr */
+.schedule-table th:nth-child(15), .schedule-table td:nth-child(15) { width: 7%; } /* Accum. Output */
+.schedule-table th:nth-child(16), .schedule-table td:nth-child(16) { width: 7%; } /* Bal. Qty */
+.schedule-table th:nth-child(17), .schedule-table td:nth-child(17) { width: 5%; } /* Bal Hr */
+.schedule-table th:nth-child(18), .schedule-table td:nth-child(18) { width: 5%; } /* Buffer Status */
 
 .buffer-status {
   border-radius: 12px;
@@ -251,17 +247,16 @@ body {
 }
 
 /* Multi-line column headers styling */
-/* No, Plan Date, Start Time, End Time, Req. Start, Resource Code, Output Per Hr, Hours Need, Setting Hr, Buffer Status */
+/* No, Plan Date, Start Time, End Time, Machine Name, Output Per Hr, Hours Need, Setting Hr, Buffer Status */
 .schedule-table th:nth-child(1),
 .schedule-table th:nth-child(2),
 .schedule-table th:nth-child(3), 
 .schedule-table th:nth-child(4), 
-.schedule-table th:nth-child(6),
-.schedule-table th:nth-child(10),
+.schedule-table th:nth-child(8),
+.schedule-table th:nth-child(11),
 .schedule-table th:nth-child(13),
-.schedule-table th:nth-child(15),
-.schedule-table th:nth-child(16),
-.schedule-table th:nth-child(22) {
+.schedule-table th:nth-child(14),
+.schedule-table th:nth-child(18) {
   white-space: normal;
   line-height: 1.1;
   padding: 0.2rem;

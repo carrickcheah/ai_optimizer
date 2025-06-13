@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   createColumnHelper,
   flexRender,
@@ -75,46 +75,7 @@ const formatDateTime = (dateTimeStr: string | undefined): React.ReactNode => {
   );
 };
 
-// Helper function specifically for LCD Date format (date + HH:MM)
-const formatLCDDate = (dateTimeStr: string | undefined): React.ReactNode => {
-  if (!dateTimeStr || dateTimeStr === 'N/A') return 'N/A';
-  
-  // The backend returns LCD date in format: "dd/mm/yy HH:MM"
-  // This should be displayed as-is or can be reformatted if needed
-  
-  try {
-    // If it's already in the expected format (dd/mm/yy HH:MM), return as-is
-    if (/^\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(dateTimeStr)) {
-      return dateTimeStr;
-    }
-    
-    // Try to parse other possible formats and convert to dd/mm/yy HH:MM
-    let date: Date | null = null;
-    
-    // Try parsing as ISO date string
-    if (dateTimeStr.includes('-') && (dateTimeStr.includes('T') || dateTimeStr.includes(' '))) {
-      date = new Date(dateTimeStr);
-    }
-    
-    if (date && !isNaN(date.getTime())) {
-      // Format as dd/mm/yy HH:MM
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const year = date.getFullYear().toString().slice(-2);
-      const hours = date.getHours().toString().padStart(2, '0');
-      const minutes = date.getMinutes().toString().padStart(2, '0');
-      
-      return `${day}/${month}/${year} ${hours}:${minutes}`;
-    }
-    
-    // If all parsing fails, return the original value
-    return dateTimeStr;
-    
-  } catch (error) {
-    console.warn('Error formatting LCD date:', dateTimeStr, error);
-    return dateTimeStr;
-  }
-};
+
 
 // Helper function specifically for LCD Date and Req Start format (YYYY-MM-DD \n HH:MM)
 const formatDateTimeSpecial = (dateTimeStr: string | undefined): React.ReactNode => {
@@ -170,7 +131,7 @@ const columns = [
   {
     id: 'sequence',
     header: 'No',
-    cell: ({ row }) => row.index + 1,
+    cell: ({ row }: { row: any }) => row.index + 1,
   },
   // Add Plan Date column
   columnHelper.accessor('plan_date', { 
@@ -195,21 +156,6 @@ const columns = [
       return formatDateTimeSpecial(lcdValue);
     }
   }),
-  columnHelper.accessor('start_date_input_str', { 
-    header: 'Req. Start', 
-    cell: info => formatDateTimeSpecial(info.getValue())
-  }),
-  columnHelper.accessor('job_dependency', { 
-    header: 'Depend', 
-    cell: info => {
-      const value = info.getValue();
-      // Convert to string for safe comparison and handle all cases
-      const strValue = String(value);
-      if (strValue === '1') return 'Yes';
-      if (strValue === '0') return 'No';
-      return value || '-';
-    } 
-  }),
   columnHelper.accessor('job', { header: 'Job Name', cell: info => info.getValue() || 'N/A' }),
   columnHelper.accessor('process_code', { header: 'Process Code', cell: info => info.getValue() || 'N/A' }),
   columnHelper.accessor('MachineName_v', { header: 'Machine Name', cell: info => info.getValue() || 'N/A' }),
@@ -220,8 +166,6 @@ const columns = [
   columnHelper.accessor('priority', { header: 'Priority', cell: info => info.getValue() }),
   columnHelper.accessor('hours_need', { header: 'Hours\nNeed', cell: info => info.getValue()?.toFixed(1) || '0.0' }),
   columnHelper.accessor('setting_hours', { header: 'Setting\nHr', cell: info => info.getValue()?.toFixed(1) || '0.0' }),
-  columnHelper.accessor('break_hours', { header: 'Break Hr', cell: info => info.getValue()?.toFixed(1) || '0.0' }),
-  columnHelper.accessor('no_prod', { header: 'No Prod Hr', cell: info => info.getValue()?.toFixed(1) || '0.0' }),
   columnHelper.accessor('accumulated_daily_output', { header: 'Accum. Output', cell: info => info.getValue() }),
   columnHelper.accessor('balance_quantity', { header: 'Bal. Qty', cell: info => info.getValue() }),
   columnHelper.accessor('bal_hr', { header: 'Bal Hr', cell: info => info.getValue()?.toFixed(1) || 'N/A' }),
@@ -239,7 +183,7 @@ const columns = [
 ];
 
 const DetailedScheduleTable: React.FC = () => {
-  const { data: cacheData, refreshData, clearError } = useDataCache();
+  const { data: cacheData } = useDataCache();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<{
     currentPage: number;
@@ -303,12 +247,7 @@ const DetailedScheduleTable: React.FC = () => {
     setPagination(prev => ({ ...prev, currentPage: pageNumber }));
   };
 
-  // Manual refresh function using shared cache
-  const handleManualRefresh = async () => {
-    console.log('[DetailedScheduleTable] Manual refresh triggered by user');
-    clearError();
-    await refreshData();
-  };
+
 
   const renderTableInfo = () => {
     const { currentPage, itemsPerPage, totalItems } = pagination;
@@ -421,13 +360,6 @@ const DetailedScheduleTable: React.FC = () => {
           onClick={() => window.history.back()}
         >
           <i className="fas fa-arrow-left"></i> Back
-        </button>
-        <button 
-          className="btn btn-primary" 
-          onClick={handleManualRefresh}
-          disabled={isLoading}
-        >
-          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
         </button>
       </div>
       

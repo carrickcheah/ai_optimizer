@@ -54,7 +54,7 @@ const Header: React.FC<HeaderProps> = ({ title }) => {
       
       {/* User Profile Section */}
       <div className="user-section flex items-center space-x-4 mr-4">
-        <span className="text-sm text-gray-600">
+        <span className="text-sm text-white font-medium">
           Welcome, {user?.email}
         </span>
         <div className="relative">

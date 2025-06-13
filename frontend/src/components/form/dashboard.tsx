@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useDataCache } from '../../contexts/DataCacheContext';
 import './dashboard.css';
 
 // Make sure Font Awesome is linked in your project's main HTML file or installed via npm/yarn
@@ -35,6 +36,19 @@ const DashboardCard: React.FC<DashboardCardProps> = ({
 };
 
 const Dashboard: React.FC = () => {
+  const { refreshData, clearError } = useDataCache();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefreshAll = async () => {
+    setIsRefreshing(true);
+    clearError();
+    try {
+      await refreshData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const dashboardItems: DashboardCardProps[] = [
     { 
       title: 'Data', 
@@ -103,8 +117,17 @@ const Dashboard: React.FC = () => {
               <i className="fas fa-arrow-left"></i>Back to Job Input
             </Link>
           </div>
-          <h1 className="dashboard-title">AI Optimizer</h1>
-          <p>Welcome to the AI Optimizer dashboard. Navigate through different modules to optimize your production planning, resource allocation, and efficiency analysis.</p>
+          <div className="d-flex align-items-center justify-content-between mb-3">
+            <h1 className="dashboard-title mb-0">AI Optimizer</h1>
+            <button 
+              className="btn btn-primary" 
+              onClick={handleRefreshAll}
+              disabled={isRefreshing}
+            >
+              <i className="fas fa-sync-alt"></i> {isRefreshing ? 'Refreshing All Data...' : 'Refresh All Data'}
+            </button>
+          </div>
+          <p>Welcome to the AI Optimizer dashboard. Click "Refresh All Data" to load the latest production data, then navigate through different modules to optimize your production planning, resource allocation, and efficiency analysis.</p>
         </div>
         
         <div className="dashboard-cards-container">

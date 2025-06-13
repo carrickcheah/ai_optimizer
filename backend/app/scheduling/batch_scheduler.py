@@ -205,9 +205,10 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
     
     logger.info(f"Strategy 1 completed: {total_scheduled} jobs scheduled from batch processing")
     
-    # Strategy 2: Single job fallback for remaining jobs with better constraint handling
-    unscheduled_jobs = [job for job in jobs if job.get('job_id', '') not in all_scheduled_jobs]
-    logger.info(f"Strategy 2: Single job fallback for {len(unscheduled_jobs)} remaining jobs")
+    # Strategy 2: DISABLED - Single job scheduling causes too many INFEASIBLE results
+    # Individual job scheduling is too restrictive and causes jobs to fail when scheduled in isolation
+    logger.info("Strategy 2: DISABLED - Skipping single job fallback to avoid INFEASIBLE results")
+    unscheduled_jobs = []
     
     # Get environment variables with validation for Strategy 2
     solver_time_limit_env = os.getenv('SOLVER_TIME_LIMIT_SECONDS')
@@ -271,7 +272,7 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
         except ValueError as e:
             logger.error(f"❌ INVALID environment variables for Strategy 2: {e}")
     
-    logger.info(f"Strategy 2 completed: {total_scheduled} total jobs scheduled")
+    # Strategy 2 is disabled, no additional jobs scheduled
     
     end_time = time.time()
     elapsed_time = end_time - start_time

@@ -200,7 +200,12 @@ class JobValidator:
     
     @staticmethod
     def _calculate_processing_time(job: Dict[str, Any]) -> Optional[float]:
-        """Calculate processing time in seconds."""
+        """Calculate processing time in seconds.
+        
+        Priority:
+        1. Use hours_need if available
+        2. Calculate from quantity / output_per_hour
+        """
         job_id = job.get('job_id', 'Unknown')
         
         # Priority 1: hours_need
@@ -213,19 +218,7 @@ class JobValidator:
             except (ValueError, TypeError):
                 pass
         
-        # Priority 2: day_need
-        day_need = job.get('day_need') or job.get('DAY_NEED')
-        if day_need is not None:
-            try:
-                day_need_val = float(day_need)
-                if day_need_val > 0:
-                    processing_time = day_need_val * 24.0 * 3600  # Convert days to seconds
-                    logger.debug(f"Using day_need for job {job_id}: {day_need_val} days = {processing_time} seconds")
-                    return processing_time
-            except (ValueError, TypeError):
-                pass
-        
-        # Priority 3: Calculate from quantity and output rate
+        # Priority 2: Calculate from quantity and output rate
         job_quantity = job.get('job_quantity', 0)
         output_per_hour = job.get('expect_output_per_hour', 0)
         

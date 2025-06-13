@@ -33,6 +33,20 @@
 .user-section {
   white-space: nowrap;
   padding-right: 20px;
+  color: white;
+}
+
+.user-section button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-weight: 500;
+}
+
+.user-section button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
 }
 
 .nav-item {

@@ -23,7 +23,7 @@ interface ResourceChartProps {
 }
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
-  const { data, refreshData, clearError } = useDataCache();
+  const { data } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('all');
 
   // Use cached data instead of local state
@@ -94,12 +94,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     }
   }, [tasks, isLoading]);
 
-  // Manual refresh function
-  const handleManualRefresh = async () => {
-    console.log('[ResourceChart] Manual refresh triggered by user');
-    clearError();
-    await refreshData();
-  };
+
 
   // Filter out subcontractor tasks and sort by resource, then by start time
   const machineOnlyTasks = tasks.filter(task => task.Resource !== 'Subcon');
@@ -215,13 +210,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           >
             <i className="fas fa-arrow-left"></i> Back
           </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleManualRefresh}
-            disabled={isLoading}
-          >
-            <i className="fas fa-sync-alt"></i> Load Data
-          </button>
+
         </div>
         <div className="text-center p-4">
           <h3>No Data Available</h3>
@@ -659,13 +648,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         >
           <i className="fas fa-arrow-left"></i> Back
         </button>
-        <button 
-          className="btn btn-primary" 
-          onClick={handleManualRefresh}
-          disabled={isLoading}
-        >
-          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
-        </button>
+
       </div>
       <div className="flat-time-selector">
         <div className="flat-button-group">

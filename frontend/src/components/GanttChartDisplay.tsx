@@ -1,23 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
-import { PlotData } from 'plotly.js';
 import { useDataCache } from '../contexts/DataCacheContext';
 import './GanttChartDisplay.css'; // Import the CSS file
 
-interface TaskData {
-  Task: string;      // Typically the y-axis label for the task (e.g., UNIQUE_JOB_ID)
-  Start: string;     // Start datetime string, e.g., "YYYY-MM-DD HH:MM:SS"
-  Finish: string;    // End datetime string
-  Resource: string;  // Machine or resource responsible
-  PriorityInteger?: number;
-  PriorityLabel?: string;
-  Color?: string;       // Color for the task bar
-  Description?: string; // HTML string for hover tooltip
-  JobFamily?: string;
-  ProcessNumber?: number;
-  BufferStatusLabel?: string;
-  // Add any other fields that come from the backend and might be useful
-}
+
 
 // Helper function to parse task string into job group and process number
 const getTaskParts = (taskString: string): { jobGroup: string; processNum: number } => {
@@ -61,9 +47,9 @@ const formatDateTime = (dateTimeString: string): string => {
 };
 
 const GanttChartDisplay: React.FC = () => {
-  const { data, refreshData, loadDataIfNeeded, clearError } = useDataCache();
+  const { data } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('all');
-  const [chartTitle, setChartTitle] = useState<string>('Production Planning System');
+  const [chartTitle] = useState<string>('Production Planning System');
 
   // Use cached data instead of local state
   const tasks = data.ganttPriorityView;
@@ -107,12 +93,7 @@ const GanttChartDisplay: React.FC = () => {
     }
   }, [tasks, isLoading]);
 
-  // Manual refresh function
-  const handleManualRefresh = async () => {
-    console.log('[GanttChart] Manual refresh triggered by user');
-    clearError();
-    await refreshData();
-  };
+
 
   // Sort tasks by job ID for consistency
   const sortedTasks = [...tasks].sort((a, b) => {
@@ -133,48 +114,7 @@ const GanttChartDisplay: React.FC = () => {
     return partsB.processNum - partsA.processNum;
   });
 
-  const taskTraces: Partial<PlotData>[] = [{
-    type: 'bar',
-    x: sortedTasks.map(task => {
-      const start = new Date(task.Start);
-      const end = new Date(task.Finish);
-      return end.getTime() - start.getTime(); // Duration in milliseconds
-    }),
-    y: sortedTasks.map(task => task.Task),
-    base: sortedTasks.map(task => new Date(task.Start).getTime()),
-    orientation: 'h',
-    marker: {
-      color: sortedTasks.map(task => {
-        // For subcontractor tasks, use a distinct pattern by modifying the color
-        if (task.Resource === 'Subcon') {
-          const baseColor = task.Color || 
-                           (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
-          // Use a lighter/striped version for subcon tasks or a distinct color scheme
-          return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
-        }
-        // Use actual buffer status color for machine tasks
-        return task.Color || 
-               (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
-      })
-    },
-    text: sortedTasks.map(task => {
-      const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
-      const tooltipParts = [
-        `<b>${task.Task}</b>`,
-        `<b>Start:</b> ${formatDateTime(task.Start)}`,
-        `<b>End:</b> ${formatDateTime(task.Finish)}`,
-        `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`,
-        `<b>Resource:</b> ${task.Resource} ${resourceType}`,
-        `<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`,
-      ];
-      if (task.JobFamily) {
-        tooltipParts.push(`<b>Job Family:</b> ${task.JobFamily}`);
-      }
-      return tooltipParts.join('<br>');
-    }),
-    hoverinfo: 'text',
-    name: 'Tasks'
-  }];
+
 
   // Helper function to safely parse dates
   const parseDateSafely = (dateStr: string): Date | null => {
@@ -379,12 +319,12 @@ const GanttChartDisplay: React.FC = () => {
   };
 
   const layout = {
-    title: chartTitle,
+    title: { text: chartTitle },
     height: Math.max(700, tasks.length * 30 + 150), // Dynamic height based on number of tasks
     width: window.innerWidth * 0.95, // Responsive width
     xaxis: {
       type: 'date' as const,
-      title: 'Timeline (SGT)',
+      title: { text: 'Timeline (SGT)' },
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       tickformat: '%b %d',
@@ -395,7 +335,7 @@ const GanttChartDisplay: React.FC = () => {
       timezone: 'Asia/Singapore',
     },
     yaxis: {
-      title: 'Jobs',
+      title: { text: 'Jobs' },
       automargin: true,
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
@@ -608,13 +548,6 @@ const GanttChartDisplay: React.FC = () => {
           onClick={() => window.history.back()}
         >
           <i className="fas fa-arrow-left"></i> Back
-        </button>
-        <button 
-          className="btn btn-primary" 
-          onClick={handleManualRefresh}
-          disabled={isLoading}
-        >
-          <i className="fas fa-sync-alt"></i> {isLoading ? 'Refreshing...' : 'Refresh Data'}
         </button>
       </div>
       <div className="flat-time-selector">
@@ -833,8 +766,8 @@ const GanttChartDisplay: React.FC = () => {
       
       {!isLoading && !error && tasks.length > 0 && (
         <Plot
-          data={getTimeFilteredData()}
-          layout={adjustedLayout}
+          data={getTimeFilteredData() as any}
+          layout={adjustedLayout as any}
           config={{ responsive: true }}
         />
       )}
