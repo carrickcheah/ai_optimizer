@@ -786,195 +786,92 @@ class ConstraintManager:
                     logger.debug(f"Added hard LCD_DATE constraint for job {job_id}: end <= {due_date_rel_int}")
     
     def _add_working_hours_constraints(self, model_builder: CPSATModelBuilder) -> None:
-        """Add working hours constraints from ai_arrangable_hour table."""
+        """Add simplified working hours constraints using time_availability module (like greedy solver)."""
         try:
-            from app.scheduling.time_availability import TimeAvailabilityManager
+            from app.scheduling.time_availability import is_time_available_for_scheduling, get_next_available_slot
+            from app.utils.time_utils import relative_hours_to_epoch, epoch_to_datetime
         except ImportError:
-            logger.warning("Could not import TimeAvailabilityManager - skipping working hours constraints")
+            logger.warning("Could not import time_availability module - skipping working hours constraints")
             return
         
-        time_checker = TimeAvailabilityManager.get_instance()
-        logger.info("Adding working hours constraints from ai_arrangable_hour table")
-        
-        # Force cache refresh
-        time_checker.cache.refresh_if_needed()
-        
-        # Get working hours for each day (1=Monday, 7=Sunday)
-        working_hours_by_day = self._get_working_hours_by_day(time_checker)
-        
-        if not any(working_hours_by_day.values()):
-            error_msg = "CRITICAL: No working hours loaded from ai_arrangable_hour table"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+        logger.info("Adding simplified working hours constraints using time_availability module")
         
         constraints_added = 0
         for job_id, task_info in model_builder.all_tasks.items():
-            if self._add_job_working_hours_constraint(
-                model_builder, job_id, task_info, working_hours_by_day
+            if self._add_simplified_working_hours_constraint(
+                model_builder, job_id, task_info
             ):
                 constraints_added += 1
         
-        logger.info(f"Added working hours constraints for {constraints_added} jobs")
+        logger.info(f"Added simplified working hours constraints for {constraints_added} jobs")
     
-    def _get_working_hours_by_day(self, time_checker) -> Dict[int, List[Tuple[float, float]]]:
-        """Get working hours configuration by day of week."""
-        working_hours_by_day = {}
+    def _add_simplified_working_hours_constraint(self, model_builder: CPSATModelBuilder,
+                                               job_id: str, task_info: TaskInfo) -> bool:
+        """Add flexible working hours constraint - just check START time like greedy solver."""
+        try:
+            from app.scheduling.time_availability import is_time_available_for_scheduling
+            from app.utils.time_utils import relative_hours_to_epoch, epoch_to_datetime
+        except ImportError:
+            logger.warning("Could not import required modules for working hours constraint")
+            return False
         
-        for day_of_week in range(1, 8):  # 1-7 for Monday-Sunday
-            periods = time_checker.cache._arrangable_hours_cache.get(day_of_week, [])
-            day_periods = []
-            
-            if periods:
-                for period in periods:
-                    start_time = period['start_time']
-                    end_time = period['end_time']
-                    
-                    # Convert time to hours since midnight
-                    start_hour = start_time.hour + start_time.minute / 60.0
-                    end_hour = end_time.hour + end_time.minute / 60.0
-                    
-                    # Handle overnight periods
-                    if end_hour < start_hour:
-                        day_periods.extend([(start_hour, 24.0), (0.0, end_hour)])
-                    else:
-                        day_periods.append((start_hour, end_hour))
-            
-            working_hours_by_day[day_of_week] = day_periods
-            logger.debug(f"Day {day_of_week} working hours: {day_periods}")
-        
-        return working_hours_by_day
-    
-    def _add_job_working_hours_constraint(self, model_builder: CPSATModelBuilder,
-                                        job_id: str, task_info: TaskInfo,
-                                        working_hours_by_day: Dict) -> bool:
-        """Add working hours constraint for a single job."""
         start_var = task_info.start
-        job_duration = task_info.hours
         
-        # Calculate valid time slots
-        valid_slots = self._calculate_multi_day_slots(
-            job_id, job_duration, working_hours_by_day
-        )
+        # Create flexible constraint - find available start time slots 
+        valid_start_ranges = []
         
-        if not valid_slots:
-            logger.warning(f"No valid time slots for job {job_id} - applying fallback constraint")
-            # Emergency fallback
-            model_builder.model.Add(start_var >= self.config.emergency_minimum_start_hour)
-            return True
-        
-        # Create constraint for valid slots
-        slot_bools = []
-        for slot_start, slot_end in valid_slots:
-            if slot_start <= slot_end:
-                day_num = slot_start // 24
-                slot_bool = model_builder.model.NewBoolVar(f'work_slot_{job_id}_day{day_num}')
+        # Check next 14 days for valid start periods
+        for day_offset in range(14):
+            day_start_hour = day_offset * 24
+            day_end_hour = (day_offset + 1) * 24
+            
+            # Find start and end of working periods for this day
+            period_start = None
+            for hour_offset in range(24):
+                absolute_hour = day_start_hour + hour_offset
                 
-                # Constrain start time if this slot is chosen
-                model_builder.model.Add(start_var >= slot_start).OnlyEnforceIf(slot_bool)
-                model_builder.model.Add(start_var <= slot_end).OnlyEnforceIf(slot_bool)
-                slot_bools.append(slot_bool)
+                try:
+                    epoch_time = relative_hours_to_epoch(absolute_hour)
+                    dt = epoch_to_datetime(epoch_time)
+                    
+                    if dt and is_time_available_for_scheduling(dt):
+                        if period_start is None:
+                            period_start = absolute_hour
+                    else:
+                        if period_start is not None:
+                            # End of a working period
+                            valid_start_ranges.append((period_start, absolute_hour - 1))
+                            period_start = None
+                except Exception:
+                    continue
+            
+            # Handle period that extends to end of day
+            if period_start is not None:
+                valid_start_ranges.append((period_start, day_end_hour - 1))
         
-        if slot_bools:
-            # Exactly one time slot must be chosen
-            model_builder.model.AddExactlyOne(slot_bools)
-            logger.debug(f"Added working hours constraint for {job_id}: {len(slot_bools)} valid slots")
+        if not valid_start_ranges:
+            logger.warning(f"No valid start periods found for job {job_id} - allowing flexible start")
+            # Very flexible fallback - just ensure start is non-negative
+            model_builder.model.Add(start_var >= 0)
             return True
         
-        return False
+        # Create OR constraint for valid start ranges (flexible like greedy)
+        range_bools = []
+        for i, (range_start, range_end) in enumerate(valid_start_ranges[:20]):  # Limit for performance
+            range_bool = model_builder.model.NewBoolVar(f'start_range_{job_id}_{i}')
+            
+            # If this range is chosen, start must be within it
+            model_builder.model.Add(start_var >= range_start).OnlyEnforceIf(range_bool)
+            model_builder.model.Add(start_var <= range_end).OnlyEnforceIf(range_bool)
+            range_bools.append(range_bool)
+        
+        if range_bools:
+            # At least one valid range must be chosen (flexible OR constraint)
+            model_builder.model.AddAtLeastOne(range_bools)
+        
+        logger.debug(f"Added flexible working hours constraint for {job_id}: {len(valid_start_ranges)} valid start ranges")
+        return True
     
-    def _calculate_multi_day_slots(self, job_id: str, job_duration_hours: int,
-                                 working_hours_by_day: Dict) -> List[Tuple[int, int]]:
-        """Calculate valid start times for multi-day jobs."""
-        valid_slots = []
-        
-        # Pre-calculate daily working hours
-        daily_working_hours = {}
-        for day_of_week, periods in working_hours_by_day.items():
-            total_hours = sum(end - start for start, end in periods)
-            daily_working_hours[day_of_week] = total_hours
-        
-        max_daily_hours = max(daily_working_hours.values()) if daily_working_hours else 8
-        max_search_days = self.config.scheduler_search_days
-        
-        logger.debug(
-            f"Job {job_id} ({job_duration_hours}h): Searching within {max_search_days} days"
-        )
-        
-        # Pre-calculate working day pattern
-        working_day_pattern = []
-        for day_offset in range(max_search_days):
-            day_of_week = (day_offset % 7) + 1
-            day_periods = working_hours_by_day.get(day_of_week, [])
-            day_total_hours = sum(end - start for start, end in day_periods) if day_periods else 0
-            working_day_pattern.append((day_of_week, day_periods, day_total_hours))
-        
-        slots_found = 0
-        
-        # Check each possible start day
-        for start_day in range(max_search_days):
-            day_of_week, day_periods, day_total_hours = working_day_pattern[start_day]
-            
-            if not day_periods:
-                continue  # Skip non-working days
-            
-            # Fast path for single-day jobs
-            if job_duration_hours <= day_total_hours:
-                for start_hour, end_hour in day_periods:
-                    day_start_abs = start_day * 24 + start_hour
-                    day_end_abs = start_day * 24 + end_hour
-                    
-                    latest_start = day_end_abs - job_duration_hours
-                    if latest_start >= day_start_abs:
-                        valid_slots.append((int(day_start_abs), int(latest_start)))
-                        slots_found += 1
-                continue
-            
-            # Multi-day job calculation
-            if self._can_complete_multi_day_job(
-                job_duration_hours, start_day, working_day_pattern, max_search_days, working_hours_by_day
-            ):
-                for start_hour, end_hour in day_periods:
-                    day_start_abs = start_day * 24 + start_hour
-                    day_end_abs = start_day * 24 + end_hour
-                    valid_slots.append((int(day_start_abs), int(day_end_abs - 1)))
-                    slots_found += 1
-        
-        # Log summary
-        if job_duration_hours > 24:
-            estimated_days = job_duration_hours / max_daily_hours if max_daily_hours > 0 else 1
-            logger.info(
-                f"Job {job_id} ({job_duration_hours}h): Multi-day scheduling - "
-                f"estimated {estimated_days:.1f} working days, {slots_found} valid slots"
-            )
-        else:
-            logger.debug(f"Job {job_id} ({job_duration_hours}h): {slots_found} valid slots found")
-        
-        return valid_slots
-    
-    def _can_complete_multi_day_job(self, job_duration_hours: int, start_day: int,
-                                   working_day_pattern: List, max_search_days: int,
-                                   working_hours_by_day: Dict) -> bool:
-        """Check if multi-day job can be completed within search window."""
-        remaining_duration = job_duration_hours
-        current_day_offset = start_day
-        
-        while remaining_duration > 0 and current_day_offset < min(start_day + 14, max_search_days):  # Use 14 instead of WORKING_HOURS_SEARCH_LIMIT
-            if current_day_offset < len(working_day_pattern):
-                _, current_periods, current_hours = working_day_pattern[current_day_offset]
-            else:
-                # Extend pattern if needed
-                extended_day_of_week = (current_day_offset % 7) + 1
-                current_periods = working_hours_by_day.get(extended_day_of_week, [])
-                current_hours = sum(end - start for start, end in current_periods) if current_periods else 0
-            
-            if not current_periods:
-                current_day_offset += 1
-                continue
-            
-            remaining_duration -= current_hours
-            current_day_offset += 1
-        
-        return remaining_duration <= 0
 
 
 class ObjectiveBuilder:
@@ -1175,7 +1072,6 @@ class ResultProcessor:
         """Process successful solver solution."""
         solver = solver_result.solver
         job_results = {}
-        time_adjusted_jobs = 0
         
         for job_id, task_info in model_builder.all_tasks.items():
             start_val_rel = solver.Value(task_info.start)

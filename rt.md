@@ -1,1 +1,1 @@
-SPSAT is or-tool logic? and greedy_solver is our own logic?
+mysql -u myuser -pmypassword -h localhost -e "DESCRIBE ai_arrangable_hour" nex_valiant | cat
