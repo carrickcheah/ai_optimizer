@@ -85,7 +85,6 @@ def batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times: Dict
                 machines,
                 setup_times,
                 time_limit_seconds=int(solver_time_limit),
-                max_jobs=len(batch_jobs),
                 planning_horizon_days=int(planning_horizon)
             )
             
@@ -228,7 +227,6 @@ def smart_batch_schedule_jobs(jobs: List[Dict], machines: List[str], setup_times
                     # Use CP-SAT for single job scheduling with working hours constraints
                     single_job_result = schedule_jobs([job], machines, setup_times, 
                                                     time_limit_seconds=solver_time_limit,
-                                                    max_jobs=1, 
                                                     planning_horizon_days=planning_horizon)
                     
                     if single_job_result and isinstance(single_job_result, dict):
