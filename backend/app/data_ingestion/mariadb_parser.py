@@ -263,6 +263,7 @@ def build_jobs_query() -> str:
                  jot.JoQty_d, jop.CapQty_d, jop.CapMin_d, jop.LeadTime_d, 
                  jop.SetupTime_d, jot.MaterialDate_dd, jop.Machine_v
         ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i ASC
+        LIMIT %s
     """
 
 
@@ -557,7 +558,7 @@ def load_jobs_planning_data(
     
     logger.info(
         f"Starting to load jobs planning data from MariaDB using joined tables "
-        f"(planning_horizon: {planning_horizon_days} days, excluding today's jobs, no job limit)"
+        f"(planning_horizon: {planning_horizon_days} days, max_jobs: {max_jobs}, excluding today's jobs)"
     )
     
     conn = None
@@ -580,7 +581,8 @@ def load_jobs_planning_data(
             config['break_hours'],
             config['no_prod_hours'], 
             config['job_priority'],
-            planning_horizon_days
+            planning_horizon_days,
+            max_jobs  # Add LIMIT parameter
         )
         
         # Run EXPLAIN to analyze query performance
