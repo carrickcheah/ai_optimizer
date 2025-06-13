@@ -15,11 +15,10 @@ from ..fastapi_app import (
     ProductionJobData, 
     ProductionJobResponse, 
     DataTransformer,
-    get_db_connection_from_pool,
-    get_connection_pool,
     monitor_performance,
     APIResponse
 )
+from app.data_ingestion.mariadb_parser import load_jobs_planning_data
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,8 +123,8 @@ except Exception as e:
     logger.error(f"❌ FAILED to initialize endpoint configuration: {e}")
     raise
 
-class ProductionJobQueries:
-    """Database queries with strict validation - NO FALLBACKS."""
+class ProductionJobValidation:
+    """Parameter validation for API endpoints - NO DATABASE QUERIES."""
     
     @staticmethod
     def validate_query_parameters(limit: Optional[int], offset: Optional[int]) -> None:
@@ -165,41 +164,6 @@ class ProductionJobQueries:
         
         if planning_horizon_days > ENDPOINT_CONFIG.max_planning_horizon_days:
             raise ValueError(f"Planning horizon days cannot exceed {ENDPOINT_CONFIG.max_planning_horizon_days}")
-    
-    @staticmethod
-    def get_base_select_query() -> str:
-        """Base SELECT query - NO FALLBACKS for missing data."""
-        return """
-        SELECT
-            jop.TxnId_i AS op_id,
-            jot.CreateDate_dt AS plan_date,
-            jot.TargetDate_dd AS lcd_date,
-            jot.DocRef_v AS job,
-            jop.Task_v AS process_code,
-            jop.Machine_v AS rsc_code,
-            COALESCE(tm.MachineName_v, jop.Machine_v) AS machine_name,
-            jop.ManCount_i AS number_operator,
-            jot.JoQty_d AS job_quantity,
-            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d > 0 
-                 THEN jop.CapQty_d * 60 
-                 ELSE NULL END AS expect_output_per_hour,
-            CASE WHEN jop.CapMin_d = 1 AND jop.CapQty_d > 0 
-                 THEN jot.JoQty_d / (jop.CapQty_d * 60) 
-                 ELSE NULL END AS hours_need,
-            jop.SetupTime_d AS setting_hours,
-            jot.MaterialDate_dd AS material_arrival,
-            jot.CreateDate_dt AS created_at,
-            jot.UpdateDate_dt AS updated_at
-        FROM tbl_jo_process AS jop 
-        INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
-        LEFT JOIN tbl_machine AS tm ON (
-            tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
-            OR tm.machine_id_v = jop.Machine_v
-        )
-        WHERE jot.Void_c != 1 
-            AND jot.DocStatus_c != 'CP' 
-            AND jop.QtyStatus_c != 'FF'
-        """
 
 class ProductionJobService:
     """Business logic with strict validation - NO FALLBACKS."""
@@ -230,88 +194,76 @@ class ProductionJobService:
 @router.get("/", 
            response_model=List[ProductionJobResponse],
            summary="Get all production jobs",
-           description="Retrieve production jobs with STRICT validation - NO FALLBACKS")
+           description="Retrieve production jobs using mariadb_parser - SINGLE DATA SOURCE")
 @monitor_performance
 async def get_production_jobs(
     limit: Optional[int] = Query(None, ge=1, le=ENDPOINT_CONFIG.max_jobs_limit, description="Limit number of results"),
     offset: Optional[int] = Query(None, ge=0, description="Offset for pagination"),
     priority: Optional[int] = Query(None, ge=1, le=5, description="Filter by priority")
 ):
-    """Get production jobs with STRICT validation - NO FALLBACKS."""
+    """Get production jobs using mariadb_parser as single data source."""
     try:
         # Strict parameter validation - FAIL IF INVALID
-        ProductionJobQueries.validate_query_parameters(limit, offset)
+        ProductionJobValidation.validate_query_parameters(limit, offset)
         ProductionJobService.validate_priority_filter(priority)
         
-        with get_db_connection_from_pool() as conn:
-            cursor = conn.cursor(dictionary=True)
-            
+        # Load data from mariadb_parser (SINGLE DATA SOURCE)
+        max_jobs = limit or ENDPOINT_CONFIG.max_jobs_limit
+        jobs_data, _, _ = load_jobs_planning_data(
+            max_jobs=max_jobs,
+            planning_horizon_days=ENDPOINT_CONFIG.planning_horizon_days
+        )
+        
+        if not jobs_data:
+            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            return []
+        
+        # Apply filters and pagination
+        filtered_jobs = jobs_data
+        
+        # Apply priority filter if specified
+        if priority is not None:
+            filtered_jobs = [job for job in filtered_jobs if job.get('priority', 3) == priority]
+        
+        # Apply offset and limit
+        if offset is not None:
+            filtered_jobs = filtered_jobs[offset:]
+        if limit is not None:
+            filtered_jobs = filtered_jobs[:limit]
+        
+        # Transform data for API response
+        response_jobs = []
+        failed_jobs = 0
+        
+        for job in filtered_jobs:
             try:
-                # Build query with STRICT parameter handling
-                base_query = ProductionJobQueries.get_base_select_query()
-                params = []
+                # Strict validation - NO FALLBACKS for missing required fields
+                required_fields = ['job_id', 'job', 'process_code']
+                for field in required_fields:
+                    if field not in job or job[field] is None:
+                        raise ValueError(f"Required field '{field}' is missing")
                 
-                # Add priority filter if specified
-                if priority is not None:
-                    base_query += " AND 3 = %s"  # Fixed priority value, replace with actual priority field
-                    params.append(priority)
+                # Map job_id to op_id for API compatibility
+                if 'op_id' not in job and 'job_id' in job:
+                    job['op_id'] = job.get('op_id', hash(job['job_id']) % 1000000)
                 
-                # Add date range filter using configured horizon
-                base_query += f" AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL {ENDPOINT_CONFIG.default_buffer_days} DAY) AND DATE_ADD(CURDATE(), INTERVAL {ENDPOINT_CONFIG.planning_horizon_days} DAY)"
+                transformed_row = DataTransformer.transform_job_row(job)
+                response_jobs.append(ProductionJobResponse(**transformed_row))
                 
-                base_query += " ORDER BY jot.CreateDate_dt DESC, jop.TxnId_i DESC"
-                
-                # Add pagination if specified
-                if limit is not None:
-                    base_query += " LIMIT %s"
-                    params.append(limit)
-                    
-                    if offset is not None:
-                        base_query += " OFFSET %s"
-                        params.append(offset)
-                
-                cursor.execute(base_query, params)
-                jobs_from_db = cursor.fetchall()
-                
-                if not jobs_from_db:
-                    logger.warning(f"❌ NO JOBS FOUND with current filters")
-                    return []
-                
-                # Transform and validate data - FAIL ON INVALID DATA
-                response_jobs = []
-                failed_jobs = 0
-                
-                for job_row in jobs_from_db:
-                    try:
-                        # Strict validation - NO FALLBACKS for missing required fields
-                        required_fields = ['op_id', 'job', 'process_code']
-                        for field in required_fields:
-                            if job_row.get(field) is None:
-                                raise ValueError(f"Required field '{field}' is missing")
-                        
-                        transformed_row = DataTransformer.transform_job_row(job_row)
-                        response_jobs.append(ProductionJobResponse(**transformed_row))
-                        
-                    except Exception as e:
-                        failed_jobs += 1
-                        logger.error(f"❌ FAILED to validate job data for op_id {job_row.get('op_id')}: {e}")
-                        continue
-                
-                if failed_jobs > 0:
-                    logger.warning(f"⚠️ {failed_jobs} jobs failed validation and were excluded")
-                
-                if not response_jobs:
-                    logger.error(f"❌ ALL JOBS FAILED VALIDATION - no valid jobs returned")
-                    raise HTTPException(status_code=500, detail="All jobs failed data validation")
-                
-                logger.info(f"✅ Retrieved {len(response_jobs)} valid production jobs")
-                return response_jobs
-                
-            except mysql.connector.Error as e:
-                logger.error(f"❌ DATABASE ERROR fetching jobs: {e}")
-                raise HTTPException(status_code=500, detail="Database query failed")
-            finally:
-                cursor.close()
+            except Exception as e:
+                failed_jobs += 1
+                logger.error(f"❌ FAILED to validate job data for job {job.get('job_id', 'unknown')}: {e}")
+                continue
+        
+        if failed_jobs > 0:
+            logger.warning(f"⚠️ {failed_jobs} jobs failed validation and were excluded")
+        
+        if not response_jobs:
+            logger.error(f"❌ ALL JOBS FAILED VALIDATION - no valid jobs returned")
+            raise HTTPException(status_code=500, detail="All jobs failed data validation")
+        
+        logger.info(f"✅ Retrieved {len(response_jobs)} valid production jobs from mariadb_parser")
+        return response_jobs
                 
     except ValueError as e:
         logger.error(f"❌ PARAMETER VALIDATION ERROR: {e}")
@@ -323,7 +275,7 @@ async def get_production_jobs(
 @router.get("/production-schedule", 
            response_model=Dict[str, Any],
            summary="Get production schedule data",
-           description="Get production schedule with STRICT validation - NO FALLBACKS")
+           description="Get production schedule using mariadb_parser - SINGLE DATA SOURCE")
 @monitor_performance
 async def get_production_schedule(
     page: int = Query(1, ge=1, description="Page number"),
@@ -334,22 +286,22 @@ async def get_production_schedule(
     buffer_days: int = Query(ENDPOINT_CONFIG.default_buffer_days, ge=1, le=ENDPOINT_CONFIG.max_buffer_days, description="Buffer days"),
     planning_horizon_days: int = Query(ENDPOINT_CONFIG.planning_horizon_days, ge=7, le=ENDPOINT_CONFIG.max_planning_horizon_days, description="Planning horizon days")
 ):
-    """Get production schedule with STRICT validation - NO FALLBACKS."""
+    """Get production schedule using mariadb_parser as single data source."""
     try:
         # STRICT parameter validation - FAIL IF INVALID
-        ProductionJobQueries.validate_pagination_parameters(page, page_size)
-        ProductionJobQueries.validate_time_parameters(buffer_days, planning_horizon_days)
+        ProductionJobValidation.validate_pagination_parameters(page, page_size)
+        ProductionJobValidation.validate_time_parameters(buffer_days, planning_horizon_days)
         
         # Validate sort parameters - NO FALLBACKS
         allowed_sort_fields = {
-            "PLAN_DATE": "jot.CreateDate_dt",
-            "LCD_DATE": "jot.TargetDate_dd",
-            "JOB": "jot.DocRef_v",
-            "PROCESS_CODE": "jop.Task_v",
-            "RSC_CODE": "jop.Machine_v",
-            "MACHINE": "COALESCE(tm.MachineName_v, jop.Machine_v)",
-            "NUMBER_OPERATOR": "jop.ManCount_i",
-            "JOB_QUANTITY": "jot.JoQty_d"
+            "PLAN_DATE": "plan_date",
+            "LCD_DATE": "lcd_date_str", 
+            "JOB": "job",
+            "PROCESS_CODE": "process_code",
+            "RSC_CODE": "rsc_location",
+            "MACHINE": "MachineName_v",
+            "NUMBER_OPERATOR": "number_operator",
+            "JOB_QUANTITY": "job_quantity"
         }
         
         if sort_field not in allowed_sort_fields:
@@ -358,162 +310,95 @@ async def get_production_schedule(
         if sort_order.lower() not in ['asc', 'desc']:
             raise ValueError("sort_order must be 'asc' or 'desc'")
         
-        sql_sort_field = allowed_sort_fields[sort_field]
-        sql_sort_order = "DESC" if sort_order.lower() == "desc" else "ASC"
+        # Load data from mariadb_parser (SINGLE DATA SOURCE)
+        jobs_data, _, _ = load_jobs_planning_data(
+            max_jobs=ENDPOINT_CONFIG.max_jobs_limit,
+            planning_horizon_days=planning_horizon_days
+        )
         
-        with get_db_connection_from_pool() as conn:
-            cursor = conn.cursor(dictionary=True)
-            
-            try:
-                # Build base query components
-                base_select = """
-                SELECT 
-                    jot.CreateDate_dt AS plan_date,
-                    jot.TargetDate_dd AS LCD_DATE, 
-                    jot.DocRef_v AS JOB, 
-                    jop.Task_v AS PROCESS_CODE, 
-                    jop.Machine_v AS RSC_CODE, 
-                    COALESCE(tm.MachineName_v, jop.Machine_v) AS MACHINE,
-                    jop.ManCount_i AS NUMBER_OPERATOR, 
-                    jot.JoQty_d AS JOB_QUANTITY,
-                    jop.TxnId_i,
-                    jot.MaterialDate_dd AS MATERIAL_ARRIVAL
-                """
-                
-                base_from = """
-                FROM tbl_jo_process AS jop 
-                INNER JOIN tbl_jo_txn AS jot ON jot.TxnId_i = jop.TxnId_i 
-                LEFT JOIN tbl_machine AS tm ON (
-                    tm.MachineName_v LIKE CONCAT('%', jop.Machine_v, '%') 
-                    OR tm.machine_id_v = jop.Machine_v
-                )
-                """
-                
-                # STRICT date range filter - NO FALLBACKS
-                base_where = f"""
-                WHERE jot.Void_c != 1 
-                    AND jot.DocStatus_c != 'CP' 
-                    AND jop.QtyStatus_c != 'FF' 
-                    AND jot.CreateDate_dt BETWEEN DATE_SUB(CURDATE(), INTERVAL {buffer_days} DAY) AND DATE_ADD(CURDATE(), INTERVAL {planning_horizon_days} DAY)
-                """
-                
-                params = []
-                search_conditions = ""
-                
-                # Add search conditions if provided
-                if search and search.strip():
-                    search_term = f"%{search.strip().lower()}%"
-                    search_conditions = """
-                    AND (
-                        LOWER(jot.DocRef_v) LIKE %s OR 
-                        LOWER(jop.Task_v) LIKE %s OR 
-                        LOWER(jop.Machine_v) LIKE %s OR
-                        LOWER(COALESCE(tm.MachineName_v, '')) LIKE %s
-                    )
-                    """
-                    params.extend([search_term, search_term, search_term, search_term])
-                
-                # Count query for pagination
-                count_query = f"SELECT COUNT(*) as total_items {base_from} {base_where} {search_conditions}"
-                cursor.execute(count_query, params)
-                total_result = cursor.fetchone()
-                
-                if not total_result:
-                    raise HTTPException(status_code=500, detail="Failed to get total count")
-                
-                total_items = total_result['total_items']
-                total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
-                
-                # Validate page number against total pages
-                if page > total_pages and total_items > 0:
-                    raise ValueError(f"Page {page} exceeds total pages {total_pages}")
-                
-                # Data query with pagination and sorting
-                offset = (page - 1) * page_size
-                order_clause = f"ORDER BY {sql_sort_field} {sql_sort_order}"
-                limit_clause = "LIMIT %s OFFSET %s"
-                
-                data_params = params + [page_size, offset]
-                data_query = f"{base_select} {base_from} {base_where} {search_conditions} {order_clause} {limit_clause}"
-                
-                cursor.execute(data_query, data_params)
-                results = cursor.fetchall()
-                
-                logger.info(f"✅ Retrieved {len(results)} schedule records (page {page}/{total_pages})")
-                
-                return {
-                    "items": results,
-                    "total_items": total_items,
-                    "page": page,
-                    "page_size": page_size,
-                    "total_pages": total_pages,
-                    "config_used": {
-                        "buffer_days": buffer_days,
-                        "planning_horizon_days": planning_horizon_days,
-                        "sort_field": sort_field,
-                        "sort_order": sort_order
-                    }
+        if not jobs_data:
+            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            return {
+                "items": [],
+                "total_items": 0,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "config_used": {
+                    "buffer_days": buffer_days,
+                    "planning_horizon_days": planning_horizon_days,
+                    "sort_field": sort_field,
+                    "sort_order": sort_order
                 }
-                
-            except mysql.connector.Error as e:
-                logger.error(f"❌ DATABASE ERROR fetching production schedule: {e}")
-                raise HTTPException(status_code=500, detail="Database query failed")
-            finally:
-                cursor.close()
+            }
+        
+        # Apply search filter if provided
+        filtered_jobs = jobs_data
+        if search and search.strip():
+            search_term = search.strip().lower()
+            filtered_jobs = [
+                job for job in jobs_data
+                if search_term in job.get('job', '').lower() or
+                   search_term in job.get('process_code', '').lower() or
+                   search_term in job.get('MachineName_v', '').lower()
+            ]
+        
+        # Transform data for schedule format
+        schedule_items = []
+        for job in filtered_jobs:
+            schedule_item = {
+                "plan_date": job.get('plan_date'),
+                "LCD_DATE": job.get('lcd_date_str', '').split(' ')[0] if job.get('lcd_date_str') else '',
+                "JOB": job.get('job', ''),
+                "PROCESS_CODE": job.get('process_code', ''),
+                "RSC_CODE": job.get('rsc_location', ''),
+                "MACHINE": job.get('MachineName_v', ''),
+                "NUMBER_OPERATOR": job.get('number_operator', 1),
+                "JOB_QUANTITY": job.get('job_quantity', 0),
+                "TxnId_i": job.get('op_id', 0),
+                "MATERIAL_ARRIVAL": job.get('material_arrival_str', '').split(' ')[0] if job.get('material_arrival_str') else ''
+            }
+            schedule_items.append(schedule_item)
+        
+        # Apply sorting
+        sort_key = allowed_sort_fields[sort_field]
+        reverse_sort = sort_order.lower() == "desc"
+        schedule_items.sort(key=lambda x: x.get(sort_key, ''), reverse=reverse_sort)
+        
+        # Apply pagination
+        total_items = len(schedule_items)
+        total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
+        
+        # Validate page number against total pages
+        if page > total_pages and total_items > 0:
+            raise ValueError(f"Page {page} exceeds total pages {total_pages}")
+        
+        # Get page data
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_items = schedule_items[start_idx:end_idx]
+        
+        logger.info(f"✅ Retrieved {len(page_items)} schedule records from mariadb_parser (page {page}/{total_pages})")
+        
+        return {
+            "items": page_items,
+            "total_items": total_items,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "config_used": {
+                "buffer_days": buffer_days,
+                "planning_horizon_days": planning_horizon_days,
+                "sort_field": sort_field,
+                "sort_order": sort_order
+            }
+        }
                 
     except ValueError as e:
         logger.error(f"❌ PARAMETER VALIDATION ERROR: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"❌ UNEXPECTED ERROR in get_production_schedule: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/{job_id}", 
-           response_model=ProductionJobResponse,
-           summary="Get production job by ID",
-           description="Get specific job with STRICT validation - NO FALLBACKS")
-@monitor_performance
-async def get_production_job(job_id: int):
-    """Get specific production job with STRICT validation - NO FALLBACKS."""
-    try:
-        # STRICT job ID validation - FAIL IF INVALID
-        ProductionJobService.validate_job_id(job_id)
-        
-        with get_db_connection_from_pool() as conn:
-            cursor = conn.cursor(dictionary=True)
-            
-            try:
-                query = ProductionJobQueries.get_base_select_query() + " AND jop.TxnId_i = %s"
-                cursor.execute(query, (job_id,))
-                job_row = cursor.fetchone()
-                
-                if not job_row:
-                    logger.warning(f"❌ JOB NOT FOUND: {job_id}")
-                    raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
-                
-                # STRICT validation - NO FALLBACKS for missing data
-                required_fields = ['op_id', 'job', 'process_code']
-                for field in required_fields:
-                    if job_row.get(field) is None:
-                        logger.error(f"❌ INVALID JOB DATA: Missing required field '{field}' for job {job_id}")
-                        raise HTTPException(status_code=500, detail=f"Job data incomplete - missing {field}")
-                
-                transformed_row = DataTransformer.transform_job_row(job_row)
-                return ProductionJobResponse(**transformed_row)
-                
-            except mysql.connector.Error as e:
-                logger.error(f"❌ DATABASE ERROR fetching job {job_id}: {e}")
-                raise HTTPException(status_code=500, detail="Database query failed")
-            finally:
-                cursor.close()
-                
-    except ValueError as e:
-        logger.error(f"❌ JOB ID VALIDATION ERROR: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.error(f"❌ UNEXPECTED ERROR fetching job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/health", 
@@ -533,18 +418,13 @@ async def health_check():
         }
     }
     
-    # Database connectivity check - FAIL IF UNHEALTHY
+    # Database connectivity check via mariadb_parser - FAIL IF UNHEALTHY
     try:
-        with get_db_connection_from_pool() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 as health_check")
-            result = cursor.fetchone()
-            cursor.close()
-            
-            if not result or result[0] != 1:
-                raise Exception("Database health check returned invalid result")
-            
+        from app.data_ingestion.mariadb_parser import test_database_connection
+        if test_database_connection():
             health_data["checks"]["database"] = {"status": "healthy"}
+        else:
+            raise Exception("Database connection test failed")
             
     except Exception as e:
         logger.error(f"❌ DATABASE HEALTH CHECK FAILED: {e}")
@@ -570,6 +450,61 @@ async def health_check():
     
     status_code = 200 if health_data["status"] == "healthy" else 503
     return JSONResponse(content=health_data, status_code=status_code)
+
+@router.get("/{job_id}", 
+           response_model=ProductionJobResponse,
+           summary="Get production job by ID",
+           description="Get specific job using mariadb_parser - SINGLE DATA SOURCE")
+@monitor_performance
+async def get_production_job(job_id: int):
+    """Get specific production job using mariadb_parser as single data source."""
+    try:
+        # STRICT job ID validation - FAIL IF INVALID
+        ProductionJobService.validate_job_id(job_id)
+        
+        # Load data from mariadb_parser (SINGLE DATA SOURCE)
+        jobs_data, _, _ = load_jobs_planning_data(
+            max_jobs=ENDPOINT_CONFIG.max_jobs_limit,
+            planning_horizon_days=ENDPOINT_CONFIG.planning_horizon_days
+        )
+        
+        if not jobs_data:
+            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
+        
+        # Find job by op_id
+        found_job = None
+        for job in jobs_data:
+            if job.get('op_id') == job_id:
+                found_job = job
+                break
+        
+        if not found_job:
+            logger.warning(f"❌ JOB NOT FOUND: {job_id}")
+            raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
+        
+        # STRICT validation - NO FALLBACKS for missing data
+        required_fields = ['job_id', 'job', 'process_code']
+        for field in required_fields:
+            if field not in found_job or found_job[field] is None:
+                logger.error(f"❌ INVALID JOB DATA: Missing required field '{field}' for job {job_id}")
+                raise HTTPException(status_code=500, detail=f"Job data incomplete - missing {field}")
+        
+        # Ensure op_id is available for API compatibility
+        if 'op_id' not in found_job:
+            found_job['op_id'] = job_id
+        
+        transformed_row = DataTransformer.transform_job_row(found_job)
+        return ProductionJobResponse(**transformed_row)
+                
+    except ValueError as e:
+        logger.error(f"❌ JOB ID VALIDATION ERROR: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"❌ UNEXPECTED ERROR fetching job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # Disabled endpoints - NO WRITE OPERATIONS SUPPORTED
 @router.post("/", response_model=APIResponse)

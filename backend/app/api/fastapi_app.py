@@ -128,13 +128,10 @@ class ProductionJobData(BaseModel):
     hours_need: float = Field(..., ge=0.1, le=1000.0, description="Hours needed")
     day_need: float = Field(default=0, ge=0, le=365, description="Days needed")
     setting_hours: float = Field(default=1, ge=0, le=24, description="Setup hours")
-    break_hours: float = Field(default=1, ge=0, le=24, description="Break hours")
-    no_prod: float = Field(default=8, ge=0, le=24, description="Non-production hours")
     priority: int = Field(default=3, ge=1, le=5, description="Job priority (1=highest, 5=lowest)")
     job_dependency: bool = Field(default=True, description="Has job dependencies")
     material_arrival: Optional[str] = Field(None, description="Material arrival date")
     start_date: Optional[str] = Field(None, description="Job start date")
-    reduce_operation_hours: int = Field(default=0, ge=0, le=24, description="Reduced operation hours")
     
     @validator('lcd_date', 'material_arrival', 'start_date')
     def validate_dates(cls, v):
@@ -186,18 +183,15 @@ class ProductionJobResponse(BaseModel):
     rsc_location: str
     MachineName_v: str
     machine: Optional[str] = None
-    job_dependency: bool
+    job_dependency: bool = True
     number_operator: int
     job_quantity: int
     expect_output_per_hour: int
     hours_need: float
     setting_hours: float
-    break_hours: float
-    no_prod: float
-    priority: int
+    priority: int = 3
     material_arrival: Optional[datetime] = None
     start_date: Optional[datetime] = None
-    reduce_operation_hours: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -237,13 +231,18 @@ class DataTransformer:
         if not row:
             return {}
         
-        # Convert boolean fields
-        if 'job_dependency' in row:
-            row['job_dependency'] = bool(row.get('job_dependency', False))
+        # Set default values (no longer loaded from DB)
+        row['job_dependency'] = True
+        row['priority'] = row.get('priority', 3)
+        
+        # Handle empty string dates - convert to None for proper datetime validation
+        for date_field in ['start_date', 'material_arrival', 'lcd_date']:
+            if date_field in row and row[date_field] == '':
+                row[date_field] = None
         
         # Convert integer fields
         int_fields = ['job_quantity', 'expect_output_per_hour', 'hours_need', 
-                     'number_operator', 'priority', 'reduce_operation_hours']
+                     'number_operator', 'priority']
         for field in int_fields:
             if field in row and row[field] is not None:
                 try:
@@ -252,8 +251,8 @@ class DataTransformer:
                     logger.warning(f"Could not convert {field} to int: {row[field]}")
                     row[field] = 0
         
-        # Convert float fields
-        float_fields = ['setting_hours', 'break_hours', 'no_prod', 'day_need']
+        # Convert float fields (removed deprecated fields: break_hours, no_prod)
+        float_fields = ['setting_hours', 'day_need']
         for field in float_fields:
             if field in row and row[field] is not None:
                 try:

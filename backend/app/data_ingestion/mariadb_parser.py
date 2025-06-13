@@ -231,15 +231,11 @@ def build_jobs_query() -> str:
                  THEN jop.LeadTime_d
                  ELSE NULL END AS day_need,
             jop.SetupTime_d AS setting_hours,
-            %s AS break_hours,
-            %s AS no_prod,
             '' AS start_date,
             SUM(di.Qty_d) AS accumulated_daily_output,
             (jot.JoQty_d - COALESCE(SUM(di.Qty_d), 0)) AS balance_quantity,
             jot.MaterialDate_dd AS material_arrival,
-            1 AS job_dependency,
             %s AS priority,
-            0 AS reduce_operation_hours,
             NOW() AS created_at,
             NOW() AS updated_at
         FROM tbl_jo_process AS jop 
@@ -258,6 +254,8 @@ def build_jobs_query() -> str:
               AND jot.TargetDate_dd > CURDATE()  -- Only jobs with target dates after today
               AND jot.TargetDate_dd <= DATE_ADD(CURDATE(), INTERVAL %s DAY)
               AND jot.CreateDate_dt >= DATE_SUB(CURDATE(), INTERVAL 100 DAY)  -- Only jobs created in last 100 days
+              AND jot.MaterialDate_dd IS NOT NULL  -- Material date must be specified
+              AND jot.MaterialDate_dd <= CURDATE()  -- Material must have already arrived
         GROUP BY jop.TxnId_i, jop.RowId_i, jot.CreateDate_dt, jot.TargetDate_dd, 
                  jot.DocRef_v, jop.Task_v, tm.MachineName_v, jop.ManCount_i, 
                  jot.JoQty_d, jop.CapQty_d, jop.CapMin_d, jop.LeadTime_d, 
@@ -377,11 +375,10 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
     # Add other columns with proper type conversion
     numeric_int_fields = {
         "number_operator", "job_quantity", "expect_output_per_hour", 
-        "priority", "accumulated_daily_output", "balance_quantity", 
-        "reduce_operation_hours"
+        "priority", "accumulated_daily_output", "balance_quantity"
     }
     numeric_float_fields = {
-        "hours_need", "setting_hours", "break_hours", "no_prod", "day_need"
+        "hours_need", "setting_hours", "day_need"
     }
     
     excluded_fields = {"op_id", "job", "rsc_code"} | set(date_fields)
@@ -397,7 +394,7 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
                     except (ValueError, TypeError):
                         default_fields = {
                             "job_quantity", "accumulated_daily_output", 
-                            "balance_quantity", "reduce_operation_hours"
+                            "balance_quantity"
                         }
                         default_val = 0 if col_lower in default_fields else value
                         job[col_lower] = default_val
@@ -578,8 +575,6 @@ def load_jobs_planning_data(
         jobs_query = build_jobs_query()
         query_params = (
             NORMAL_WORKING_HOURS,
-            config['break_hours'],
-            config['no_prod_hours'], 
             config['job_priority'],
             planning_horizon_days,
             max_jobs  # Add LIMIT parameter
