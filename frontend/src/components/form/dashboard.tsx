@@ -38,12 +38,57 @@ const DashboardCard: React.FC<DashboardCardProps> = ({
 const Dashboard: React.FC = () => {
   const { refreshData, clearError } = useDataCache();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshLogs, setRefreshLogs] = useState<string[]>([]);
+
+  const addLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setRefreshLogs(prev => [...prev, `[${timestamp}] ${message}`]);
+  };
 
   const handleRefreshAll = async () => {
     setIsRefreshing(true);
+    setRefreshLogs([]);
+    addLog('🔄 Starting data refresh...');
     clearError();
+    
     try {
+      // Fetching schedule data with animated dots
+      await new Promise(resolve => setTimeout(resolve, 500));
+      addLog('📡 Fetching schedule data...');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('Processing');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('.');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('..');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Loading Gantt chart data with animated dots
+      addLog('📊 Loading Gantt chart data...');
+      addLog('.');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('..');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      addLog('...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      addLog('Retrieving resource allocation');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Retrieving resource allocation
+      addLog('🏭 The App is scheduling now...');
       await refreshData();
+      
+      // Clear processing logs and show final success messages
+      setRefreshLogs([]);
+      addLog('✅ DONE!');
+      addLog('✅ All data refreshed successfully!');
+      addLog('✅ Now you can view the schedule!');
+      
+      // Don't clear the final success messages - they stay visible
+    } catch (error) {
+      addLog('❌ Error occurred during refresh');
     } finally {
       setIsRefreshing(false);
     }
@@ -127,7 +172,21 @@ const Dashboard: React.FC = () => {
               <i className="fas fa-sync-alt"></i> {isRefreshing ? 'Refreshing All Data...' : 'Refresh All Data'}
             </button>
           </div>
-          <p>Welcome to the AI Optimizer dashboard. Click "Refresh All Data" to load the latest production data, then navigate through different modules to optimize your production planning, resource allocation, and efficiency analysis.</p>
+
+          
+          {/* Progress Log Display */}
+          {refreshLogs.length > 0 && (
+            <div className="refresh-log-container">
+              <h4>Data Refresh Progress</h4>
+              <div className="refresh-log-content">
+                {refreshLogs.map((log, index) => (
+                  <div key={index} className="refresh-log-item">
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="dashboard-cards-container">
