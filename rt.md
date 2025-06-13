@@ -1,1 +1,0 @@
-mysql -u myuser -pmypassword -h localhost -e "DESCRIBE ai_arrangable_hour" nex_valiant | cat

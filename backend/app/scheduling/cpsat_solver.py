@@ -15,6 +15,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ortools.sat.python import cp_model
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, assume env vars are set
+
 # Configure logging to suppress OR-Tools verbose output
 logger = logging.getLogger(__name__)
 ortools_logger = logging.getLogger('ortools')
@@ -807,7 +814,7 @@ class ConstraintManager:
     
     def _add_simplified_working_hours_constraint(self, model_builder: CPSATModelBuilder,
                                                job_id: str, task_info: TaskInfo) -> bool:
-        """Add flexible working hours constraint - just check START time like greedy solver."""
+        """Add flexible working hours constraint that considers job duration."""
         try:
             from app.scheduling.time_availability import is_time_available_for_scheduling
             from app.utils.time_utils import relative_hours_to_epoch, epoch_to_datetime
@@ -816,17 +823,20 @@ class ConstraintManager:
             return False
         
         start_var = task_info.start
+        end_var = task_info.end
+        job_duration = task_info.hours
         
-        # Create flexible constraint - find available start time slots 
+        # Find valid time slots where BOTH start and end fit within working hours
         valid_start_ranges = []
         
-        # Check next 14 days for valid start periods
+        # Check next 14 days for valid start periods that accommodate full job duration
         for day_offset in range(14):
             day_start_hour = day_offset * 24
-            day_end_hour = (day_offset + 1) * 24
             
-            # Find start and end of working periods for this day
+            # Find continuous working periods that can fit the entire job
             period_start = None
+            continuous_hours = 0
+            
             for hour_offset in range(24):
                 absolute_hour = day_start_hour + hour_offset
                 
@@ -837,39 +847,67 @@ class ConstraintManager:
                     if dt and is_time_available_for_scheduling(dt):
                         if period_start is None:
                             period_start = absolute_hour
+                            continuous_hours = 1
+                        else:
+                            continuous_hours += 1
+                        
+                        # Check if we have enough continuous hours for the job
+                        if continuous_hours >= job_duration:
+                            # This start time can accommodate the full job duration
+                            latest_start = absolute_hour - job_duration + 1
+                            if latest_start >= period_start:
+                                valid_start_ranges.append((period_start, latest_start))
                     else:
-                        if period_start is not None:
-                            # End of a working period
-                            valid_start_ranges.append((period_start, absolute_hour - 1))
-                            period_start = None
+                        # Reset when we hit non-working time
+                        period_start = None
+                        continuous_hours = 0
                 except Exception:
+                    period_start = None
+                    continuous_hours = 0
                     continue
+        
+        # Remove duplicate ranges and merge overlapping ones
+        if valid_start_ranges:
+            valid_start_ranges = list(set(valid_start_ranges))
+            valid_start_ranges.sort()
             
-            # Handle period that extends to end of day
-            if period_start is not None:
-                valid_start_ranges.append((period_start, day_end_hour - 1))
+            # Merge overlapping ranges
+            merged_ranges = []
+            for start, end in valid_start_ranges:
+                if merged_ranges and start <= merged_ranges[-1][1]:
+                    # Overlapping - merge
+                    merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], end))
+                else:
+                    merged_ranges.append((start, end))
+            valid_start_ranges = merged_ranges
         
         if not valid_start_ranges:
-            logger.warning(f"No valid start periods found for job {job_id} - allowing flexible start")
-            # Very flexible fallback - just ensure start is non-negative
-            model_builder.model.Add(start_var >= 0)
+            logger.warning(f"No valid time slots found for job {job_id} (duration: {job_duration}h) - using emergency constraint")
+            # Emergency fallback - allow scheduling but prefer early hours
+            emergency_start_hour = self.config.emergency_minimum_start_hour
+            if emergency_start_hour >= 0:
+                model_builder.model.Add(start_var >= emergency_start_hour)
+            else:
+                model_builder.model.Add(start_var >= 0)
             return True
         
-        # Create OR constraint for valid start ranges (flexible like greedy)
+        # Create OR constraint for valid start ranges 
         range_bools = []
         for i, (range_start, range_end) in enumerate(valid_start_ranges[:20]):  # Limit for performance
-            range_bool = model_builder.model.NewBoolVar(f'start_range_{job_id}_{i}')
+            range_bool = model_builder.model.NewBoolVar(f'working_range_{job_id}_{i}')
             
-            # If this range is chosen, start must be within it
+            # If this range is chosen, start must be within it AND end must be valid
             model_builder.model.Add(start_var >= range_start).OnlyEnforceIf(range_bool)
             model_builder.model.Add(start_var <= range_end).OnlyEnforceIf(range_bool)
+            # Ensure end time is also within working hours by limiting start time
+            model_builder.model.Add(end_var <= range_end + job_duration).OnlyEnforceIf(range_bool)
             range_bools.append(range_bool)
         
         if range_bools:
-            # At least one valid range must be chosen (flexible OR constraint)
+            # At least one valid range must be chosen
             model_builder.model.AddAtLeastOne(range_bools)
         
-        logger.debug(f"Added flexible working hours constraint for {job_id}: {len(valid_start_ranges)} valid start ranges")
+        logger.debug(f"Added working hours constraint for {job_id} (duration: {job_duration}h): {len(valid_start_ranges)} valid slots")
         return True
     
 

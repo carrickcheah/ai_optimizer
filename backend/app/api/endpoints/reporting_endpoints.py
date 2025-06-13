@@ -112,14 +112,13 @@ class ParameterValidator:
 @router.get("/gantt/priority-view", response_model=List[Dict[str, Any]])
 async def get_gantt_priority_data(
     solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
-    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
-    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data colored by priority with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
         logger.info("🔄 Preparing Gantt priority view data")
         chart_data = prepare_gantt_data_priority_view(schedule_output, jobs_input_data)
@@ -140,14 +139,13 @@ async def get_gantt_priority_data(
 @router.get("/gantt/resource-view", response_model=List[Dict[str, Any]])
 async def get_gantt_resource_data(
     solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
-    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
-    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data grouped by resource with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
         logger.info("🔄 Preparing Gantt resource view data")
         chart_data = prepare_gantt_data_resource_view(schedule_output, jobs_input_data)
@@ -168,14 +166,13 @@ async def get_gantt_resource_data(
 @router.get("/detailed-schedule", response_model=List[Dict[str, Any]])
 async def get_detailed_schedule_table(
     solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
-    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
-    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get detailed schedule table data with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
         logger.info("🔄 Preparing detailed schedule table data")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)
@@ -196,14 +193,13 @@ async def get_detailed_schedule_table(
 @router.get("/schedule-overview", response_model=Dict[str, Any])
 async def get_schedule_overview(
     solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
-    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
-    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get schedule overview with STRICT validation - NO FALLBACKS."""
     try:
         solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
         logger.info("🔄 Preparing schedule overview")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)
@@ -284,8 +280,7 @@ async def get_schedule_overview(
 @router.get("/data-quality-analysis", response_model=Dict[str, Any])
 async def get_data_quality_analysis(
     solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
-    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
-    force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Analyze data quality with STRICT validation - NO FALLBACKS."""
     try:

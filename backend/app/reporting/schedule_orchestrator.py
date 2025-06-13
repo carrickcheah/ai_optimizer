@@ -88,10 +88,7 @@ except Exception as e:
     logger.error(f"❌ FAILED to initialize schedule orchestrator configuration: {e}")
     raise
 
-# Simple cache to prevent multiple solver runs for the same solver type
-_SCHEDULE_CACHE = {}
-_CACHE_TIMESTAMP = {}
-CACHE_DURATION_SECONDS = 300  # 5 minutes cache
+# Cache removed - always generate fresh results for real-time responsiveness
 
 class ScheduleOrchestrator:
     """Orchestrates job data loading and solver execution."""
@@ -172,32 +169,16 @@ class ScheduleOrchestrator:
 
 async def get_schedule_and_job_data(
     solver_type: str, 
-    force_refresh: bool = False, 
     max_jobs: Optional[int] = None
 ) -> Tuple[Dict[str, List], List[Dict[str, Any]]]:
-    """Load job data and run scheduler with strict validation."""
+    """Load job data and run scheduler with fresh results every time."""
     try:
         # Validate solver type
         solver_type = ScheduleOrchestrator.validate_solver_type(solver_type)
         
-        # Check cache first (unless force_refresh is True)
         effective_max_jobs = max_jobs or ORCHESTRATOR_CONFIG.max_jobs_limit
-        cache_key = f"{solver_type}_{effective_max_jobs}"
-        current_time = datetime.now().timestamp()
         
-        if (not force_refresh and 
-            cache_key in _SCHEDULE_CACHE and 
-            cache_key in _CACHE_TIMESTAMP and 
-            current_time - _CACHE_TIMESTAMP[cache_key] < CACHE_DURATION_SECONDS):
-            
-            logger.info(f"✅ Using cached schedule data for solver '{solver_type}' (age: {int(current_time - _CACHE_TIMESTAMP[cache_key])}s)")
-            return _SCHEDULE_CACHE[cache_key]
-        
-        if force_refresh:
-            logger.info(f"🔄 Force refresh requested - bypassing cache for solver '{solver_type}'")
-        else:
-            logger.info(f"🔄 No valid cache found for solver '{solver_type}' - generating fresh data")
-        
+        logger.info(f"🔄 Generating fresh schedule data for solver '{solver_type}'")
         logger.info(f"🔄 Loading jobs data (max: {effective_max_jobs}, horizon: {ORCHESTRATOR_CONFIG.planning_horizon_days} days)")
         
         # Load data using MariaDB parser
@@ -325,15 +306,9 @@ async def get_schedule_and_job_data(
         schedule_output = normalize_schedule_format(schedule_output)
         
         total_scheduled = sum(len(jobs) for jobs in schedule_output.values())
-        logger.info(f"✅ Final schedule ready: {total_scheduled} jobs scheduled")
+        logger.info(f"✅ Fresh schedule ready: {total_scheduled} jobs scheduled")
         
-        # Store in cache
-        result = (schedule_output, jobs_data)
-        _SCHEDULE_CACHE[cache_key] = result
-        _CACHE_TIMESTAMP[cache_key] = current_time
-        logger.info(f"✅ Cached schedule data for solver '{solver_type}'")
-        
-        return result
+        return (schedule_output, jobs_data)
         
     except Exception as e:
         logger.error(f"❌ SCHEDULE GENERATION FAILED: {e}")
