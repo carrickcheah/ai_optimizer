@@ -13,6 +13,36 @@ from app.api.fastapi_app import get_db_connection_from_pool
 
 logger = logging.getLogger(__name__)
 
+def normalize_schedule_format(schedule_output: Dict[str, List]) -> Dict[str, List]:
+    """Normalize schedule output to 3-tuple format with strict validation."""
+    if not isinstance(schedule_output, dict):
+        raise ValueError(f"Schedule output must be a dictionary, got {type(schedule_output)}")
+    
+    if not schedule_output:
+        raise ValueError("Schedule output is empty")
+    
+    normalized = {}
+    total_normalized = 0
+    
+    for machine, jobs in schedule_output.items():
+        if not isinstance(jobs, list):
+            raise ValueError(f"Jobs for machine '{machine}' must be a list, got {type(jobs)}")
+        
+        normalized[machine] = []
+        
+        for job_tuple in jobs:
+            if not isinstance(job_tuple, (list, tuple)) or len(job_tuple) < 3:
+                raise ValueError(f"Job tuple must have at least 3 elements: {job_tuple}")
+            
+            # Extract only first 3 elements (job_id, start, end)
+            normalized_tuple = (job_tuple[0], job_tuple[1], job_tuple[2])
+            normalized[machine].append(normalized_tuple)
+            total_normalized += 1
+            logger.debug(f"Normalized job {job_tuple[0]} on {machine}")
+    
+    logger.info(f"✅ Normalized {total_normalized} jobs across {len(normalized)} machines")
+    return normalized
+
 @dataclass
 class ChartConfig:
     """Chart configuration loaded from environment variables with strict validation."""

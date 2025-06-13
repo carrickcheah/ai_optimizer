@@ -15,25 +15,14 @@ from app.reporting.chart_generator import (
     prepare_gantt_data_resource_view,
     prepare_detailed_schedule_table_data
 )
-from app.data_ingestion.mariadb_parser import load_jobs_planning_data
-from app.scheduling.greedy_solver import greedy_schedule as run_greedy_solver
-from app.scheduling.cpsat_solver import schedule_jobs as run_cpsat_solver
-from app.scheduling.batch_scheduler import smart_batch_schedule_jobs
+from app.reporting.schedule_orchestrator import get_schedule_and_job_data, ORCHESTRATOR_CONFIG
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @dataclass
 class ReportingConfig:
-    """Configuration for reporting endpoints - ALL VALUES MUST BE IN .env - NO FALLBACKS."""
-    
-    # Job loading limits
-    max_jobs_limit: int
-    planning_horizon_days: int
-    
-    # Solver configuration
-    default_solver_type: str
-    solver_timeout_seconds: int
+    """Simplified configuration for reporting endpoints using orchestrator config."""
     
     # Data quality thresholds
     max_buffer_threshold_days: int
@@ -41,54 +30,9 @@ class ReportingConfig:
     
     @classmethod
     def from_env(cls) -> 'ReportingConfig':
-        """Load configuration from environment variables with STRICT validation - NO FALLBACKS."""
+        """Load additional configuration from environment variables."""
         missing_vars = []
         invalid_vars = []
-        
-        def get_required_int_env(key: str) -> Optional[int]:
-            """Get required integer environment variable - NO FALLBACKS."""
-            value = os.getenv(key)
-            if value is None:
-                missing_vars.append(key)
-                return None
-            
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"{key}={value}")
-                return None
-        
-        def get_required_float_env(key: str) -> Optional[float]:
-            """Get required float environment variable - NO FALLBACKS."""
-            value = os.getenv(key)
-            if value is None:
-                missing_vars.append(key)
-                return None
-            
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"{key}={value}")
-                return None
-        
-        def get_required_str_env(key: str) -> Optional[str]:
-            """Get required string environment variable - NO FALLBACKS."""
-            value = os.getenv(key)
-            if value is None:
-                missing_vars.append(key)
-                return None
-            return value.strip()
-        
-        # ALL variables are REQUIRED - NO FALLBACKS
-        max_jobs_limit = get_required_int_env('MAX_JOBS_LIMIT')
-        planning_horizon_days = get_required_int_env('PLANNING_HORIZON_DAYS')
-        solver_timeout_seconds = get_required_int_env('SOLVER_TIME_LIMIT_SECONDS')
-        
-        # Required with validation
-        default_solver_type = get_required_str_env('DEFAULT_SOLVER_TYPE')
-        if default_solver_type and default_solver_type.lower() not in ['cpsat', 'greedy']:
-            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type}")
-            default_solver_type = None
         
         # Optional but required for data quality analysis
         max_buffer_threshold_days = os.getenv('MAX_BUFFER_THRESHOLD_DAYS')
@@ -111,7 +55,7 @@ class ReportingConfig:
                 invalid_vars.append(f"DATA_QUALITY_MIN_SCORE={data_quality_min_score}")
                 data_quality_min_score = None
         
-        # Check for critical errors - FAIL IMMEDIATELY
+        # Check for critical errors
         if missing_vars:
             error_msg = f"❌ CRITICAL REPORTING CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
             logger.error(error_msg)
@@ -122,7 +66,7 @@ class ReportingConfig:
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        # Validate business logic - FAIL IF INVALID
+        # Validate business logic
         if max_buffer_threshold_days <= 0:
             error_msg = f"❌ CRITICAL CONFIG ERROR: MAX_BUFFER_THRESHOLD_DAYS must be positive, got {max_buffer_threshold_days}"
             logger.error(error_msg)
@@ -136,10 +80,6 @@ class ReportingConfig:
         logger.info(f"✅ Successfully loaded reporting configuration from .env")
         
         return cls(
-            max_jobs_limit=max_jobs_limit,
-            planning_horizon_days=planning_horizon_days,
-            default_solver_type=default_solver_type,
-            solver_timeout_seconds=solver_timeout_seconds,
             max_buffer_threshold_days=max_buffer_threshold_days,
             data_quality_min_score=data_quality_min_score
         )
@@ -147,22 +87,18 @@ class ReportingConfig:
 # Initialize configuration at module level - FAIL IF MISSING
 try:
     REPORTING_CONFIG = ReportingConfig.from_env()
-    logger.info(f"✅ Reporting endpoints initialized with {REPORTING_CONFIG.default_solver_type} solver")
+    logger.info(f"✅ Reporting endpoints initialized with {ORCHESTRATOR_CONFIG.default_solver_type} solver")
 except Exception as e:
     logger.error(f"❌ FAILED to initialize reporting configuration: {e}")
     raise
 
-# Simple cache to prevent multiple solver runs for the same solver type
-_SCHEDULE_CACHE = {}
-_CACHE_TIMESTAMP = {}
-CACHE_DURATION_SECONDS = 300  # 5 minutes cache
-
-class ScheduleValidator:
-    """Validates schedule data with strict checks - NO FALLBACKS."""
+# Simple validation helper for HTTP parameters
+class ParameterValidator:
+    """Simple parameter validation for HTTP endpoints."""
     
     @staticmethod
     def validate_solver_type(solver_type: str) -> str:
-        """Validate solver type with strict checks - NO FALLBACKS."""
+        """Validate solver type parameter."""
         if not isinstance(solver_type, str):
             raise ValueError(f"Solver type must be a string, got {type(solver_type)}")
         
@@ -172,274 +108,16 @@ class ScheduleValidator:
             raise ValueError(f"Invalid solver type '{solver_type}'. Must be 'cpsat' or 'greedy'")
         
         return solver_type
-    
-    @staticmethod
-    def validate_schedule_output(schedule_output: Dict[str, List]) -> None:
-        """Validate schedule output structure - NO FALLBACKS."""
-        if not isinstance(schedule_output, dict):
-            raise ValueError(f"Schedule output must be a dictionary, got {type(schedule_output)}")
-        
-        if not schedule_output:
-            raise ValueError("Schedule output is empty")
-        
-        total_jobs = 0
-        for machine, jobs in schedule_output.items():
-            if not isinstance(jobs, list):
-                raise ValueError(f"Jobs for machine '{machine}' must be a list, got {type(jobs)}")
-            
-            for i, job_tuple in enumerate(jobs):
-                if not isinstance(job_tuple, (list, tuple)) or len(job_tuple) < 3:
-                    raise ValueError(f"Job {i} for machine '{machine}' must be tuple/list with at least 3 elements")
-                
-                job_id, start_time, end_time = job_tuple[0], job_tuple[1], job_tuple[2]
-                
-                if not job_id:
-                    raise ValueError(f"Job {i} for machine '{machine}' has empty job_id")
-                
-                if not isinstance(start_time, (int, float)) or not isinstance(end_time, (int, float)):
-                    raise ValueError(f"Job {i} for machine '{machine}' has invalid timestamp types")
-                
-                if end_time <= start_time:
-                    raise ValueError(f"Job {i} for machine '{machine}' has invalid timing: end <= start")
-                
-                total_jobs += 1
-        
-        if total_jobs == 0:
-            raise ValueError("No valid jobs found in schedule output")
-        
-        logger.info(f"✅ Schedule validation passed: {total_jobs} jobs across {len(schedule_output)} machines")
-    
-    @staticmethod
-    def validate_jobs_data(jobs_data: List[Dict]) -> None:
-        """Validate jobs data structure - NO FALLBACKS."""
-        if not isinstance(jobs_data, list):
-            raise ValueError(f"Jobs data must be a list, got {type(jobs_data)}")
-        
-        if not jobs_data:
-            raise ValueError("Jobs data is empty")
-        
-        required_fields = ['job_id']
-        
-        for i, job in enumerate(jobs_data):
-            if not isinstance(job, dict):
-                raise ValueError(f"Job {i} must be a dictionary, got {type(job)}")
-            
-            for field in required_fields:
-                if field not in job:
-                    raise ValueError(f"Job {i} missing required field '{field}'")
-                
-                if not job[field]:
-                    raise ValueError(f"Job {i} has empty value for required field '{field}'")
-        
-        logger.info(f"✅ Jobs data validation passed: {len(jobs_data)} jobs")
-
-def normalize_schedule_format(schedule_output: Dict[str, List]) -> Dict[str, List]:
-    """Normalize schedule output to 3-tuple format with strict validation - NO FALLBACKS."""
-    try:
-        ScheduleValidator.validate_schedule_output(schedule_output)
-        
-        normalized = {}
-        total_normalized = 0
-        
-        for machine, jobs in schedule_output.items():
-            normalized[machine] = []
-            
-            for job_tuple in jobs:
-                if len(job_tuple) >= 3:
-                    # Extract only first 3 elements (job_id, start, end)
-                    normalized_tuple = (job_tuple[0], job_tuple[1], job_tuple[2])
-                    normalized[machine].append(normalized_tuple)
-                    total_normalized += 1
-                    logger.debug(f"Normalized job {job_tuple[0]} on {machine}")
-                else:
-                    logger.error(f"❌ INVALID JOB TUPLE: {job_tuple} has insufficient elements")
-                    raise ValueError(f"Job tuple {job_tuple} has insufficient elements")
-        
-        logger.info(f"✅ Normalized {total_normalized} jobs across {len(normalized)} machines")
-        return normalized
-        
-    except Exception as e:
-        logger.error(f"❌ SCHEDULE NORMALIZATION FAILED: {e}")
-        raise ValueError(f"Schedule normalization failed: {e}")
-
-async def get_schedule_and_job_data(solver_type: str, force_refresh: bool = False, max_jobs: Optional[int] = None) -> tuple:
-    """Load job data and run scheduler with strict validation - HANDLES BATCH SCHEDULER PARAMETER MISMATCH."""
-    try:
-        # Validate solver type
-        solver_type = ScheduleValidator.validate_solver_type(solver_type)
-        
-        # Check cache first (unless force_refresh is True)
-        # Include max_jobs in cache key so different limits have separate cache entries
-        effective_max_jobs = max_jobs or REPORTING_CONFIG.max_jobs_limit
-        cache_key = f"{solver_type}_{effective_max_jobs}"
-        current_time = datetime.now().timestamp()
-        
-        if (not force_refresh and 
-            cache_key in _SCHEDULE_CACHE and 
-            cache_key in _CACHE_TIMESTAMP and 
-            current_time - _CACHE_TIMESTAMP[cache_key] < CACHE_DURATION_SECONDS):
-            
-            logger.info(f"✅ Using cached schedule data for solver '{solver_type}' (age: {int(current_time - _CACHE_TIMESTAMP[cache_key])}s)")
-            return _SCHEDULE_CACHE[cache_key]
-        
-        if force_refresh:
-            logger.info(f"🔄 Force refresh requested - bypassing cache for solver '{solver_type}'")
-        else:
-            logger.info(f"🔄 No valid cache found for solver '{solver_type}' - generating fresh data")
-        
-        # effective_max_jobs already set above for cache key
-        logger.info(f"🔄 Loading jobs data (max: {effective_max_jobs}, horizon: {REPORTING_CONFIG.planning_horizon_days} days)")
-        
-        # Load data using MariaDB parser
-        jobs_data, machines_data, setup_times_data = load_jobs_planning_data(
-            max_jobs=effective_max_jobs,
-            planning_horizon_days=REPORTING_CONFIG.planning_horizon_days
-        )
-        
-        if not jobs_data:
-            logger.error("❌ NO JOBS DATA LOADED from database")
-            raise HTTPException(status_code=500, detail="No jobs data available from database")
-        
-        # Validate jobs data
-        ScheduleValidator.validate_jobs_data(jobs_data)
-        
-        # Extract machine names with strict validation
-        machine_names_list = []
-        if machines_data and isinstance(machines_data, list):
-            for machine in machines_data:
-                if isinstance(machine, dict) and machine.get('MachineName_v'):
-                    machine_names_list.append(machine['MachineName_v'])
-        
-        if not machine_names_list:
-            # Fallback to extracting from jobs data
-            machine_names_set = set()
-            for job in jobs_data:
-                if job.get('MachineName_v'):
-                    machine_names_set.add(job['MachineName_v'])
-            machine_names_list = list(machine_names_set)
-        
-        if not machine_names_list:
-            logger.error("❌ NO MACHINE NAMES FOUND in data")
-            raise HTTPException(status_code=500, detail="No machine names available for scheduling")
-        
-        logger.info(f"✅ Loaded {len(jobs_data)} jobs for {len(machine_names_list)} machines")
-        
-        # Run selected scheduling algorithm with parameter mismatch handling
-        schedule_output = None
-        
-        if solver_type == "cpsat":
-            logger.info("🔄 Running Smart Batch Scheduler (CP-SAT based)")
-            
-            try:
-                schedule_output_dict = smart_batch_schedule_jobs(
-                    jobs_data, 
-                    machine_names_list, 
-                    setup_times_data
-                )
-            except TypeError as e:
-                if "unexpected keyword argument" in str(e):
-                    logger.warning(f"⚠️ BATCH SCHEDULER PARAMETER MISMATCH: {e}")
-                    logger.info("🔄 Falling back to Greedy solver due to parameter mismatch")
-                    schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                    
-                    if not schedule_output:
-                        logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                        raise HTTPException(status_code=500, detail="Both CP-SAT and Greedy solvers failed")
-                else:
-                    raise
-            else:
-                if not schedule_output_dict:
-                    logger.error("❌ SMART BATCH SCHEDULER RETURNED EMPTY RESULT")
-                    logger.info("🔄 Falling back to Greedy solver")
-                    schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                    
-                    if not schedule_output:
-                        logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                        raise HTTPException(status_code=500, detail="Both CP-SAT and Greedy solvers failed")
-                else:
-                    metadata = schedule_output_dict.get('_metadata', {})
-                    scheduled_count = metadata.get('total_scheduled', 0)
-                    
-                    if scheduled_count == 0:
-                        error_msg = metadata.get('message', 'Unknown error')
-                        logger.warning(f"⚠️ SMART BATCH SCHEDULER FAILED: {error_msg}")
-                        logger.info("🔄 Falling back to Greedy solver")
-                        schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                        
-                        if not schedule_output:
-                            logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                            raise HTTPException(status_code=500, detail="Both CP-SAT and Greedy solvers failed")
-                    else:
-                        success_rate = metadata.get('success_rate', 0)
-                        logger.info(f"✅ Smart Batch Scheduler completed: {scheduled_count} jobs ({success_rate:.1f}% success)")
-                        
-                        # Convert to simple format for chart generator
-                        schedule_output = {}
-                        jobs_converted = 0
-                        
-                        for job_id, details in schedule_output_dict.items():
-                            if job_id == '_metadata':
-                                continue
-                            
-                            if not isinstance(details, dict):
-                                logger.error(f"❌ INVALID JOB DETAILS for {job_id}: {details}")
-                                continue
-                            
-                            machine = details.get('machine')
-                            start_time = details.get('start')
-                            end_time = details.get('end')
-                            
-                            if not all([machine, start_time is not None, end_time is not None]):
-                                logger.error(f"❌ INCOMPLETE JOB DATA for {job_id}: machine={machine}, start={start_time}, end={end_time}")
-                                continue
-                            
-                            if machine not in schedule_output:
-                                schedule_output[machine] = []
-                            
-                            job_tuple = (job_id, start_time, end_time)
-                            schedule_output[machine].append(job_tuple)
-                            jobs_converted += 1
-                        
-                        logger.info(f"✅ Converted {jobs_converted} jobs from Smart Batch result")
-            
-        else:  # greedy solver
-            logger.info("🔄 Running Greedy Solver")
-            schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-            
-            if not schedule_output:
-                logger.error("❌ GREEDY SOLVER RETURNED EMPTY RESULT")
-                raise HTTPException(status_code=500, detail="Greedy solver failed to generate schedule")
-        
-        # Validate and normalize schedule output
-        ScheduleValidator.validate_schedule_output(schedule_output)
-        schedule_output = normalize_schedule_format(schedule_output)
-        
-        total_scheduled = sum(len(jobs) for jobs in schedule_output.values())
-        logger.info(f"✅ Final schedule ready: {total_scheduled} jobs scheduled")
-        
-        # Store in cache
-        result = (schedule_output, jobs_data)
-        _SCHEDULE_CACHE[cache_key] = result
-        _CACHE_TIMESTAMP[cache_key] = current_time
-        logger.info(f"✅ Cached schedule data for solver '{solver_type}'")
-        
-        return result
-        
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.error(f"❌ SCHEDULE GENERATION FAILED: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate schedule: {str(e)}")
 
 @router.get("/gantt/priority-view", response_model=List[Dict[str, Any]])
 async def get_gantt_priority_data(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
     force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get Gantt chart data colored by priority with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
         
@@ -461,13 +139,13 @@ async def get_gantt_priority_data(
 
 @router.get("/gantt/resource-view", response_model=List[Dict[str, Any]])
 async def get_gantt_resource_data(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
     force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get Gantt chart data grouped by resource with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
         
@@ -489,13 +167,13 @@ async def get_gantt_resource_data(
 
 @router.get("/detailed-schedule", response_model=List[Dict[str, Any]])
 async def get_detailed_schedule_table(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
     force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get detailed schedule table data with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
         
@@ -517,13 +195,13 @@ async def get_detailed_schedule_table(
 
 @router.get("/schedule-overview", response_model=Dict[str, Any])
 async def get_schedule_overview(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
     force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Get schedule overview with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
         
@@ -589,8 +267,8 @@ async def get_schedule_overview(
             "buffer_status_counts": buffer_counts,
             "config_used": {
                 "solver_type": solver_type,
-                "max_jobs_limit": REPORTING_CONFIG.max_jobs_limit,
-                "planning_horizon_days": REPORTING_CONFIG.planning_horizon_days
+                "max_jobs_limit": ORCHESTRATOR_CONFIG.max_jobs_limit,
+                "planning_horizon_days": ORCHESTRATOR_CONFIG.planning_horizon_days
             }
         }
         
@@ -605,13 +283,13 @@ async def get_schedule_overview(
 
 @router.get("/data-quality-analysis", response_model=Dict[str, Any])
 async def get_data_quality_analysis(
-    solver: Optional[str] = Query(REPORTING_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)"),
     force_refresh: Optional[bool] = Query(False, description="Force fresh data, bypass cache")
 ):
     """Analyze data quality with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ScheduleValidator.validate_solver_type(solver or REPORTING_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
         
@@ -728,9 +406,9 @@ async def reporting_health_check():
         "timestamp": datetime.now().isoformat(),
         "checks": {},
         "config": {
-            "max_jobs_limit": REPORTING_CONFIG.max_jobs_limit,
-            "planning_horizon_days": REPORTING_CONFIG.planning_horizon_days,
-            "default_solver_type": REPORTING_CONFIG.default_solver_type
+            "max_jobs_limit": ORCHESTRATOR_CONFIG.max_jobs_limit,
+            "planning_horizon_days": ORCHESTRATOR_CONFIG.planning_horizon_days,
+            "default_solver_type": ORCHESTRATOR_CONFIG.default_solver_type
         }
     }
     

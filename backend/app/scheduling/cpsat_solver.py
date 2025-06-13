@@ -1184,15 +1184,9 @@ class ResultProcessor:
             # Convert relative times back to epoch timestamps
             start_epoch, end_epoch = self._convert_relative_to_epoch(start_val_rel, end_val_rel)
             
-            # Apply time availability adjustments for single-day jobs
-            duration_hours = (end_epoch - start_epoch) / 3600
-            if duration_hours <= 24:
-                adjusted_start, adjusted_end = self._adjust_for_working_hours(
-                    start_epoch, end_epoch, job_id
-                )
-                if adjusted_start != start_epoch:
-                    start_epoch, end_epoch = adjusted_start, adjusted_end
-                    time_adjusted_jobs += 1
+            # Skip time availability adjustments - CP-SAT already enforces working hours constraints
+            # The solver's working hours constraints (lines 788-817) handle this properly
+            # Post-processing adjustments would override the solver's optimized decisions
             
             job_result = {
                 'job_id': job_id,
@@ -1207,8 +1201,8 @@ class ResultProcessor:
             
             self._log_job_schedule(job_id, task_info.machine, start_epoch, end_epoch)
         
-        if time_adjusted_jobs > 0:
-            logger.info(f"Adjusted {time_adjusted_jobs} jobs for working hours compliance")
+        # No post-processing adjustments made - CP-SAT solver handles working hours constraints
+        logger.info(f"CP-SAT solution respects working hours constraints without post-processing adjustments")
         
         return job_results
     

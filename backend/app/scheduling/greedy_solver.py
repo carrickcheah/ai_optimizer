@@ -359,7 +359,7 @@ class SchedulingConstraints:
         if not self._check_operator_availability(start_time, end_time, operators_in_use, max_operators):
             return False
         
-        # Check deadline constraints
+        # Check deadline constraints (logging only - no enforcement)
         if not self._check_deadline_constraints(job, end_time):
             return False
         
@@ -402,7 +402,9 @@ class SchedulingConstraints:
         return True
     
     def _check_deadline_constraints(self, job: Dict[str, Any], end_time: float) -> bool:
-        """Check LCD date deadline constraints - more flexible for long jobs."""
+        """Check LCD date deadline constraints - NO HARD DEADLINE ENFORCEMENT."""
+        # Always allow scheduling regardless of LCD_DATE
+        # Just log deadline information for monitoring purposes
         if 'lcd_date_epoch' not in job or not job['lcd_date_epoch']:
             return True
         
@@ -415,31 +417,19 @@ class SchedulingConstraints:
         except ImportError:
             current_time = time.time()
         
-        grace_period_seconds = self.config.grace_period_hours * 3600
-        
-        # For very long jobs (>=12 hours), be more lenient with deadlines
-        if processing_time_hours >= 12:
-            logger.debug(f"Long job {job.get('job_id')} ({processing_time_hours:.1f}h) - using extended deadline flexibility")
-            # Allow scheduling even if significantly late, just log it
-            if lcd_deadline < current_time:
-                logger.info(f"Scheduling late long job {job.get('job_id')} - original deadline was {lcd_deadline}")
-            return True
-        
-        # Handle overdue jobs with grace period
+        # Log deadline status for monitoring, but don't enforce
         if lcd_deadline < current_time:
-            priority = job.get('priority', 3)
-            # High priority jobs get more grace time
-            if priority <= 2:
-                extended_grace = grace_period_seconds * 2
-            else:
-                extended_grace = grace_period_seconds
-            
-            adjusted_deadline = current_time + extended_grace
-            return end_time <= adjusted_deadline
+            days_late = (current_time - lcd_deadline) / (24 * 3600)
+            logger.info(f"Job {job.get('job_id')} is {days_late:.1f} days past LCD_DATE - scheduling anyway")
+        elif end_time > lcd_deadline:
+            days_over = (end_time - lcd_deadline) / (24 * 3600)
+            logger.info(f"Job {job.get('job_id')} will finish {days_over:.1f} days after LCD_DATE - scheduling anyway")
         else:
-            # Future deadlines get larger buffer for flexibility  
-            buffer_seconds = 14 * 24 * 3600  # 14 day buffer
-            return end_time <= (lcd_deadline + buffer_seconds)
+            buffer_days = (lcd_deadline - end_time) / (24 * 3600)
+            logger.debug(f"Job {job.get('job_id')} has {buffer_days:.1f} days buffer before LCD_DATE")
+        
+        # Always return True - no deadline enforcement
+        return True
     
     def _check_time_availability(self, start_time: float, end_time: float, 
                                 job: Dict[str, Any]) -> bool:
@@ -649,7 +639,7 @@ class GreedyScheduler:
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
                               max_operators: int) -> bool:
-        """Find next available slot and schedule job - with extended search for overloaded machines."""
+        """Find next available slot and schedule job - uses 1-hour precision with smart time availability jumps."""
         job_id = job['job_id']
         
         # Detect overloaded machines and extend search window
@@ -668,7 +658,7 @@ class GreedyScheduler:
         current_search_time = start_search_time
         increment = 3600  # Start with 1 hour increments
         attempts = 0
-        max_attempts_per_increment = 48  # 2 days worth of attempts
+        max_attempts_per_increment = 48  # 2 days worth of attempts before adaptive scaling
         
         while current_search_time < max_search_time:
             if self.constraints.can_schedule_job(
@@ -701,8 +691,8 @@ class GreedyScheduler:
             
             # Adaptive search: increase increment after many failed attempts
             if attempts >= max_attempts_per_increment:
-                if increment < 86400:  # Less than 24 hours
-                    increment = min(increment * 2, 86400)  # Double, max 24 hours
+                if increment < 3600:  # Less than 1 hour
+                    increment = min(increment * 2, 3600)  # Double, max 1 hour
                     logger.debug(f"Job {job_id}: Increasing search increment to {increment/3600:.1f} hours")
                 attempts = 0
         
