@@ -94,6 +94,24 @@ def validate_environment_config() -> Dict[str, Union[int, float]]:
     return config
 
 
+def test_database_connection() -> bool:
+    """
+    Test database connectivity for health checks.
+    
+    Returns:
+        bool: True if connection successful, False otherwise
+    """
+    try:
+        conn = get_db_connection()
+        if conn and conn.is_connected():
+            conn.close()
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Database connection test failed: {e}")
+        return False
+
+
 def get_db_connection() -> Optional[mysql.connector.MySQLConnection]:
     """
     Establish a connection to the MariaDB database.

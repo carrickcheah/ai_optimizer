@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
 """
 debug_deep_dive.py - CP-SAT Solver Testing and Evaluation
-Tests the CP-SAT solver with loaded job data and evaluates scheduling performance
 
-
-⏺ Looking at the cache refresh error in the CP-SAT solver, I can see the issue. The code is calling time_checker._refresh_cache_if_needed() but the correct
-  method is time_checker.cache.refresh_if_needed() based on the TimeAvailabilityChecker class structure.
-
-  Let me fix this:
-
-⏺ Update(app/scheduling/cpsat_solver.py)
-  ⎿  Updated app/scheduling/cpsat_solver.py with 1 addition and 1 removal
-     797           logger.info("Adding working hours constraints from ai_arrangable_hour table")
-     798 
-     799           # Force cache refresh
-     800 -         time_checker._refresh_cache_if_needed()
-     800 +         time_checker.cache.refresh_if_needed()
-     801 
-     802           # Get working hours for each day (1=Monday, 7=Sunday)
-     803           working_hours_by_day = self._get_working_hours_by_day(time_checker)
-  ⎿  Claude usage limit reached. Your limit will reset at 4am (Asia/Kuala_Lumpur).
 """
 
 import sys

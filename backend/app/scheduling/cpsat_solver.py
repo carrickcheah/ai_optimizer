@@ -821,7 +821,7 @@ class ConstraintManager:
         working_hours_by_day = {}
         
         for day_of_week in range(1, 8):  # 1-7 for Monday-Sunday
-            periods = time_checker._arrangable_hours_cache.get(day_of_week, [])
+            periods = time_checker.cache._arrangable_hours_cache.get(day_of_week, [])
             day_periods = []
             
             if periods:
