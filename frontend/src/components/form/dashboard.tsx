@@ -54,22 +54,10 @@ const Dashboard: React.FC = () => {
     try {
       // Fetching schedule data with animated dots
       addLog('📡 Fetching schedule data...');
-      addLog('Processing');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      addLog('.');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      addLog('..');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      addLog('...');
-      await new Promise(resolve => setTimeout(resolve, 500));
+
       
       // Loading Gantt chart data with animated dots
       addLog('📊 Loading Gantt chart data...');
-      addLog('.');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      addLog('..');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      addLog('...');
       await new Promise(resolve => setTimeout(resolve, 500));
       addLog('Retrieving resource allocation');
       await new Promise(resolve => setTimeout(resolve, 500));
