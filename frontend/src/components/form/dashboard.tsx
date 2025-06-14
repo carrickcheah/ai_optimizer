@@ -53,9 +53,7 @@ const Dashboard: React.FC = () => {
     
     try {
       // Fetching schedule data with animated dots
-      await new Promise(resolve => setTimeout(resolve, 500));
       addLog('📡 Fetching schedule data...');
-      await new Promise(resolve => setTimeout(resolve, 800));
       addLog('Processing');
       await new Promise(resolve => setTimeout(resolve, 800));
       addLog('.');
@@ -157,11 +155,6 @@ const Dashboard: React.FC = () => {
     <div className="dashboard-page-container">
       <div className="dashboard-main-content">
         <div className="dashboard-section-description">
-          <div className="dashboard-header-container">
-            <Link to="/input" className="dashboard-back-button">
-              <i className="fas fa-arrow-left"></i>Back to Job Input
-            </Link>
-          </div>
           <div className="d-flex align-items-center justify-content-between mb-3">
             <h1 className="dashboard-title mb-0">AI Optimizer</h1>
             <button 
