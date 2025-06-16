@@ -259,13 +259,11 @@ const GanttChartDisplay: React.FC = () => {
           color: sortedTasks.map(task => {
             // For subcontractor tasks, use a distinct pattern by modifying the color
             if (task.Resource === 'Subcon') {
-              const baseColor = task.Color || 
-                               (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+              const baseColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
               // Use a lighter/striped version for subcon tasks or a distinct color scheme
               return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
             }
-            return task.Color || 
-                  (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+            return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
           })
         },
         text: sortedTasks.map(task => {
@@ -397,13 +395,11 @@ const GanttChartDisplay: React.FC = () => {
           color: filteredTasks.map(task => {
             // For subcontractor tasks, use a distinct pattern by modifying the color
             if (task.Resource === 'Subcon') {
-              const baseColor = task.Color || 
-                               (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+              const baseColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
               // Use a lighter/striped version for subcon tasks or a distinct color scheme
               return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
             }
-            return task.Color || 
-                  (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+            return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
           })
         },
       text: filteredTasks.map(task => {

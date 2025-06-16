@@ -143,9 +143,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       orientation: 'h',
       marker: {
         color: resourceTasks.map(task => {
-          // Use actual buffer status color only
-          return task.Color || 
-                 (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+          // Use buffer status color only (ignore task.Color)
+          return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
         })
       },
       text: resourceTasks.map(task => {
@@ -362,9 +361,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           orientation: 'h',
           marker: {
             color: resourceTasks.map(task => {
-              // Use actual buffer status color only
-              return task.Color || 
-                     (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
+              // Use buffer status color only (ignore task.Color)
+              return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
             })
           },
           text: resourceTasks.map(task => {
