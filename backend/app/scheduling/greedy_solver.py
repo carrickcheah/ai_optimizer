@@ -365,14 +365,31 @@ class SchedulingConstraints:
     def _check_machine_availability(self, machine_id: str, start_time: float, end_time: float,
                                    schedule: Dict[str, List[Tuple]]) -> bool:
         """Check if machine is available during the time window."""
-        for scheduled_item in schedule[machine_id]:
-            scheduled_start = scheduled_item[1]
-            scheduled_end = scheduled_item[2]
+        machine_tasks = schedule.get(machine_id, [])
+        if not machine_tasks:
+            return True
+            
+        # Performance: Early exit if checking beyond all scheduled tasks
+        if machine_tasks and start_time >= machine_tasks[-1][2]:
+            return True
+            
+        # Binary search for potential conflicts
+        left, right = 0, len(machine_tasks) - 1
+        
+        while left <= right:
+            mid = (left + right) // 2
+            scheduled_start = machine_tasks[mid][1]
+            scheduled_end = machine_tasks[mid][2]
             
             # Check for overlap
             if not (end_time <= scheduled_start or start_time >= scheduled_end):
                 return False
-        
+                
+            if scheduled_end <= start_time:
+                left = mid + 1
+            else:
+                right = mid - 1
+                
         return True
     
     def _check_operator_availability(self, start_time: float, end_time: float,
@@ -387,10 +404,14 @@ class SchedulingConstraints:
             end_rel = epoch_to_relative_hours(end_time)
             
             for hour in range(int(start_rel), int(end_rel) + 1):
-                if operators_in_use[hour] >= max_operators:
+                # Ensure type consistency for comparison
+                if int(operators_in_use[hour]) >= int(max_operators):
                     return False
         except ImportError:
             logger.warning("Could not import time utilities - skipping operator constraints")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Type conversion error in operator check: {e}")
+            return True
         
         return True
     
@@ -542,7 +563,8 @@ class GreedyScheduler:
         """Schedule independent jobs (no dependencies)."""
         logger.info(f"Scheduling {len(independent_jobs)} independent jobs")
         
-        sorted_jobs = sorted(independent_jobs, key=lambda j: j.get('priority', 99))
+        # Performance optimization: Sort by priority and processing time (shorter jobs first)
+        sorted_jobs = sorted(independent_jobs, key=lambda j: (j.get('priority', 99), j.get('processing_time', float('inf'))))
         
         for job in sorted_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
@@ -648,6 +670,12 @@ class GreedyScheduler:
         
         max_search_time = start_search_time + search_limit_hours * 3600
         
+        # Performance optimization: Try time availability jumps first
+        time_availability_works = self._try_time_availability_jump(job, machine_id, start_search_time, max_search_time, schedule_state, family, process_num, max_operators)
+        if time_availability_works:
+            return True
+        
+        # Fallback to incremental search if time availability module not available
         current_search_time = start_search_time
         increment = 3600  # Start with 1 hour increments
         attempts = 0
@@ -664,19 +692,14 @@ class GreedyScheduler:
                 )
                 return True
             
-            # Try to use time availability module to jump to next available slot
-            try:
-                from app.scheduling.time_availability import get_next_available_slot
-                processing_time_hours = job.get('processing_time', 3600) / 3600  # Convert seconds to hours
-                next_available = get_next_available_slot(current_search_time, processing_time_hours)
-                
-                if next_available and next_available > current_search_time:
-                    # Jump to next available time slot
-                    current_search_time = next_available
-                    logger.debug(f"Job {job_id}: Jumped to next available slot at epoch {next_available}")
+            # Performance optimization: Use binary search for next conflict
+            if attempts > 10 and increment == 3600:
+                # After 10 failed attempts, try to binary search for next available slot
+                next_gap = self._binary_search_next_gap(machine_id, current_search_time, max_search_time, job['processing_time'], schedule_state)
+                if next_gap and next_gap > current_search_time:
+                    current_search_time = next_gap
+                    attempts = 0
                     continue
-            except ImportError:
-                pass
             
             # Fallback to incremental search
             current_search_time += increment
@@ -693,6 +716,79 @@ class GreedyScheduler:
         logger.warning(f"Could not find available slot for job {job_id} on machine {machine_id} within {search_limit_hours/24:.0f} days")
         schedule_state['unscheduled_jobs'].append(job)
         return False
+    
+    def _try_time_availability_jump(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
+                                   max_search_time: float, schedule_state: Dict[str, Any], family: str, 
+                                   process_num: int, max_operators: int) -> bool:
+        """Try to use time availability module for smart jumps to available slots."""
+        try:
+            from app.scheduling.time_availability import get_next_available_slot
+            processing_time_hours = job.get('processing_time', 3600) / 3600
+            
+            current_search_time = start_search_time
+            max_jumps = 50  # Limit jumps to prevent infinite loops
+            
+            for _ in range(max_jumps):
+                if current_search_time >= max_search_time:
+                    break
+                    
+                # Get next available slot from time availability
+                next_available = get_next_available_slot(current_search_time, processing_time_hours)
+                if not next_available or next_available <= current_search_time:
+                    break
+                    
+                current_search_time = next_available
+                
+                # Check if we can schedule at this time
+                if self.constraints.can_schedule_job(
+                    job, machine_id, current_search_time, schedule_state['schedule'],
+                    schedule_state['operators_in_use'], max_operators
+                ):
+                    self._schedule_job_at_time(
+                        job, machine_id, current_search_time, schedule_state,
+                        family, process_num, max_operators
+                    )
+                    return True
+                    
+                # If not, advance by 1 hour for next attempt
+                current_search_time += 3600
+                
+        except ImportError:
+            pass
+        
+        return False
+    
+    def _binary_search_next_gap(self, machine_id: str, start_time: float, end_time: float, 
+                               required_duration: float, schedule_state: Dict[str, Any]) -> Optional[float]:
+        """Binary search for the next available gap in machine schedule."""
+        machine_tasks = schedule_state['schedule'][machine_id]
+        if not machine_tasks:
+            return start_time
+            
+        # Find tasks that might conflict
+        relevant_tasks = [(task[1], task[2]) for task in machine_tasks if task[2] > start_time]
+        if not relevant_tasks:
+            return start_time
+            
+        relevant_tasks.sort()
+        
+        # Check gap before first task
+        if relevant_tasks[0][0] - start_time >= required_duration:
+            return start_time
+            
+        # Check gaps between tasks
+        for i in range(len(relevant_tasks) - 1):
+            gap_start = relevant_tasks[i][1]
+            gap_end = relevant_tasks[i + 1][0]
+            if gap_end - gap_start >= required_duration and gap_start < end_time:
+                return gap_start
+                
+        # Check after last task
+        last_end = relevant_tasks[-1][1]
+        if last_end < end_time:
+            return last_end
+            
+        return None
     
     def _schedule_job_at_time(self, job: Dict[str, Any], machine_id: str, start_time: float,
                              schedule_state: Dict[str, Any], family: str, process_num: int,
