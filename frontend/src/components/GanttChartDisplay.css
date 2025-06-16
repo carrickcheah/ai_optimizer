@@ -425,3 +425,30 @@
     justify-content: center;
   }
 }
+
+/* Segmented task styles - make break gaps visible */
+.segmented-task {
+  border-left: 3px solid #ff6b6b !important;
+  opacity: 0.9 !important;
+  border-radius: 0 !important;
+}
+
+.segmented-task:hover {
+  border-left: 5px solid #ff4757 !important;
+  opacity: 1 !important;
+}
+
+/* Break-aware task styling - visual indication for jobs with breaks */
+.task-with-breaks {
+  background: linear-gradient(
+    90deg,
+    #4CAF50 0%,
+    #4CAF50 75%,
+    #FFC107 75%,
+    #FFC107 80%,
+    #4CAF50 80%,
+    #4CAF50 100%
+  ) !important;
+  background-size: 40px 100%;
+  background-repeat: repeat-x;
+}

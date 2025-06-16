@@ -583,7 +583,7 @@ class GreedyScheduler:
             # Estimate start time as current time or after any dependencies
             start_time = schedule_state['current_time']
             processing_time = job.get('processing_time', 3600)  # Default 1 hour if missing
-            end_time = start_time + processing_time
+            end_time = self._calculate_preemptive_end_time(start_time, processing_time)
             
             # Add to subcontractor "machine" for chart display
             if 'SUBCONTRACTOR' not in schedule_state['schedule']:
@@ -863,9 +863,10 @@ class GreedyScheduler:
         job_id = job['job_id']
         processing_time = job['processing_time']
         
-        # Create job segments that show breaks
-        job_segments = self._create_job_segments_with_breaks(start_time, processing_time)
-        logger.info(f"Job {job_id}: Created {len(job_segments)} segments")
+        # Calculate end time accounting for breaks
+        end_time = self._calculate_preemptive_end_time(start_time, processing_time)
+        job_segments = [(start_time, end_time)]
+        logger.info(f"Job {job_id}: Scheduled with break-aware timing")
         
         # Create additional parameters for all segments
         additional_params = {
@@ -911,10 +912,10 @@ class GreedyScheduler:
         try:
             from app.utils.time_utils import epoch_to_datetime, format_datetime_for_display
             start_str = format_datetime_for_display(epoch_to_datetime(start_time))
-            end_str = format_datetime_for_display(epoch_to_datetime(end_time))
-            logger.info(f"Scheduled job {job_id} (P{process_num:02d}) on {machine_id}: {start_str} to {end_str}")
+            end_str = format_datetime_for_display(epoch_to_datetime(final_end_time))
+            logger.info(f"Scheduled job {job_id} (P{process_num:02d}) on {machine_id}: {start_str} to {end_str} ({len(job_segments)} segments)")
         except ImportError:
-            logger.info(f"Scheduled job {job_id} (P{process_num:02d}) on {machine_id}: {start_time} to {end_time}")
+            logger.info(f"Scheduled job {job_id} (P{process_num:02d}) on {machine_id}: {start_time} to {final_end_time} ({len(job_segments)} segments)")
     
     def _finalize_schedule(self, schedule_state: Dict[str, Any]) -> None:
         """Finalize schedule by sorting tasks by start time."""
@@ -1027,73 +1028,9 @@ class GreedyScheduler:
 
     def _create_job_segments_with_breaks(self, start_time: float, processing_time: float) -> List[Tuple[float, float]]:
         """Create job segments that show breaks between working periods."""
-        try:
-            from app.scheduling.time_availability import is_time_available_for_scheduling
-            from datetime import datetime
-            import pytz
-            
-            singapore_tz = pytz.timezone('Asia/Singapore')
-            segments = []
-            current_time = start_time
-            remaining_time = processing_time
-            
-            logger.info(f"Creating job segments: start={datetime.fromtimestamp(start_time, tz=singapore_tz)}, duration={processing_time/3600:.1f}h")
-            
-            # Process the job in working time chunks, creating segments separated by breaks
-            while remaining_time > 0:
-                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
-                
-                # Check if current time is during working hours
-                if is_time_available_for_scheduling(current_dt):
-                    # Start a new working segment
-                    segment_start = current_time
-                    segment_work_time = 0
-                    
-                    # Work until we hit a break or finish the job
-                    while remaining_time > 0:
-                        # Check if we hit a break time by advancing
-                        next_time = current_time + 60  # Check 1 minute ahead
-                        next_dt = datetime.fromtimestamp(next_time, tz=singapore_tz)
-                        
-                        # If next minute is not available (break time), end this segment
-                        if not is_time_available_for_scheduling(next_dt):
-                            # End the current segment here
-                            segments.append((segment_start, current_time))
-                            logger.info(f"Segment ended at break: {datetime.fromtimestamp(segment_start, tz=singapore_tz)} to {datetime.fromtimestamp(current_time, tz=singapore_tz)} ({segment_work_time/3600:.1f}h worked)")
-                            break
-                        
-                        # Work for 1 minute chunk
-                        work_chunk = min(60, remaining_time)  # 1 minute = 60 seconds
-                        remaining_time -= work_chunk
-                        current_time += work_chunk
-                        segment_work_time += work_chunk
-                        
-                        # If job is finished, end the segment
-                        if remaining_time <= 0:
-                            segments.append((segment_start, current_time))
-                            logger.info(f"Final segment completed: {datetime.fromtimestamp(segment_start, tz=singapore_tz)} to {datetime.fromtimestamp(current_time, tz=singapore_tz)} ({segment_work_time/3600:.1f}h worked)")
-                            break
-                else:
-                    # Skip non-working time (breaks/holidays) - jump to next minute
-                    current_time += 60  # Jump 1 minute ahead
-                
-                # Safety check to prevent infinite loops
-                if current_time > start_time + (365 * 24 * 3600):  # 1 year limit
-                    logger.warning(f"Job segmentation exceeded 1 year limit - creating single segment")
-                    return [(start_time, start_time + processing_time)]
-            
-            logger.info(f"Created {len(segments)} segments for job")
-            if len(segments) > 1:
-                logger.info(f"Multi-segment job created with {len(segments)} segments")
-            return segments
-            
-        except ImportError:
-            # Fallback to single segment if time availability not available
-            logger.warning("Time availability not available - creating single segment")
-            return [(start_time, start_time + processing_time)]
-        except Exception as e:
-            logger.warning(f"Job segmentation failed: {e} - creating single segment")
-            return [(start_time, start_time + processing_time)]
+        # TEMPORARILY DISABLED - Return single segment to prevent infinite loops
+        # TODO: Implement proper break detection algorithm
+        return [(start_time, start_time + processing_time)]
     
     def _calculate_preemptive_end_time(self, start_time: float, processing_time: float) -> float:
         """Calculate actual end time for a job considering breaks and working hours (preemptive scheduling)."""
@@ -1114,13 +1051,13 @@ class GreedyScheduler:
                 
                 # Check if current time is during working hours
                 if is_time_available_for_scheduling(current_dt):
-                    # Work for 1 hour or remaining time, whichever is less
-                    work_chunk = min(3600, remaining_time)  # 1 hour = 3600 seconds
+                    # Work for 1 minute or remaining time, whichever is less
+                    work_chunk = min(60, remaining_time)  # 1 minute = 60 seconds
                     remaining_time -= work_chunk
                     current_time += work_chunk
                 else:
-                    # Skip to next working hour (pause during break/non-working time)
-                    current_time += 3600  # Jump 1 hour ahead
+                    # Skip to next minute (pause during break/non-working time)
+                    current_time += 60  # Jump 1 minute ahead
                 
                 # Safety check to prevent infinite loops
                 if current_time > start_time + (365 * 24 * 3600):  # 1 year limit
