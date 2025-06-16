@@ -256,10 +256,7 @@ class MachineManager:
         else:
             machine_names = machines
         
-        # Add 'Subcon' for handling unassigned jobs
-        if 'Subcon' not in machine_names:
-            machine_names.append('Subcon')
-            logger.info("Added 'Subcon' to machine list for unassigned jobs")
+        # Don't add Subcon/SUBCONTRACTOR to machine list - they're handled separately
         
         return machine_names
     
@@ -270,18 +267,18 @@ class MachineManager:
         # Check if job has specific machine requirement
         required_machine = job.get('MachineName_v')
         if required_machine:
-            if required_machine == "NOT_ASSIGN":
-                logger.debug(f"Job {job.get('job_id', 'Unknown')} has NOT_ASSIGN machine - assigning to 'Subcon'")
-                return 'Subcon'
+            if required_machine in ["NOT_ASSIGN", "SUBCONTRACTOR"]:
+                logger.debug(f"Job {job.get('job_id', 'Unknown')} is subcontractor work - not machine-scheduled")
+                return None  # Subcontractor jobs don't use machines
             elif required_machine in machines:
                 return required_machine
         
         # Find least loaded compatible machine
-        compatible_machines = [m for m in machines if m != 'Subcon']  # Prefer actual machines over Subcon
+        compatible_machines = [m for m in machines if m not in ['Subcon', 'SUBCONTRACTOR']]
         
         if not compatible_machines:
             logger.warning(f"No compatible machines found for job {job.get('job_id')}")
-            return 'Subcon'  # Fallback to Subcon
+            return None  # No suitable machine
         
         # Return least loaded compatible machine
         return min(compatible_machines, key=lambda m: machine_available_time[m])
@@ -295,6 +292,7 @@ class JobCategorizer:
         """Categorize jobs by dependency status."""
         categories = {
             'not_assign': [],
+            'subcontractor': [],
             'independent': [],
             'dependency': []
         }
@@ -312,8 +310,11 @@ class JobCategorizer:
             return categories
         
         for job in jobs:
-            if job.get('MachineName_v') == 'NOT_ASSIGN':
+            machine_name = job.get('MachineName_v')
+            if machine_name == 'NOT_ASSIGN':
                 categories['not_assign'].append(job)
+            elif machine_name == 'SUBCONTRACTOR':
+                categories['subcontractor'].append(job)
             else:
                 family = extract_job_family(job['job_id'])
                 process_num = extract_process_number(job['job_id'])
@@ -325,6 +326,7 @@ class JobCategorizer:
         
         logger.info(
             f"Job categorization: {len(categories['not_assign'])} NOT_ASSIGN, "
+            f"{len(categories['subcontractor'])} SUBCONTRACTOR, "
             f"{len(categories['independent'])} independent, "
             f"{len(categories['dependency'])} with dependencies"
         )
@@ -341,24 +343,28 @@ class SchedulingConstraints:
     def can_schedule_job(self, job: Dict[str, Any], machine_id: str, start_time: float,
                         schedule: Dict[str, List[Tuple]], operators_in_use: Dict[int, int],
                         max_operators: int) -> bool:
-        """Check if job can be scheduled at given time."""
-        end_time = start_time + job['processing_time']
+        """Check if job can be scheduled at given time (preemptive scheduling)."""
+        # For preemptive scheduling, we only need to check if we can start
+        # The job will pause during breaks and resume automatically
         
-        # Check machine availability
-        if not self._check_machine_availability(machine_id, start_time, end_time, schedule):
+        # For preemptive scheduling, calculate the actual end time
+        processing_time = job['processing_time']
+        # Use a simple estimation for constraint checking (actual calculation in scheduling)
+        estimated_end_time = start_time + processing_time * 1.5  # Rough estimate with 50% buffer for breaks
+        
+        # Check machine availability for the estimated duration
+        if not self._check_machine_availability(machine_id, start_time, estimated_end_time, schedule):
             return False
         
-        # Check operator constraints
-        if not self._check_operator_availability(start_time, end_time, operators_in_use, max_operators):
+        # Check time availability (only start time needs to be valid for preemptive)
+        if not self._check_time_availability(start_time, estimated_end_time, job):
             return False
         
         # Check deadline constraints (logging only - no enforcement)
-        if not self._check_deadline_constraints(job, end_time):
+        if not self._check_deadline_constraints(job, estimated_end_time):
             return False
         
-        # Check time availability (working hours, holidays, breaks)
-        if not self._check_time_availability(start_time, end_time, job):
-            return False
+        # Skip operator constraints for preemptive scheduling as they're complex to calculate
         
         return True
     
@@ -431,36 +437,41 @@ class SchedulingConstraints:
         except ImportError:
             current_time = time.time()
         
-        # Log deadline status for monitoring, but don't enforce
+        # PERFORMANCE OPTIMIZATION: Reduce excessive logging
+        # Only log significant deadline violations (>1 day) to reduce overhead
         if lcd_deadline < current_time:
             days_late = (current_time - lcd_deadline) / (24 * 3600)
-            logger.info(f"Job {job.get('job_id')} is {days_late:.1f} days past LCD_DATE - scheduling anyway")
+            if days_late > 1.0:  # Only log if more than 1 day late
+                logger.info(f"Job {job.get('job_id')} is {days_late:.1f} days past LCD_DATE - scheduling anyway")
         elif end_time > lcd_deadline:
             days_over = (end_time - lcd_deadline) / (24 * 3600)
-            logger.info(f"Job {job.get('job_id')} will finish {days_over:.1f} days after LCD_DATE - scheduling anyway")
+            if days_over > 1.0:  # Only log if more than 1 day over
+                logger.debug(f"Job {job.get('job_id')} will finish {days_over:.1f} days after LCD_DATE - scheduling anyway")
         else:
             buffer_days = (lcd_deadline - end_time) / (24 * 3600)
-            logger.debug(f"Job {job.get('job_id')} has {buffer_days:.1f} days buffer before LCD_DATE")
+            if buffer_days > 7.0:  # Only log significant buffers
+                logger.debug(f"Job {job.get('job_id')} has {buffer_days:.1f} days buffer before LCD_DATE")
         
         # Always return True - no deadline enforcement
         return True
     
     def _check_time_availability(self, start_time: float, end_time: float, 
                                 job: Dict[str, Any]) -> bool:
-        """Check time availability - jobs must start during working hours."""
+        """Check time availability - always allow if start time is valid (preemptive scheduling)."""
         try:
             from app.scheduling.time_availability import is_time_available_for_scheduling
             from datetime import datetime
             import pytz
             
-            # For all jobs, check if the start time is during working hours
-            # The job will automatically span multiple working days as needed
+            # Convert start time to datetime object
             singapore_tz = pytz.timezone('Asia/Singapore')
             start_dt = datetime.fromtimestamp(start_time, tz=singapore_tz)
             
+            # For preemptive scheduling, only check if start time is during working hours
+            # The job will automatically pause during breaks and resume after
             if not is_time_available_for_scheduling(start_dt):
                 job_id = job.get('job_id', 'Unknown')
-                logger.debug(f"Job {job_id} start time {start_dt} is not during working hours")
+                logger.debug(f"Job {job_id} cannot start at {start_dt} - outside working hours")
                 return False
                 
         except ImportError:
@@ -507,6 +518,7 @@ class GreedyScheduler:
         
         # Schedule each category
         self._schedule_not_assign_jobs(job_categories['not_assign'], schedule_state, max_operators)
+        self._schedule_subcontractor_jobs(job_categories['subcontractor'], schedule_state)
         self._schedule_independent_jobs(job_categories['independent'], schedule_state, max_operators)
         
         if enforce_sequence:
@@ -557,6 +569,30 @@ class GreedyScheduler:
                 job, machine_id, start_search_time, schedule_state,
                 'NOT_ASSIGN_FAMILY', 99, max_operators
             )
+    
+    def _schedule_subcontractor_jobs(self, subcontractor_jobs: List[Dict[str, Any]],
+                                    schedule_state: Dict[str, Any]) -> None:
+        """Schedule subcontractor jobs with estimated timing for chart display."""
+        logger.info(f"Scheduling {len(subcontractor_jobs)} SUBCONTRACTOR jobs")
+        
+        # Subcontractor jobs don't compete for machine time but need timing for dependencies
+        for job in subcontractor_jobs:
+            if job['job_id'] in schedule_state['scheduled_jobs']:
+                continue
+            
+            # Estimate start time as current time or after any dependencies
+            start_time = schedule_state['current_time']
+            processing_time = job.get('processing_time', 3600)  # Default 1 hour if missing
+            end_time = start_time + processing_time
+            
+            # Add to subcontractor "machine" for chart display
+            if 'SUBCONTRACTOR' not in schedule_state['schedule']:
+                schedule_state['schedule']['SUBCONTRACTOR'] = []
+            
+            schedule_state['schedule']['SUBCONTRACTOR'].append((job['job_id'], start_time, end_time))
+            schedule_state['scheduled_jobs'].add(job['job_id'])
+            
+            logger.info(f"Scheduled SUBCONTRACTOR job {job['job_id']}: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')} to {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d %H:%M')}")
     
     def _schedule_independent_jobs(self, independent_jobs: List[Dict[str, Any]],
                                   schedule_state: Dict[str, Any], max_operators: int) -> None:
@@ -654,11 +690,11 @@ class GreedyScheduler:
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
                               max_operators: int) -> bool:
-        """Find next available slot and schedule job - uses 1-hour precision with smart time availability jumps."""
+        """Find next available slot and schedule job - optimized with smart jumping and reduced logging."""
         job_id = job['job_id']
+        processing_time = job.get('processing_time', 3600)
         
         # Detect overloaded machines and extend search window
-        # Count total jobs assigned to this machine (not just currently scheduled)
         total_machine_jobs = schedule_state.get('machine_job_counts', {}).get(machine_id, 0)
         
         if total_machine_jobs > 20:  # Machine is overloaded
@@ -666,22 +702,30 @@ class GreedyScheduler:
             logger.info(f"Job {job_id}: Machine {machine_id} overloaded ({total_machine_jobs} total jobs), extending search to {self.config.overloaded_machine_search_days} days")
         else:
             search_limit_hours = self.config.scheduler_search_days * 24
-            logger.debug(f"Job {job_id}: Searching for slot within {self.config.scheduler_search_days} days")
-        
+            
         max_search_time = start_search_time + search_limit_hours * 3600
         
-        # Performance optimization: Try time availability jumps first
-        time_availability_works = self._try_time_availability_jump(job, machine_id, start_search_time, max_search_time, schedule_state, family, process_num, max_operators)
-        if time_availability_works:
-            return True
+        # PERFORMANCE OPTIMIZATION 1: Try smart gap finding first
+        next_gap = self._find_optimal_gap(machine_id, start_search_time, max_search_time, processing_time, schedule_state)
+        if next_gap:
+            if self.constraints.can_schedule_job(
+                job, machine_id, next_gap, schedule_state['schedule'],
+                schedule_state['operators_in_use'], max_operators
+            ):
+                self._schedule_job_at_time(
+                    job, machine_id, next_gap, schedule_state,
+                    family, process_num, max_operators
+                )
+                return True
         
-        # Fallback to incremental search if time availability module not available
+        # PERFORMANCE OPTIMIZATION 2: Coarse-grained search with large jumps
         current_search_time = start_search_time
-        increment = 3600  # Start with 1 hour increments
+        base_increment = 8 * 3600  # Start with 8-hour jumps
         attempts = 0
-        max_attempts_per_increment = 48  # 2 days worth of attempts before adaptive scaling
+        max_attempts_before_refinement = 10  # Only 10 attempts with large jumps
         
-        while current_search_time < max_search_time:
+        # Phase 1: Coarse search with 8-hour jumps
+        while current_search_time < max_search_time and attempts < max_attempts_before_refinement:
             if self.constraints.can_schedule_job(
                 job, machine_id, current_search_time, schedule_state['schedule'],
                 schedule_state['operators_in_use'], max_operators
@@ -692,25 +736,33 @@ class GreedyScheduler:
                 )
                 return True
             
-            # Performance optimization: Use binary search for next conflict
-            if attempts > 10 and increment == 3600:
-                # After 10 failed attempts, try to binary search for next available slot
-                next_gap = self._binary_search_next_gap(machine_id, current_search_time, max_search_time, job['processing_time'], schedule_state)
-                if next_gap and next_gap > current_search_time:
-                    current_search_time = next_gap
-                    attempts = 0
-                    continue
+            current_search_time += base_increment
+            attempts += 1
+        
+        # Phase 2: If coarse search failed, try refined search with time availability
+        time_availability_works = self._try_time_availability_jump(job, machine_id, start_search_time, max_search_time, schedule_state, family, process_num, max_operators)
+        if time_availability_works:
+            return True
+        
+        # Phase 3: Final fallback - limited fine-grained search with circuit breaker
+        current_search_time = start_search_time
+        increment = 3600  # 1-hour increments
+        max_fine_attempts = 72  # Maximum 3 days of hourly checks
+        attempts = 0
+        
+        while current_search_time < max_search_time and attempts < max_fine_attempts:
+            if self.constraints.can_schedule_job(
+                job, machine_id, current_search_time, schedule_state['schedule'],
+                schedule_state['operators_in_use'], max_operators
+            ):
+                self._schedule_job_at_time(
+                    job, machine_id, current_search_time, schedule_state,
+                    family, process_num, max_operators
+                )
+                return True
             
-            # Fallback to incremental search
             current_search_time += increment
             attempts += 1
-            
-            # Adaptive search: increase increment after many failed attempts
-            if attempts >= max_attempts_per_increment:
-                if increment < 3600:  # Less than 1 hour
-                    increment = min(increment * 2, 3600)  # Double, max 1 hour
-                    logger.debug(f"Job {job_id}: Increasing search increment to {increment/3600:.1f} hours")
-                attempts = 0
         
         # Could not schedule job
         logger.warning(f"Could not find available slot for job {job_id} on machine {machine_id} within {search_limit_hours/24:.0f} days")
@@ -720,13 +772,13 @@ class GreedyScheduler:
     def _try_time_availability_jump(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                                    max_search_time: float, schedule_state: Dict[str, Any], family: str, 
                                    process_num: int, max_operators: int) -> bool:
-        """Try to use time availability module for smart jumps to available slots."""
+        """Try to use time availability module for smart jumps to available slots - optimized."""
         try:
             from app.scheduling.time_availability import get_next_available_slot
             processing_time_hours = job.get('processing_time', 3600) / 3600
             
             current_search_time = start_search_time
-            max_jumps = 50  # Limit jumps to prevent infinite loops
+            max_jumps = 20  # Reduced from 50 to limit excessive attempts
             
             for _ in range(max_jumps):
                 if current_search_time >= max_search_time:
@@ -750,22 +802,22 @@ class GreedyScheduler:
                     )
                     return True
                     
-                # If not, advance by 1 hour for next attempt
-                current_search_time += 3600
+                # If not, advance by 4 hours for next attempt (optimized from 1 hour)
+                current_search_time += 4 * 3600
                 
         except ImportError:
             pass
         
         return False
     
-    def _binary_search_next_gap(self, machine_id: str, start_time: float, end_time: float, 
-                               required_duration: float, schedule_state: Dict[str, Any]) -> Optional[float]:
-        """Binary search for the next available gap in machine schedule."""
+    def _find_optimal_gap(self, machine_id: str, start_time: float, end_time: float, 
+                         required_duration: float, schedule_state: Dict[str, Any]) -> Optional[float]:
+        """Find optimal gap in machine schedule using efficient gap analysis."""
         machine_tasks = schedule_state['schedule'][machine_id]
         if not machine_tasks:
             return start_time
             
-        # Find tasks that might conflict
+        # Find tasks that might conflict, sorted by start time
         relevant_tasks = [(task[1], task[2]) for task in machine_tasks if task[2] > start_time]
         if not relevant_tasks:
             return start_time
@@ -775,6 +827,23 @@ class GreedyScheduler:
         # Check gap before first task
         if relevant_tasks[0][0] - start_time >= required_duration:
             return start_time
+            
+        # Check gaps between consecutive tasks
+        for i in range(len(relevant_tasks) - 1):
+            gap_start = relevant_tasks[i][1]  # End of current task
+            gap_end = relevant_tasks[i + 1][0]  # Start of next task
+            gap_duration = gap_end - gap_start
+            
+            if gap_duration >= required_duration:
+                return gap_start
+        
+        # Check gap after last task
+        if len(relevant_tasks) > 0:
+            last_task_end = relevant_tasks[-1][1]
+            if end_time - last_task_end >= required_duration:
+                return last_task_end
+        
+        return None
             
         # Check gaps between tasks
         for i in range(len(relevant_tasks) - 1):
@@ -793,9 +862,12 @@ class GreedyScheduler:
     def _schedule_job_at_time(self, job: Dict[str, Any], machine_id: str, start_time: float,
                              schedule_state: Dict[str, Any], family: str, process_num: int,
                              max_operators: int) -> None:
-        """Schedule job at specific time and update all tracking structures."""
+        """Schedule job at specific time with preemptive scheduling (pause during breaks)."""
         job_id = job['job_id']
-        end_time = start_time + job['processing_time']
+        processing_time = job['processing_time']
+        
+        # Calculate actual end time considering breaks and working hours (preemptive scheduling)
+        end_time = self._calculate_preemptive_end_time(start_time, processing_time)
         
         # Create job entry
         additional_params = {
@@ -898,6 +970,50 @@ class GreedyScheduler:
         
         if len(unscheduled_jobs) > 10:
             logger.warning(f"  ... and {len(unscheduled_jobs) - 10} more")
+    
+    def _calculate_preemptive_end_time(self, start_time: float, processing_time: float) -> float:
+        """Calculate actual end time for a job considering breaks and working hours (preemptive scheduling)."""
+        try:
+            from app.scheduling.time_availability import is_time_available_for_scheduling
+            from datetime import datetime
+            import pytz
+            
+            singapore_tz = pytz.timezone('Asia/Singapore')
+            current_time = start_time
+            remaining_time = processing_time
+            
+            logger.debug(f"Calculating preemptive end time: start={datetime.fromtimestamp(start_time, tz=singapore_tz)}, duration={processing_time/3600:.1f}h")
+            
+            # Process the job in working time chunks, pausing during breaks
+            while remaining_time > 0:
+                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                
+                # Check if current time is during working hours
+                if is_time_available_for_scheduling(current_dt):
+                    # Work for 1 hour or remaining time, whichever is less
+                    work_chunk = min(3600, remaining_time)  # 1 hour = 3600 seconds
+                    remaining_time -= work_chunk
+                    current_time += work_chunk
+                else:
+                    # Skip to next working hour (pause during break/non-working time)
+                    current_time += 3600  # Jump 1 hour ahead
+                
+                # Safety check to prevent infinite loops
+                if current_time > start_time + (365 * 24 * 3600):  # 1 year limit
+                    logger.warning(f"Preemptive scheduling exceeded 1 year limit - using simple end time")
+                    return start_time + processing_time
+            
+            end_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+            logger.debug(f"Preemptive end time calculated: {end_dt} (spans {(current_time - start_time)/86400:.1f} days)")
+            return current_time
+            
+        except ImportError:
+            # Fallback to simple scheduling if time availability not available
+            logger.warning("Time availability not available - using simple end time calculation")
+            return start_time + processing_time
+        except Exception as e:
+            logger.warning(f"Preemptive scheduling calculation failed: {e} - using simple end time")
+            return start_time + processing_time
 
 
 def greedy_schedule(

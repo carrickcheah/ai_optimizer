@@ -503,15 +503,25 @@ def prepare_gantt_data_priority_view(schedule: Dict[str, Any], jobs_input_data: 
                 else:
                     logger.warning(f"❌ BUFFER CALCULATION FAILED for job {job_id}")
     
+            # Use special display for subcontractor jobs in priority view
+            if str(machine) == 'SUBCONTRACTOR':
+                color = '#4CAF50'  # Green for subcontractor work
+                resource_display = 'Subcontractor Work'
+                buffer_label = 'Subcontractor'
+            else:
+                color = BUFFER_COLORS.get(buffer_status, '#808080')
+                resource_display = machine
+                buffer_label = buffer_status
+            
             gantt_data.append({
                 'Task': job_id,
                 'Start': start_dt.isoformat(),
                 'Finish': end_dt.isoformat(),
-                'Resource': machine,
+                'Resource': resource_display,
                 'Priority': priority,
                 'PriorityLabel': PRIORITY_LABELS_MAP.get(priority, f'Priority {priority}'),
-                'BufferStatusLabel': buffer_status,
-                'Color': BUFFER_COLORS.get(buffer_status, '#808080'),
+                'BufferStatusLabel': buffer_label,
+                'Color': color,
                 'Job_Family': extract_job_family(job_id),
                 'Process_Number': extract_process_number(job_id)
             })
@@ -599,21 +609,32 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
                 else:
                     logger.warning(f"❌ BUFFER CALCULATION FAILED for job {job_id}")
             
-            # Get machine name from lookup, with strict error handling
-            machine_name = machine_name_lookup.get(str(machine))
-            if machine_name is None:
-                machine_name = str(machine)  # Use machine code if no mapping found
-                logger.debug(f"No machine name mapping found for code: {machine}")
+            # Get machine name from lookup, with special handling for SUBCONTRACTOR
+            if str(machine) == 'SUBCONTRACTOR':
+                machine_name = 'Subcontractor Work'
+            else:
+                machine_name = machine_name_lookup.get(str(machine))
+                if machine_name is None:
+                    machine_name = str(machine)  # Use machine code if no mapping found
+                    logger.debug(f"No machine name mapping found for code: {machine}")
                 
+            # Use special color for subcontractor jobs
+            if str(machine) == 'SUBCONTRACTOR':
+                color = '#4CAF50'  # Green for subcontractor work
+                resource_label = 'Subcontractor Work'
+            else:
+                color = BUFFER_COLORS.get(buffer_status, '#808080')
+                resource_label = machine_name
+            
             gantt_data.append({
                 'Task': job_id,
                 'Start': start_dt.isoformat(),
                 'Finish': end_dt.isoformat(),
-                'Resource': machine_name,
+                'Resource': resource_label,
                 'Priority': priority,
                 'PriorityLabel': PRIORITY_LABELS_MAP.get(priority, f'Priority {priority}'),
-                'BufferStatusLabel': buffer_status,
-                'Color': BUFFER_COLORS.get(buffer_status, '#808080'),
+                'BufferStatusLabel': buffer_status if str(machine) != 'SUBCONTRACTOR' else 'Subcontractor',
+                'Color': color,
                 'Job_Family': extract_job_family(job_id),
                 'Process_Number': extract_process_number(job_id)
             })
@@ -759,6 +780,8 @@ def prepare_detailed_schedule_table_data(schedule: Dict[str, Any], jobs_input_da
                 'balance_quantity': job.get('balance_quantity', job.get('job_quantity', 0) - job.get('accumulated_daily_output', 0)),
                 'bal_hr': bal_hr_display,
                 'buffer_status': buffer_status,
+                # Include machine information from schedule
+                'machine_name': scheduled.get('machine', job.get('MachineName_v', 'N/A')),
                 # Include epoch times for frontend sorting
                 'lcd_date_epoch': job.get('lcd_date_epoch'),
                 'start_date_input_epoch': job.get('start_date_epoch'),

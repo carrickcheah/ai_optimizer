@@ -1,81 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { API_BASE_URL } from '../config';
-
-// Interface definitions
-interface TaskData {
-  Task: string;
-  Start: string;
-  Finish: string;
-  Resource: string;
-  PriorityInteger?: number;
-  PriorityLabel?: string;
-  Color?: string;
-  Description?: string;
-  JobFamily?: string;
-  ProcessNumber?: number;
-  BufferStatusLabel?: string;
-}
-
-interface ScheduleOverview {
-  total_jobs: number;
-  date_range: string;
-  total_duration: string;
-  records_displayed: number;
-  buffer_status_counts: {
-    Late: number;
-    Critical: number;
-    Warning: number;
-    Caution: number;
-    OK: number;
-    Unknown: number;
-  };
-  config_used: {
-    solver_type: string;
-    max_jobs_limit: number;
-    planning_horizon_days: number;
-  };
-}
-
-interface DetailedScheduleRow {
-  op_id: string;
-  job_id: string;
-  plan_date?: string;
-  lcd_date_str?: string;
-  LCD_DATE?: string;
-  lcd_date?: string;
-  due_date?: string;
-  target_date?: string;
-  job?: string;
-  process_code?: string;
-  job_dependency?: string;
-  rsc_location?: string;
-  rsc_code?: string;
-  MachineName_v?: string;
-  number_operator?: number;
-  job_quantity?: number;
-  expect_output_per_hour?: number;
-  priority?: number;
-  hours_need?: number;
-  setting_hours?: number;
-  break_hours?: number;
-  no_prod?: number;
-  [key: string]: any;
-}
 
 interface CachedData {
-  ganttPriorityView: TaskData[];
-  ganttResourceView: TaskData[];
-  scheduleOverview: ScheduleOverview | null;
-  detailedSchedule: DetailedScheduleRow[];
-  lastRefresh: Date;
+  ganttPriorityView: any[];
+  ganttResourceView: any[];
+  detailedSchedule: any[];
+  scheduleOverview: any;
   isLoading: boolean;
   error: string | null;
+  lastRefresh: Date;
 }
 
 interface DataCacheContextType {
   data: CachedData;
   refreshData: () => Promise<void>;
-  loadDataIfNeeded: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -94,221 +31,182 @@ interface DataCacheProviderProps {
 }
 
 export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }) => {
-  // Initialize data from localStorage if available
-  const getInitialData = (): CachedData => {
-    try {
-      const savedData = localStorage.getItem('scheduleDataCache');
-      if (savedData) {
-        const parsed = JSON.parse(savedData);
-        // Convert lastRefresh back to Date object
-        if (parsed.lastRefresh) {
-          parsed.lastRefresh = new Date(parsed.lastRefresh);
-        }
-        console.log('[DataCache] Restored data from localStorage:', {
-          ganttPriorityView: parsed.ganttPriorityView?.length || 0,
-          ganttResourceView: parsed.ganttResourceView?.length || 0,
-          detailedSchedule: parsed.detailedSchedule?.length || 0,
-          lastRefresh: parsed.lastRefresh,
-        });
-        return parsed;
-      }
-    } catch (error) {
-      console.warn('[DataCache] Failed to restore data from localStorage:', error);
-    }
-    
-    return {
-      ganttPriorityView: [],
-      ganttResourceView: [],
-      scheduleOverview: null,
-      detailedSchedule: [],
-      lastRefresh: new Date(),
-      isLoading: false,
-      error: null,
-    };
-  };
+  const [data, setData] = useState<CachedData>({
+    ganttPriorityView: [],
+    ganttResourceView: [],
+    detailedSchedule: [],
+    scheduleOverview: null,
+    isLoading: false,
+    error: null,
+    lastRefresh: new Date(),
+  });
 
-  const [data, setData] = useState<CachedData>(getInitialData);
-
-  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(() => {
+  // Check if we have cached data in localStorage that's still valid
+  const [hasValidCache, setHasValidCache] = useState(() => {
     try {
-      const savedData = localStorage.getItem('scheduleDataCache');
+      const savedData = localStorage.getItem('aiOptimizerCache');
       return savedData ? JSON.parse(savedData).ganttPriorityView?.length > 0 : false;
     } catch {
       return false;
     }
   });
 
-  const solver = 'cpsat'; // Always use CP-SAT solver
+  const solver = 'greedy'; // Use greedy solver (CP-SAT disabled)
 
   // Save data to localStorage
   const saveDataToLocalStorage = (dataToSave: CachedData) => {
     try {
-      localStorage.setItem('scheduleDataCache', JSON.stringify(dataToSave));
-      console.log('[DataCache] Saved data to localStorage');
+      localStorage.setItem('aiOptimizerCache', JSON.stringify(dataToSave));
     } catch (error) {
-      console.warn('[DataCache] Failed to save data to localStorage:', error);
+      console.warn('Failed to save data to localStorage:', error);
     }
   };
 
-  // Clear localStorage cache
-  const clearDataFromLocalStorage = () => {
+  // Load data from localStorage
+  const loadDataFromLocalStorage = (): CachedData | null => {
     try {
-      localStorage.removeItem('scheduleDataCache');
-      console.log('[DataCache] Cleared data from localStorage');
+      const savedData = localStorage.getItem('aiOptimizerCache');
+      if (savedData) {
+        const parsedData = JSON.parse(savedData);
+        return {
+          ...parsedData,
+          lastRefresh: new Date(parsedData.lastRefresh),
+        };
+      }
     } catch (error) {
-      console.warn('[DataCache] Failed to clear data from localStorage:', error);
+      console.warn('Failed to load data from localStorage:', error);
     }
-  };
-
-  // Calculate time until next 6am Singapore time
-  const getTimeUntilNext6AMSingapore = () => {
-    const now = new Date();
-    
-    // Get current time in Singapore timezone
-    const nowSingapore = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Singapore"}));
-    
-    // Create next 6 AM Singapore time
-    const next6AMSingapore = new Date(nowSingapore);
-    next6AMSingapore.setHours(6, 0, 0, 0);
-    
-    // If it's already past 6am Singapore time today, set to 6am tomorrow Singapore time
-    if (nowSingapore >= next6AMSingapore) {
-      next6AMSingapore.setDate(next6AMSingapore.getDate() + 1);
-    }
-    
-    // Convert back to local time for setTimeout calculation
-    const next6AMLocal = new Date(next6AMSingapore.toLocaleString("en-US", {timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone}));
-    
-    return next6AMLocal.getTime() - now.getTime();
+    return null;
   };
 
   const refreshData = async () => {
-    console.log('[DataCache] Starting data refresh...');
+    console.log('🔄 DataCacheContext: Starting refreshData...');
+    setData(prev => ({ ...prev, isLoading: true, error: null }));
     
-    // Clear previous cache when manually refreshing
-    clearDataFromLocalStorage();
-    
-    setData(prev => ({ 
-      ...prev, 
-      isLoading: true, 
-      error: null 
-    }));
-
     try {
-      // Fetch all data in parallel with force_refresh=true for manual refreshes
-      const [
-        ganttPriorityResponse,
-        ganttResourceResponse,
-        scheduleOverviewResponse,
-        detailedScheduleResponse
-      ] = await Promise.all([
-        fetch(`${API_BASE_URL}/reports/gantt/priority-view?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/reports/gantt/resource-view?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/reports/schedule-overview?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/reports/detailed-schedule?solver=${solver}&force_refresh=true`)
+      const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/api$/, '');
+      console.log('📡 DataCacheContext: Using API_BASE_URL:', API_BASE_URL);
+      console.log('🔧 DataCacheContext: Using solver:', solver);
+      
+      // Fetch all data concurrently
+      console.log('🚀 DataCacheContext: Starting concurrent API calls...');
+      const [ganttPriorityResponse, ganttResourceResponse, detailedScheduleResponse, scheduleOverviewResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/reports/gantt/priority-view?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/api/reports/gantt/resource-view?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/api/reports/schedule-overview?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/api/reports/detailed-schedule?solver=${solver}&force_refresh=true`)
       ]);
 
-      // Check if all responses are ok
-      if (!ganttPriorityResponse.ok) {
-        throw new Error(`Gantt Priority View failed: ${ganttPriorityResponse.status}`);
-      }
-      if (!ganttResourceResponse.ok) {
-        throw new Error(`Gantt Resource View failed: ${ganttResourceResponse.status}`);
-      }
-      if (!scheduleOverviewResponse.ok) {
-        throw new Error(`Schedule Overview failed: ${scheduleOverviewResponse.status}`);
-      }
-      if (!detailedScheduleResponse.ok) {
-        throw new Error(`Detailed Schedule failed: ${detailedScheduleResponse.status}`);
+      console.log('📊 DataCacheContext: API responses:', {
+        ganttPriority: ganttPriorityResponse.status,
+        ganttResource: ganttResourceResponse.status,
+        detailedSchedule: detailedScheduleResponse.status,
+        scheduleOverview: scheduleOverviewResponse.status
+      });
+
+      if (!ganttPriorityResponse.ok || !ganttResourceResponse.ok || !detailedScheduleResponse.ok || !scheduleOverviewResponse.ok) {
+        const errors = [];
+        if (!ganttPriorityResponse.ok) errors.push(`ganttPriority: ${ganttPriorityResponse.status}`);
+        if (!ganttResourceResponse.ok) errors.push(`ganttResource: ${ganttResourceResponse.status}`);
+        if (!detailedScheduleResponse.ok) errors.push(`detailedSchedule: ${detailedScheduleResponse.status}`);
+        if (!scheduleOverviewResponse.ok) errors.push(`scheduleOverview: ${scheduleOverviewResponse.status}`);
+        throw new Error(`API requests failed: ${errors.join(', ')}`);
       }
 
-      // Parse all responses
-      const [
-        ganttPriorityData,
-        ganttResourceData,
-        scheduleOverviewData,
-        detailedScheduleData
-      ] = await Promise.all([
+      console.log('🔄 DataCacheContext: Parsing JSON responses...');
+      const [ganttPriorityData, ganttResourceData, scheduleOverviewData, detailedScheduleData] = await Promise.all([
         ganttPriorityResponse.json(),
         ganttResourceResponse.json(),
         scheduleOverviewResponse.json(),
         detailedScheduleResponse.json()
       ]);
 
-      console.log('[DataCache] Data refresh completed successfully');
-      console.log('[DataCache] Gantt Priority tasks:', ganttPriorityData.length);
-      console.log('[DataCache] Gantt Resource tasks:', ganttResourceData.length);
-      console.log('[DataCache] Detailed schedule rows:', detailedScheduleData.length);
+      console.log('📈 DataCacheContext: Data sizes:', {
+        ganttPriority: ganttPriorityData.length,
+        ganttResource: ganttResourceData.length,
+        detailedSchedule: detailedScheduleData.length,
+        scheduleOverview: scheduleOverviewData ? 'present' : 'missing'
+      });
 
-      const newData = {
+      const newData: CachedData = {
         ganttPriorityView: ganttPriorityData,
         ganttResourceView: ganttResourceData,
-        scheduleOverview: scheduleOverviewData,
         detailedSchedule: detailedScheduleData,
-        lastRefresh: new Date(),
+        scheduleOverview: scheduleOverviewData,
         isLoading: false,
         error: null,
+        lastRefresh: new Date(),
       };
 
       setData(newData);
       saveDataToLocalStorage(newData);
-      setHasInitiallyLoaded(true);
-
+      setHasValidCache(true);
+      
+      console.log('✅ DataCacheContext: Successfully refreshed all data!');
+      
     } catch (error) {
-      console.error('[DataCache] Error refreshing data:', error);
-      const errorData = {
-        ...data,
+      console.error('❌ DataCacheContext: Error during refresh:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch data';
+      setData(prev => ({
+        ...prev,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-      setData(errorData);
-      saveDataToLocalStorage(errorData);
-      setHasInitiallyLoaded(true);
+        error: errorMessage,
+      }));
     }
   };
 
   const clearError = () => {
-    const clearedData = { ...data, error: null };
-    setData(clearedData);
-    saveDataToLocalStorage(clearedData);
+    setData(prev => ({ ...prev, error: null }));
   };
 
-  // One-time initial load when first needed
-  const loadDataIfNeeded = async () => {
-    if (!hasInitiallyLoaded && !data.isLoading && data.ganttPriorityView.length === 0) {
-      console.log('[DataCache] Performing one-time initial data load');
-      await refreshData();
-    }
-  };
-
+  // Load cached data on mount
   useEffect(() => {
-    // Only set up daily 6am Singapore time refresh - NO AUTOMATIC INITIAL FETCH
-    const timeUntil6AM = getTimeUntilNext6AMSingapore();
-    console.log('[DataCache] Next 6AM Singapore refresh in:', Math.round(timeUntil6AM / 1000 / 60), 'minutes');
-    console.log('[DataCache] Data will be loaded when first needed');
-    
-    const dailyRefreshTimeout = setTimeout(() => {
-      console.log('[DataCache] Daily 6AM Singapore time auto-refresh triggered');
-      clearDataFromLocalStorage(); // Clear cache before refreshing
-      refreshData();
-      
-      // Schedule next day's 6am refresh
-      const nextDayTimeout = setTimeout(() => {
-        clearDataFromLocalStorage(); // Clear cache before refreshing
-        refreshData();
-      }, 24 * 60 * 60 * 1000); // 24 hours
-      
-      return () => clearTimeout(nextDayTimeout);
-    }, timeUntil6AM);
-
-    // Cleanup timeout on component unmount
-    return () => clearTimeout(dailyRefreshTimeout);
+    const cachedData = loadDataFromLocalStorage();
+    if (cachedData && cachedData.ganttPriorityView.length > 0) {
+      setData(cachedData);
+      setHasValidCache(true);
+    }
   }, []);
 
+  // Auto-refresh data daily at 6 AM Singapore time
+  useEffect(() => {
+    const scheduleAutoRefresh = () => {
+      const now = new Date();
+      const singapore = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Singapore"}));
+      
+      // Calculate next 6 AM Singapore time
+      const nextRefresh = new Date(singapore);
+      nextRefresh.setHours(6, 0, 0, 0);
+      
+      // If it's already past 6 AM today, schedule for tomorrow
+      if (singapore.getHours() >= 6) {
+        nextRefresh.setDate(nextRefresh.getDate() + 1);
+      }
+      
+      const timeUntilRefresh = nextRefresh.getTime() - singapore.getTime();
+      
+      console.log(`Next auto-refresh scheduled for: ${nextRefresh.toLocaleString("en-US", {timeZone: "Asia/Singapore"})} (in ${Math.round(timeUntilRefresh / 1000 / 60 / 60)} hours)`);
+      
+      const timeoutId = setTimeout(() => {
+        console.log('Auto-refreshing data at 6 AM Singapore time...');
+        refreshData().then(() => {
+          // Schedule the next refresh
+          scheduleAutoRefresh();
+        });
+      }, timeUntilRefresh);
+      
+      return timeoutId;
+    };
+
+    const timeoutId = scheduleAutoRefresh();
+    
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  // Provide the context value
   const contextValue: DataCacheContextType = {
     data,
     refreshData,
-    loadDataIfNeeded,
     clearError,
   };
 

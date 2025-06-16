@@ -74,7 +74,8 @@ const Dashboard: React.FC = () => {
       
       // Don't clear the final success messages - they stay visible
     } catch (error) {
-      addLog('❌ Error occurred during refresh');
+      console.error('Dashboard refresh error:', error);
+      addLog(`❌ Error occurred during refresh: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsRefreshing(false);
     }

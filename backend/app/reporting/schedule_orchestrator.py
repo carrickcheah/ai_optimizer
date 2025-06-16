@@ -56,8 +56,8 @@ class ScheduleOrchestratorConfig:
         solver_timeout_seconds = get_required_int_env('SOLVER_TIME_LIMIT_SECONDS')
         
         default_solver_type = get_required_str_env('DEFAULT_SOLVER_TYPE')
-        if default_solver_type and default_solver_type.lower() not in ['cpsat', 'greedy']:
-            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type}")
+        if default_solver_type and default_solver_type.lower() not in ['greedy']:
+            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type} (CP-SAT disabled - only 'greedy' allowed)")
             default_solver_type = None
         
         # Check for errors
@@ -101,8 +101,8 @@ class ScheduleOrchestrator:
         
         solver_type = solver_type.lower().strip()
         
-        if solver_type not in ['cpsat', 'greedy']:
-            raise ValueError(f"Invalid solver type '{solver_type}'. Must be 'cpsat' or 'greedy'")
+        if solver_type not in ['greedy']:
+            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available (CP-SAT disabled)")
         
         return solver_type
     
@@ -219,81 +219,10 @@ async def get_schedule_and_job_data(
         schedule_output = None
         
         if solver_type == "cpsat":
-            logger.info("🔄 Running Smart Batch Scheduler (CP-SAT based)")
-            
-            try:
-                schedule_output_dict = smart_batch_schedule_jobs(
-                    jobs_data, 
-                    machine_names_list, 
-                    setup_times_data
-                )
-            except TypeError as e:
-                if "unexpected keyword argument" in str(e):
-                    logger.warning(f"⚠️ BATCH SCHEDULER PARAMETER MISMATCH: {e}")
-                    logger.info("🔄 Falling back to Greedy solver due to parameter mismatch")
-                    schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                    
-                    if not schedule_output:
-                        logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                        raise ValueError("Both CP-SAT and Greedy solvers failed")
-                else:
-                    raise
-            else:
-                if not schedule_output_dict:
-                    logger.error("❌ SMART BATCH SCHEDULER RETURNED EMPTY RESULT")
-                    logger.info("🔄 Falling back to Greedy solver")
-                    schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                    
-                    if not schedule_output:
-                        logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                        raise ValueError("Both CP-SAT and Greedy solvers failed")
-                else:
-                    metadata = schedule_output_dict.get('_metadata', {})
-                    scheduled_count = metadata.get('total_scheduled', 0)
-                    
-                    if scheduled_count == 0:
-                        error_msg = metadata.get('message', 'Unknown error')
-                        logger.warning(f"⚠️ SMART BATCH SCHEDULER FAILED: {error_msg}")
-                        logger.info("🔄 Falling back to Greedy solver")
-                        schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-                        
-                        if not schedule_output:
-                            logger.error("❌ FALLBACK GREEDY SOLVER ALSO FAILED")
-                            raise ValueError("Both CP-SAT and Greedy solvers failed")
-                    else:
-                        success_rate = metadata.get('success_rate', 0)
-                        logger.info(f"✅ Smart Batch Scheduler completed: {scheduled_count} jobs ({success_rate:.1f}% success)")
-                        
-                        # Convert to simple format for chart generator
-                        schedule_output = {}
-                        jobs_converted = 0
-                        
-                        for job_id, details in schedule_output_dict.items():
-                            if job_id == '_metadata':
-                                continue
-                            
-                            if not isinstance(details, dict):
-                                logger.error(f"❌ INVALID JOB DETAILS for {job_id}: {details}")
-                                continue
-                            
-                            machine = details.get('machine')
-                            start_time = details.get('start')
-                            end_time = details.get('end')
-                            
-                            if not all([machine, start_time is not None, end_time is not None]):
-                                logger.error(f"❌ INCOMPLETE JOB DATA for {job_id}: machine={machine}, start={start_time}, end={end_time}")
-                                continue
-                            
-                            if machine not in schedule_output:
-                                schedule_output[machine] = []
-                            
-                            job_tuple = (job_id, start_time, end_time)
-                            schedule_output[machine].append(job_tuple)
-                            jobs_converted += 1
-                        
-                        logger.info(f"✅ Converted {jobs_converted} jobs from Smart Batch result")
+            logger.error("❌ CP-SAT SOLVER DISABLED: CP-SAT has been disabled due to poor performance and reliability issues")
+            raise ValueError("CP-SAT solver is disabled. Use 'greedy' solver instead.")
         
-        else:  # greedy solver
+        else:  # greedy solver (only available option)
             logger.info("🔄 Running Greedy Solver")
             schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
             

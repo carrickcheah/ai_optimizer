@@ -104,8 +104,8 @@ class ParameterValidator:
         
         solver_type = solver_type.lower().strip()
         
-        if solver_type not in ['cpsat', 'greedy']:
-            raise ValueError(f"Invalid solver type '{solver_type}'. Must be 'cpsat' or 'greedy'")
+        if solver_type not in ['greedy']:
+            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available (CP-SAT disabled)")
         
         return solver_type
 
@@ -454,8 +454,8 @@ async def reporting_health_check():
         from app.scheduling.batch_scheduler import smart_batch_schedule_jobs
         health_data["checks"]["solvers"] = {
             "status": "healthy",
-            "available_solvers": ["greedy", "cpsat"],
-            "batch_scheduler_issues": "Parameter mismatch handled with fallback"
+            "available_solvers": ["greedy"],
+            "cpsat_status": "Disabled due to poor performance and reliability issues"
         }
     except Exception as e:
         health_data["status"] = "unhealthy"

@@ -353,15 +353,16 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
     # Handle machine name
     machine_name = job_row.get("machine_name", "NOT_ASSIGN") or "NOT_ASSIGN"
     
-    # If no machine assignment but has LeadTime_d, assign to Subcon
+    # If no machine assignment but has processing time, mark as subcontractor work
     if machine_name == "NOT_ASSIGN":
         day_need = job_row.get("day_need")
         hours_need = job_row.get("hours_need")
         if (day_need and day_need > 0) or (hours_need and hours_need > 0):
-            machine_name = "Subcon"
+            # Mark as subcontractor but don't assign to a machine for scheduling
+            machine_name = "SUBCONTRACTOR"
             logger.info(
                 f"Job {composite_job_id} has no machine assignment but has processing time - "
-                f"assigning to Subcon (day_need: {day_need}, hours_need: {hours_need})"
+                f"marking as SUBCONTRACTOR work (day_need: {day_need}, hours_need: {hours_need})"
             )
         else:
             logger.warning(
