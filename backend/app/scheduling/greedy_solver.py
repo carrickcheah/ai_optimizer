@@ -724,7 +724,7 @@ class GreedyScheduler:
         attempts = 0
         max_attempts_before_refinement = 10  # Only 10 attempts with large jumps
         
-        # Phase 1: Coarse search with 8-hour jumps
+        # Phase 1: Coarse search with 8-hour jumps to next working time
         while current_search_time < max_search_time and attempts < max_attempts_before_refinement:
             if self.constraints.can_schedule_job(
                 job, machine_id, current_search_time, schedule_state['schedule'],
@@ -736,7 +736,8 @@ class GreedyScheduler:
                 )
                 return True
             
-            current_search_time += base_increment
+            # Jump to next working time instead of fixed increment
+            current_search_time = self._get_next_working_time(current_search_time + base_increment)
             attempts += 1
         
         # Phase 2: If coarse search failed, try refined search with time availability
@@ -761,7 +762,8 @@ class GreedyScheduler:
                 )
                 return True
             
-            current_search_time += increment
+            # Jump to next working time instead of fixed increment
+            current_search_time = self._get_next_working_time(current_search_time + increment)
             attempts += 1
         
         # Could not schedule job
@@ -802,8 +804,8 @@ class GreedyScheduler:
                     )
                     return True
                     
-                # If not, advance by 4 hours for next attempt (optimized from 1 hour)
-                current_search_time += 4 * 3600
+                # If not, advance to next working time (optimized from 1 hour)
+                current_search_time = self._get_next_working_time(current_search_time + 4 * 3600)
                 
         except ImportError:
             pass
@@ -826,7 +828,10 @@ class GreedyScheduler:
         
         # Check gap before first task
         if relevant_tasks[0][0] - start_time >= required_duration:
-            return start_time
+            # Validate that start_time is during working hours
+            validated_start = self._get_next_working_time(start_time)
+            if relevant_tasks[0][0] - validated_start >= required_duration:
+                return validated_start
             
         # Check gaps between consecutive tasks
         for i in range(len(relevant_tasks) - 1):
@@ -835,28 +840,20 @@ class GreedyScheduler:
             gap_duration = gap_end - gap_start
             
             if gap_duration >= required_duration:
-                return gap_start
+                # Validate that gap_start is during working hours
+                validated_gap_start = self._get_next_working_time(gap_start)
+                if gap_end - validated_gap_start >= required_duration:
+                    return validated_gap_start
         
         # Check gap after last task
         if len(relevant_tasks) > 0:
             last_task_end = relevant_tasks[-1][1]
             if end_time - last_task_end >= required_duration:
-                return last_task_end
+                # Validate that last_task_end is during working hours
+                validated_end = self._get_next_working_time(last_task_end)
+                if end_time - validated_end >= required_duration:
+                    return validated_end
         
-        return None
-            
-        # Check gaps between tasks
-        for i in range(len(relevant_tasks) - 1):
-            gap_start = relevant_tasks[i][1]
-            gap_end = relevant_tasks[i + 1][0]
-            if gap_end - gap_start >= required_duration and gap_start < end_time:
-                return gap_start
-                
-        # Check after last task
-        last_end = relevant_tasks[-1][1]
-        if last_end < end_time:
-            return last_end
-            
         return None
     
     def _schedule_job_at_time(self, job: Dict[str, Any], machine_id: str, start_time: float,
@@ -866,10 +863,11 @@ class GreedyScheduler:
         job_id = job['job_id']
         processing_time = job['processing_time']
         
-        # Calculate actual end time considering breaks and working hours (preemptive scheduling)
-        end_time = self._calculate_preemptive_end_time(start_time, processing_time)
+        # Create job segments that show breaks
+        job_segments = self._create_job_segments_with_breaks(start_time, processing_time)
+        logger.info(f"Job {job_id}: Created {len(job_segments)} segments")
         
-        # Create job entry
+        # Create additional parameters for all segments
         additional_params = {
             'greedy_scheduled_at': schedule_state['current_time'],
             'original_priority': job.get('priority'),
@@ -877,28 +875,37 @@ class GreedyScheduler:
             'process_num': process_num
         }
         
-        schedule_state['schedule'][machine_id].append(
-            (job_id, start_time, end_time, job.get('priority', 0), additional_params)
-        )
+        # Add each segment to the schedule
+        final_end_time = start_time
+        for segment_idx, (segment_start, segment_end) in enumerate(job_segments):
+            # Create unique job ID for each segment
+            segment_job_id = f"{job_id}_seg{segment_idx + 1}" if len(job_segments) > 1 else job_id
+            
+            schedule_state['schedule'][machine_id].append(
+                (segment_job_id, segment_start, segment_end, job.get('priority', 0), additional_params)
+            )
+            
+            final_end_time = max(final_end_time, segment_end)
         
         # Update tracking structures
         schedule_state['scheduled_jobs'].add(job_id)
-        schedule_state['machine_available_time'][machine_id] = end_time
+        schedule_state['machine_available_time'][machine_id] = final_end_time
         
         # Update operator usage
         if max_operators > 0:
             try:
                 from app.utils.time_utils import epoch_to_relative_hours
-                start_rel = epoch_to_relative_hours(start_time)
-                end_rel = epoch_to_relative_hours(end_time)
-                for hour in range(int(start_rel), int(end_rel) + 1):
-                    schedule_state['operators_in_use'][hour] += 1
+                for segment_start, segment_end in job_segments:
+                    start_rel = epoch_to_relative_hours(segment_start)
+                    end_rel = epoch_to_relative_hours(segment_end)
+                    for hour in range(int(start_rel), int(end_rel) + 1):
+                        schedule_state['operators_in_use'][hour] += 1
             except ImportError:
                 pass
         
         # Update dependency tracking
-        schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], end_time)
-        schedule_state['process_end_times'][(family, process_num)] = end_time
+        schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], final_end_time)
+        schedule_state['process_end_times'][(family, process_num)] = final_end_time
         
         # Log scheduling
         try:
@@ -970,6 +977,123 @@ class GreedyScheduler:
         
         if len(unscheduled_jobs) > 10:
             logger.warning(f"  ... and {len(unscheduled_jobs) - 10} more")
+    
+    def _get_next_working_time(self, proposed_time: float) -> float:
+        """Find the next available working time from a proposed time."""
+        try:
+            from app.scheduling.time_availability import is_time_available_for_scheduling
+            from datetime import datetime
+            import pytz
+            
+            singapore_tz = pytz.timezone('Asia/Singapore')
+            current_time = proposed_time
+            max_attempts = 24 * 60  # Maximum 1 day of searching in minutes
+            attempts = 0
+            
+            while attempts < max_attempts:
+                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                
+                # Check if current time is during working hours and NOT during breaks
+                if is_time_available_for_scheduling(current_dt):
+                    return current_time
+                
+                # Jump to next minute for more precision
+                current_time += 60  # 1 minute instead of 1 hour
+                attempts += 1
+            
+            # If we can't find working time within a day, try hour jumps for longer search
+            current_time = proposed_time
+            max_attempts = 24 * 7  # 1 week in hours
+            attempts = 0
+            
+            while attempts < max_attempts:
+                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                if is_time_available_for_scheduling(current_dt):
+                    return current_time
+                current_time += 3600  # 1 hour
+                attempts += 1
+            
+            # If we can't find working time within a week, return original time
+            logger.warning(f"Could not find working time within 1 week from {datetime.fromtimestamp(proposed_time, tz=singapore_tz)}")
+            return proposed_time
+            
+        except ImportError:
+            # Fallback if time availability not available
+            logger.warning("Time availability not available - using proposed time")
+            return proposed_time
+        except Exception as e:
+            logger.warning(f"Error finding next working time: {e} - using proposed time")
+            return proposed_time
+
+    def _create_job_segments_with_breaks(self, start_time: float, processing_time: float) -> List[Tuple[float, float]]:
+        """Create job segments that show breaks between working periods."""
+        try:
+            from app.scheduling.time_availability import is_time_available_for_scheduling
+            from datetime import datetime
+            import pytz
+            
+            singapore_tz = pytz.timezone('Asia/Singapore')
+            segments = []
+            current_time = start_time
+            remaining_time = processing_time
+            
+            logger.info(f"Creating job segments: start={datetime.fromtimestamp(start_time, tz=singapore_tz)}, duration={processing_time/3600:.1f}h")
+            
+            # Process the job in working time chunks, creating segments separated by breaks
+            while remaining_time > 0:
+                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                
+                # Check if current time is during working hours
+                if is_time_available_for_scheduling(current_dt):
+                    # Start a new working segment
+                    segment_start = current_time
+                    segment_work_time = 0
+                    
+                    # Work until we hit a break or finish the job
+                    while remaining_time > 0:
+                        # Check if we hit a break time by advancing
+                        next_time = current_time + 60  # Check 1 minute ahead
+                        next_dt = datetime.fromtimestamp(next_time, tz=singapore_tz)
+                        
+                        # If next minute is not available (break time), end this segment
+                        if not is_time_available_for_scheduling(next_dt):
+                            # End the current segment here
+                            segments.append((segment_start, current_time))
+                            logger.info(f"Segment ended at break: {datetime.fromtimestamp(segment_start, tz=singapore_tz)} to {datetime.fromtimestamp(current_time, tz=singapore_tz)} ({segment_work_time/3600:.1f}h worked)")
+                            break
+                        
+                        # Work for 1 minute chunk
+                        work_chunk = min(60, remaining_time)  # 1 minute = 60 seconds
+                        remaining_time -= work_chunk
+                        current_time += work_chunk
+                        segment_work_time += work_chunk
+                        
+                        # If job is finished, end the segment
+                        if remaining_time <= 0:
+                            segments.append((segment_start, current_time))
+                            logger.info(f"Final segment completed: {datetime.fromtimestamp(segment_start, tz=singapore_tz)} to {datetime.fromtimestamp(current_time, tz=singapore_tz)} ({segment_work_time/3600:.1f}h worked)")
+                            break
+                else:
+                    # Skip non-working time (breaks/holidays) - jump to next minute
+                    current_time += 60  # Jump 1 minute ahead
+                
+                # Safety check to prevent infinite loops
+                if current_time > start_time + (365 * 24 * 3600):  # 1 year limit
+                    logger.warning(f"Job segmentation exceeded 1 year limit - creating single segment")
+                    return [(start_time, start_time + processing_time)]
+            
+            logger.info(f"Created {len(segments)} segments for job")
+            if len(segments) > 1:
+                logger.info(f"Multi-segment job created with {len(segments)} segments")
+            return segments
+            
+        except ImportError:
+            # Fallback to single segment if time availability not available
+            logger.warning("Time availability not available - creating single segment")
+            return [(start_time, start_time + processing_time)]
+        except Exception as e:
+            logger.warning(f"Job segmentation failed: {e} - creating single segment")
+            return [(start_time, start_time + processing_time)]
     
     def _calculate_preemptive_end_time(self, start_time: float, processing_time: float) -> float:
         """Calculate actual end time for a job considering breaks and working hours (preemptive scheduling)."""
