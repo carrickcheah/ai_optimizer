@@ -46,86 +46,9 @@ const formatDateTime = (dateTimeString: string): string => {
   }
 };
 
-// Helper function to check if a time is during a break
-const isBreakTime = (date: Date): boolean => {
-  const hour = date.getHours();
-  const minute = date.getMinutes();
-  const timeInMinutes = hour * 60 + minute;
-  
-  // Break times (in Singapore timezone)
-  const breaks = [
-    { start: 9 * 60 + 45, end: 10 * 60 },        // Morning tea: 9:45-10:00
-    { start: 12 * 60 + 45, end: 13 * 60 + 30 },  // Lunch: 12:45-13:30
-    { start: 15 * 60 + 15, end: 15 * 60 + 30 },  // Afternoon tea: 15:15-15:30
-    { start: 18 * 60, end: 19 * 60 },            // Dinner: 18:00-19:00
-    { start: 23 * 60, end: 23 * 60 + 30 }        // Supper: 23:00-23:30
-  ];
-  
-  return breaks.some(brk => timeInMinutes >= brk.start && timeInMinutes < brk.end);
-};
 
-// Helper function to split tasks into segments that respect break times
-const createTaskSegments = (task: any) => {
-  const startTime = new Date(task.Start);
-  const endTime = new Date(task.Finish);
-  const duration = endTime.getTime() - startTime.getTime();
-  
-  // If task is less than 1 hour, don't segment it
-  if (duration < 3600000) { // 1 hour in milliseconds
-    return [task];
-  }
-  
-  const segments = [];
-  let currentTime = new Date(startTime);
-  let remainingDuration = duration;
-  let segmentIndex = 1;
-  
-  while (remainingDuration > 0 && currentTime < endTime) {
-    // Find next break or end of task
-    const segmentStart = new Date(currentTime);
-    let segmentEnd = new Date(currentTime);
-    
-    // Work until we hit a break or finish the task
-    while (remainingDuration > 0 && segmentEnd < endTime) {
-      const nextMinute = new Date(segmentEnd.getTime() + 60000); // 1 minute ahead
-      
-      // If next minute is a break time, end this segment
-      if (isBreakTime(nextMinute)) {
-        break;
-      }
-      
-      // Work for 1 minute
-      segmentEnd = nextMinute;
-      remainingDuration -= 60000; // 1 minute
-    }
-    
-    // Create segment if it has meaningful duration
-    if (segmentEnd > segmentStart) {
-      const segment: any = {
-        ...task,
-        Task: segments.length > 0 ? `${task.Task}_seg${segmentIndex}` : task.Task,
-        Start: segmentStart.toISOString(),
-        Finish: segmentEnd.toISOString()
-      };
-      segments.push(segment);
-      segmentIndex++;
-    }
-    
-    // Skip break time
-    currentTime = new Date(segmentEnd);
-    while (currentTime < endTime && isBreakTime(currentTime)) {
-      currentTime = new Date(currentTime.getTime() + 60000); // Skip 1 minute
-    }
-    
-    // Safety check to prevent infinite loops
-    if (segments.length > 20) {
-      console.warn('Too many segments created for task:', task.Task);
-      break;
-    }
-  }
-  
-  return segments.length > 0 ? segments : [task];
-};
+
+
 
 const GanttChartDisplay: React.FC = () => {
   const { data } = useDataCache();
@@ -936,13 +859,7 @@ const GanttChartDisplay: React.FC = () => {
           <span className="priority-color" style={{ backgroundColor: '#7FFF00' }}></span>
           <span className="priority-label">OK (&gt;72h)</span>
         </div>
-        <div className="priority-item">
-          <span className="priority-color" style={{ 
-            background: 'repeating-linear-gradient(45deg, #4CAF50, #4CAF50 10px, #FFC107 10px, #FFC107 15px)',
-            border: '1px solid #ccc'
-          }}></span>
-          <span className="priority-label">⏸️ Contains breaks</span>
-        </div>
+
       </div>
 
       {isLoading && <div className="loading">Loading chart data...</div>}
