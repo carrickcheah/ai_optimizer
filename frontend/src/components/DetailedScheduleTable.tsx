@@ -207,6 +207,8 @@ const DetailedScheduleTable: React.FC = () => {
   const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
   const endIndex = startIndex + pagination.itemsPerPage;
   const data = allData.slice(startIndex, endIndex);
+  
+  console.log(`[DetailedScheduleTable] Pagination: page=${pagination.currentPage}, startIndex=${startIndex}, endIndex=${endIndex}, data.length=${data.length}`);
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
@@ -221,8 +223,11 @@ const DetailedScheduleTable: React.FC = () => {
 
   // Update pagination when cached data changes
   useEffect(() => {
+    console.log(`[DetailedScheduleTable] Data state: allData.length=${allData.length}, isLoading=${isLoading}, error=${error}`);
+    
     if (allData.length > 0) {
       console.log(`[DetailedScheduleTable] Using cached data: ${allData.length} schedule items`);
+      console.log(`[DetailedScheduleTable] Sample data:`, allData[0]);
       
       // Update pagination state for client-side pagination
       setPagination(prev => ({
@@ -338,6 +343,7 @@ const DetailedScheduleTable: React.FC = () => {
   }
 
   if (data.length === 0) {
+    console.log(`[DetailedScheduleTable] Showing empty state: allData.length=${allData.length}, data.length=${data.length}, isLoading=${isLoading}`);
     return (
       <div className="container-fluid">
         <div className="card">
@@ -345,7 +351,11 @@ const DetailedScheduleTable: React.FC = () => {
             <h2>Detailed Production Schedule</h2>
           </div>
           <div className="card-body">
-            <div className="text-center p-4">No schedule data available.</div>
+            <div className="text-center p-4">
+              No schedule data available.
+              <br />
+              <small>Debug: allData={allData.length}, data={data.length}, loading={isLoading.toString()}</small>
+            </div>
           </div>
         </div>
       </div>

@@ -93,8 +93,8 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
       const [ganttPriorityResponse, ganttResourceResponse, detailedScheduleResponse, scheduleOverviewResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/api/reports/gantt/priority-view?solver=${solver}&force_refresh=true`),
         fetch(`${API_BASE_URL}/api/reports/gantt/resource-view?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/api/reports/schedule-overview?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/api/reports/detailed-schedule?solver=${solver}&force_refresh=true`)
+        fetch(`${API_BASE_URL}/api/reports/detailed-schedule?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/api/reports/schedule-overview?solver=${solver}&force_refresh=true`)
       ]);
 
       console.log('📊 DataCacheContext: API responses:', {
@@ -114,11 +114,11 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
       }
 
       console.log('🔄 DataCacheContext: Parsing JSON responses...');
-      const [ganttPriorityData, ganttResourceData, scheduleOverviewData, detailedScheduleData] = await Promise.all([
+      const [ganttPriorityData, ganttResourceData, detailedScheduleData, scheduleOverviewData] = await Promise.all([
         ganttPriorityResponse.json(),
         ganttResourceResponse.json(),
-        scheduleOverviewResponse.json(),
-        detailedScheduleResponse.json()
+        detailedScheduleResponse.json(),
+        scheduleOverviewResponse.json()
       ]);
 
       console.log('📈 DataCacheContext: Data sizes:', {

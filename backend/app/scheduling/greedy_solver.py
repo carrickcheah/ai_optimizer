@@ -489,6 +489,35 @@ class GreedyScheduler:
         self.config = config
         self.constraints = SchedulingConstraints(config)
     
+    @staticmethod
+    def _sort_jobs_by_lcd_priority(jobs: List[Dict[str, Any]], include_processing_time: bool = True) -> List[Dict[str, Any]]:
+        """Sort jobs by LCD date priority with fallback sorting.
+        
+        Priority order:
+        1. LCD date (earliest first) - jobs without LCD date go to end
+        2. Priority field (lower number = higher priority)
+        3. Processing time (shorter first) - only if include_processing_time=True
+        """
+        def sort_key(job):
+            # Primary: LCD date (earliest first, None/missing values go to end)
+            lcd_date = job.get('lcd_date_epoch')
+            if lcd_date is None or lcd_date == 0:
+                lcd_priority = float('inf')  # Put jobs without LCD date at end
+            else:
+                lcd_priority = lcd_date
+            
+            # Secondary: Job priority (lower number = higher priority)
+            job_priority = job.get('priority', 99)
+            
+            # Tertiary: Processing time (shorter jobs first) - optional
+            if include_processing_time:
+                processing_time = job.get('processing_time', float('inf'))
+                return (lcd_priority, job_priority, processing_time)
+            else:
+                return (lcd_priority, job_priority)
+        
+        return sorted(jobs, key=sort_key)
+    
     def schedule_jobs(self, jobs: List[Dict[str, Any]], machines: List[str],
                      setup_times: Optional[Dict] = None, enforce_sequence: bool = True,
                      max_operators: int = 0) -> Dict[str, List[Tuple]]:
@@ -559,7 +588,8 @@ class GreedyScheduler:
         """Schedule NOT_ASSIGN jobs on Subcon machine."""
         logger.info(f"Scheduling {len(not_assign_jobs)} NOT_ASSIGN jobs on 'Subcon'")
         
-        sorted_jobs = sorted(not_assign_jobs, key=lambda j: j.get('priority', 99))
+        # Sort by LCD date first, then priority
+        sorted_jobs = self._sort_jobs_by_lcd_priority(not_assign_jobs, include_processing_time=False)
         
         for job in sorted_jobs:
             machine_id = 'Subcon'
@@ -575,8 +605,11 @@ class GreedyScheduler:
         """Schedule subcontractor jobs with estimated timing for chart display."""
         logger.info(f"Scheduling {len(subcontractor_jobs)} SUBCONTRACTOR jobs")
         
+        # Sort subcontractor jobs by LCD date first
+        sorted_subcontractor_jobs = self._sort_jobs_by_lcd_priority(subcontractor_jobs, include_processing_time=False)
+        
         # Subcontractor jobs don't compete for machine time but need timing for dependencies
-        for job in subcontractor_jobs:
+        for job in sorted_subcontractor_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
                 continue
             
@@ -599,8 +632,8 @@ class GreedyScheduler:
         """Schedule independent jobs (no dependencies)."""
         logger.info(f"Scheduling {len(independent_jobs)} independent jobs")
         
-        # Performance optimization: Sort by priority and processing time (shorter jobs first)
-        sorted_jobs = sorted(independent_jobs, key=lambda j: (j.get('priority', 99), j.get('processing_time', float('inf'))))
+        # Sort by LCD date first, then priority, then processing time (shorter jobs first)
+        sorted_jobs = self._sort_jobs_by_lcd_priority(independent_jobs, include_processing_time=True)
         
         for job in sorted_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
