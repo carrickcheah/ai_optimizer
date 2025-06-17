@@ -57,7 +57,7 @@ class ScheduleOrchestratorConfig:
         
         default_solver_type = get_required_str_env('DEFAULT_SOLVER_TYPE')
         if default_solver_type and default_solver_type.lower() not in ['greedy']:
-            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type} (CP-SAT disabled - only 'greedy' allowed)")
+            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type} (only 'greedy' solver available)")
             default_solver_type = None
         
         # Check for errors
@@ -102,7 +102,7 @@ class ScheduleOrchestrator:
         solver_type = solver_type.lower().strip()
         
         if solver_type not in ['greedy']:
-            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available (CP-SAT disabled)")
+            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available")
         
         return solver_type
     
@@ -218,17 +218,13 @@ async def get_schedule_and_job_data(
         # Run selected scheduling algorithm with parameter mismatch handling
         schedule_output = None
         
-        if solver_type == "cpsat":
-            logger.error("❌ CP-SAT SOLVER DISABLED: CP-SAT has been disabled due to poor performance and reliability issues")
-            raise ValueError("CP-SAT solver is disabled. Use 'greedy' solver instead.")
+        # Only greedy solver is available
+        logger.info("🔄 Running Greedy Solver")
+        schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
         
-        else:  # greedy solver (only available option)
-            logger.info("🔄 Running Greedy Solver")
-            schedule_output = run_greedy_solver(jobs_data, machine_names_list, setup_times_data)
-            
-            if not schedule_output:
-                logger.error("❌ GREEDY SOLVER RETURNED EMPTY RESULT")
-                raise ValueError("Greedy solver failed to generate schedule")
+        if not schedule_output:
+            logger.error("❌ GREEDY SOLVER RETURNED EMPTY RESULT")
+            raise ValueError("Greedy solver failed to generate schedule")
         
         # Validate and normalize schedule output
         ScheduleOrchestrator.validate_schedule_output(schedule_output)

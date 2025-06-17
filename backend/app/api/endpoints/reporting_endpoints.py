@@ -105,13 +105,13 @@ class ParameterValidator:
         solver_type = solver_type.lower().strip()
         
         if solver_type not in ['greedy']:
-            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available (CP-SAT disabled)")
+            raise ValueError(f"Invalid solver type '{solver_type}'. Only 'greedy' solver is available")
         
         return solver_type
 
 @router.get("/gantt/priority-view", response_model=List[Dict[str, Any]])
 async def get_gantt_priority_data(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data colored by priority with STRICT validation - NO FALLBACKS."""
@@ -138,7 +138,7 @@ async def get_gantt_priority_data(
 
 @router.get("/gantt/resource-view", response_model=List[Dict[str, Any]])
 async def get_gantt_resource_data(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data grouped by resource with STRICT validation - NO FALLBACKS."""
@@ -165,7 +165,7 @@ async def get_gantt_resource_data(
 
 @router.get("/detailed-schedule", response_model=List[Dict[str, Any]])
 async def get_detailed_schedule_table(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get detailed schedule table data with STRICT validation - NO FALLBACKS."""
@@ -192,7 +192,7 @@ async def get_detailed_schedule_table(
 
 @router.get("/schedule-overview", response_model=Dict[str, Any])
 async def get_schedule_overview(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get schedule overview with STRICT validation - NO FALLBACKS."""
@@ -279,7 +279,7 @@ async def get_schedule_overview(
 
 @router.get("/data-quality-analysis", response_model=Dict[str, Any])
 async def get_data_quality_analysis(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (cpsat or greedy)"),
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Analyze data quality with STRICT validation - NO FALLBACKS."""
@@ -454,8 +454,7 @@ async def reporting_health_check():
         from app.scheduling.batch_scheduler import smart_batch_schedule_jobs
         health_data["checks"]["solvers"] = {
             "status": "healthy",
-            "available_solvers": ["greedy"],
-            "cpsat_status": "Disabled due to poor performance and reliability issues"
+            "available_solvers": ["greedy"]
         }
     except Exception as e:
         health_data["status"] = "unhealthy"

@@ -568,9 +568,15 @@ class GreedyScheduler:
         """Initialize scheduling state tracking."""
         try:
             from app.utils.time_utils import datetime_to_epoch
-            current_time = datetime_to_epoch(datetime.now())
+            raw_current_time = datetime_to_epoch(datetime.now())
         except ImportError:
-            current_time = time.time()
+            raw_current_time = time.time()
+        
+        # CRITICAL FIX: Find next available working time instead of using raw current time
+        # This ensures jobs start at proper working hours (6:30 AM) from database config
+        current_time = self._get_next_working_time(raw_current_time)
+        
+        logger.info(f"🕐 Scheduler initialization: raw time {datetime.fromtimestamp(raw_current_time).strftime('%Y-%m-%d %H:%M:%S')} -> working time {datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S')}")
         
         return {
             'schedule': {machine: [] for machine in machines},

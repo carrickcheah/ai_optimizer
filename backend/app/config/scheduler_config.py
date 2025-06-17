@@ -1,6 +1,6 @@
 """
 Scheduler Configuration Module
-Centralizes all hardcoded values from cpsat_solver.py for better maintainability.
+Centralizes all scheduling configuration values for better maintainability.
 Uses Pydantic Settings for type validation and environment variable support.
 """
 
@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings
 
 
 class SchedulerConfig(BaseSettings):
-    """Configuration class for CP-SAT scheduler parameters using Pydantic."""
+    """Configuration class for scheduler parameters using Pydantic."""
     
     # Solver Performance Settings
     solver_time_limit_seconds: int = Field(
