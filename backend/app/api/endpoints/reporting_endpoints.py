@@ -466,3 +466,92 @@ async def reporting_health_check():
     
     status_code = 200 if health_data["status"] == "healthy" else 503
     return JSONResponse(content=health_data, status_code=status_code)
+
+@router.get("/working-hours", response_model=Dict[str, Any])
+async def get_working_hours_configuration():
+    """Get working hours configuration from database tables with STRICT validation."""
+    try:
+        # Import time availability module
+        try:
+            from app.scheduling.time_availability import TimeAvailabilityManager
+        except ImportError:
+            logger.error("❌ Failed to import TimeAvailabilityManager")
+            raise HTTPException(status_code=500, detail="Time availability module not available")
+        
+        # Get instance and refresh cache
+        time_checker = TimeAvailabilityManager.get_instance()
+        if not time_checker:
+            logger.error("❌ Failed to get TimeAvailabilityManager instance")
+            raise HTTPException(status_code=500, detail="Time availability manager not available")
+        
+        # Refresh cache to get latest data
+        time_checker.cache.refresh_if_needed()
+        
+        # Extract working hours configuration
+        working_hours_by_day = {}
+        for day, hours_list in time_checker.cache._arrangable_hours_cache.items():
+            working_hours_by_day[str(day)] = []
+            for hour_config in hours_list:
+                working_hours_by_day[str(day)].append({
+                    "start_time": hour_config['start_time'].strftime("%H:%M:%S"),
+                    "end_time": hour_config['end_time'].strftime("%H:%M:%S"),
+                    "is_working": hour_config['is_working']
+                })
+        
+        # Extract break times
+        break_times = []
+        for breaktime in time_checker.cache._breaktimes_cache:
+            break_times.append({
+                "name": breaktime['name'],
+                "description": breaktime['description'],
+                "start_time": breaktime['start_time'].strftime("%H:%M:%S"),
+                "end_time": breaktime['end_time'].strftime("%H:%M:%S"),
+                "duration_minutes": breaktime['duration_minutes'],
+                "break_type": breaktime['break_type'],
+                "is_mandatory": breaktime['is_mandatory']
+            })
+        
+        # Extract holidays (sample for current year)
+        current_year = datetime.now().year
+        holidays = []
+        for date_key, holiday_info in time_checker.cache._holidays_cache.items():
+            if date_key.startswith(str(current_year)):
+                holidays.append({
+                    "date": date_key,
+                    "name": holiday_info['name'],
+                    "description": holiday_info['description'],
+                    "scope": holiday_info['scope'],
+                    "is_recurring": holiday_info['is_recurring']
+                })
+        
+        # Get environment configuration for working hours types
+        normal_hours = os.getenv('NORMAL_WORKING_HOURS', '17.5')
+        ot_hours = os.getenv('OT_WORKING_HOURS', '19.5')
+        emergency_hours = os.getenv('EMERGENCY_OT_HOURS', '22.0')
+        
+        configuration = {
+            "working_hours_by_day": working_hours_by_day,
+            "break_times": break_times,
+            "holidays": holidays,
+            "environment_config": {
+                "normal_working_hours": float(normal_hours),
+                "ot_working_hours": float(ot_hours),
+                "emergency_ot_hours": float(emergency_hours),
+                "timezone": "Asia/Singapore"
+            },
+            "cache_info": {
+                "last_refreshed": datetime.now().isoformat(),
+                "working_days_count": len(working_hours_by_day),
+                "break_times_count": len(break_times),
+                "holidays_count": len(holidays)
+            }
+        }
+        
+        logger.info(f"✅ Working hours configuration retrieved: {len(working_hours_by_day)} days, {len(break_times)} breaks, {len(holidays)} holidays")
+        return configuration
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ WORKING HOURS CONFIGURATION FAILED: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve working hours configuration: {str(e)}")

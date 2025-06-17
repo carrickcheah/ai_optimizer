@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
 import { useDataCache } from '../contexts/DataCacheContext';
+import { useWorkingHours, timeToMinutes, minutesToTime, isTimeInWorkingPeriod, isTimeInBreak, WorkingHour, BreakTime } from '../hooks/useWorkingHours';
 import './GanttChartDisplay.css'; // Import the CSS file
 
 
@@ -52,13 +53,14 @@ const formatDateTime = (dateTimeString: string): string => {
 
 const GanttChartDisplay: React.FC = () => {
   const { data } = useDataCache();
+  const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
   const [timeRange, setTimeRange] = useState<string>('all');
   const [chartTitle] = useState<string>('Production Planning System');
 
   // Use cached data instead of local state
   const tasks = data.ganttPriorityView;
-  const isLoading = data.isLoading;
-  const error = data.error;
+  const isLoading = data.isLoading || workingHoursLoading;
+  const error = data.error || workingHoursError;
   const overview = data.scheduleOverview;
 
   // Buffer status color mapping
@@ -99,66 +101,92 @@ const GanttChartDisplay: React.FC = () => {
 
 
 
-  // Create task segments with actual break gaps
+  // Create task segments with dynamic working hours and break gaps
   const createTaskSegmentsWithBreaks = (task: any) => {
+    // If working hours config is not available, return original task without segmentation
+    if (!workingHoursConfig) {
+      console.warn('Working hours configuration not available, using original task without segmentation');
+      return [task];
+    }
+
     const startTime = new Date(task.Start);
     const endTime = new Date(task.Finish);
     const segments = [];
     
-    let currentTime = startTime;
+    let currentTime = new Date(startTime);
     let segmentIndex = 0;
     
     while (currentTime < endTime) {
-      const dayStart = new Date(currentTime);
-      dayStart.setHours(8, 0, 0, 0); // Work starts at 8 AM
+      const dayOfWeek = currentTime.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const dayKey = dayOfWeek.toString();
       
-      const lunchStart = new Date(currentTime);
-      lunchStart.setHours(12, 0, 0, 0); // Lunch break at 12 PM
+      // Get working hours for this day of week
+      const dayWorkingHours = workingHoursConfig.working_hours_by_day[dayKey] || [];
       
-      const lunchEnd = new Date(currentTime);
-      lunchEnd.setHours(13, 0, 0, 0); // Lunch break ends at 1 PM
-      
-      const teaStart = new Date(currentTime);
-      teaStart.setHours(15, 0, 0, 0); // Tea break at 3 PM
-      
-      const teaEnd = new Date(currentTime);
-      teaEnd.setHours(15, 15, 0, 0); // Tea break ends at 3:15 PM
-      
-      const dinnerStart = new Date(currentTime);
-      dinnerStart.setHours(18, 0, 0, 0); // Dinner break at 6 PM
-      
-      const dinnerEnd = new Date(currentTime);
-      dinnerEnd.setHours(19, 0, 0, 0); // Dinner break ends at 7 PM
-      
-      const dayEnd = new Date(currentTime);
-      dayEnd.setHours(23, 59, 59, 999); // Work ends at midnight
-      
-      // Find next working period
-      let segmentStart = currentTime;
-      let segmentEnd = endTime;
-      
-      // Check if we're in a break period and skip it
-      if (currentTime >= lunchStart && currentTime < lunchEnd) {
-        segmentStart = lunchEnd;
-      } else if (currentTime >= teaStart && currentTime < teaEnd) {
-        segmentStart = teaEnd;
-      } else if (currentTime >= dinnerStart && currentTime < dinnerEnd) {
-        segmentStart = dinnerEnd;
+      if (dayWorkingHours.length === 0) {
+        // No working hours for this day, move to next day
+        currentTime.setDate(currentTime.getDate() + 1);
+        currentTime.setHours(0, 0, 0, 0);
+        continue;
       }
       
-      // Find where this segment ends (next break or end of task)
-      if (segmentStart < lunchStart && segmentEnd > lunchStart) {
-        segmentEnd = lunchStart;
-      } else if (segmentStart < teaStart && segmentEnd > teaStart) {
-        segmentEnd = teaStart;
-      } else if (segmentStart < dinnerStart && segmentEnd > dinnerStart) {
-        segmentEnd = dinnerStart;
-      } else if (segmentStart < dayEnd && segmentEnd > dayEnd) {
-        segmentEnd = dayEnd;
+      // Get current time in minutes since midnight
+      const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+      
+      // Find next available working period
+      let nextWorkingPeriod: WorkingHour | null = null;
+      let nextWorkingStart = 0;
+      
+      for (const workingHour of dayWorkingHours) {
+        if (!workingHour.is_working) continue;
+        
+        const periodStart = timeToMinutes(workingHour.start_time);
+        const periodEnd = timeToMinutes(workingHour.end_time);
+        
+        if (currentMinutes < periodEnd) {
+          nextWorkingPeriod = workingHour;
+          nextWorkingStart = Math.max(currentMinutes, periodStart);
+          break;
+        }
       }
       
-      // Create segment if it has duration
-      if (segmentStart < segmentEnd) {
+      if (!nextWorkingPeriod) {
+        // No more working periods today, move to next day
+        currentTime.setDate(currentTime.getDate() + 1);
+        currentTime.setHours(0, 0, 0, 0);
+        continue;
+      }
+      
+      // Set segment start time
+      const segmentStartMinutes = nextWorkingStart;
+      const segmentStart = new Date(currentTime);
+      segmentStart.setHours(Math.floor(segmentStartMinutes / 60), segmentStartMinutes % 60, 0, 0);
+      
+      // Find segment end time (limited by working period, breaks, or task end)
+      const workingPeriodEnd = timeToMinutes(nextWorkingPeriod.end_time);
+      let segmentEndMinutes = Math.min(workingPeriodEnd, 
+        endTime.getDate() === currentTime.getDate() && 
+        endTime.getFullYear() === currentTime.getFullYear() && 
+        endTime.getMonth() === currentTime.getMonth() ? 
+        endTime.getHours() * 60 + endTime.getMinutes() : workingPeriodEnd);
+      
+      // Check for breaks that intersect with this segment
+      for (const breakTime of workingHoursConfig.break_times) {
+        const breakStart = timeToMinutes(breakTime.start_time);
+        const breakEnd = timeToMinutes(breakTime.end_time);
+        
+        // If break starts within our segment, end segment at break start
+        if (breakStart > segmentStartMinutes && breakStart < segmentEndMinutes) {
+          segmentEndMinutes = breakStart;
+          break;
+        }
+      }
+      
+      const segmentEnd = new Date(currentTime);
+      segmentEnd.setHours(Math.floor(segmentEndMinutes / 60), segmentEndMinutes % 60, 0, 0);
+      
+      // Create segment if it has meaningful duration (at least 1 minute)
+      if (segmentEnd.getTime() - segmentStart.getTime() >= 60000) {
         segments.push({
           ...task,
           Task: `${task.Task}_seg${segmentIndex}`,
@@ -168,23 +196,38 @@ const GanttChartDisplay: React.FC = () => {
         segmentIndex++;
       }
       
-      // Move to next period
-      if (segmentEnd >= dayEnd) {
-        // Move to next day
-        currentTime = new Date(dayEnd);
-        currentTime.setDate(currentTime.getDate() + 1);
-        currentTime.setHours(8, 0, 0, 0);
-      } else if (segmentEnd.getHours() === 12) {
-        // After lunch break
-        currentTime = lunchEnd;
-      } else if (segmentEnd.getHours() === 15 && segmentEnd.getMinutes() === 0) {
-        // After tea break
-        currentTime = teaEnd;
-      } else if (segmentEnd.getHours() === 18) {
-        // After dinner break
-        currentTime = dinnerEnd;
-      } else {
+      // Move current time forward
+      if (segmentEnd >= endTime) {
+        // Task is complete
         break;
+      } else if (segmentEndMinutes >= workingPeriodEnd) {
+        // Working period ended, check for next period or next day
+        let foundNextPeriod = false;
+        for (const workingHour of dayWorkingHours) {
+          if (!workingHour.is_working) continue;
+          const periodStart = timeToMinutes(workingHour.start_time);
+          if (periodStart > segmentEndMinutes) {
+            currentTime.setHours(Math.floor(periodStart / 60), periodStart % 60, 0, 0);
+            foundNextPeriod = true;
+            break;
+          }
+        }
+        
+        if (!foundNextPeriod) {
+          // No more working periods today, move to next day
+          currentTime.setDate(currentTime.getDate() + 1);
+          currentTime.setHours(0, 0, 0, 0);
+        }
+      } else {
+        // We hit a break or task end, advance to after the break
+        const breakTime = isTimeInBreak(segmentEndMinutes, workingHoursConfig.break_times);
+        if (breakTime) {
+          const breakEndMinutes = timeToMinutes(breakTime.end_time);
+          currentTime.setHours(Math.floor(breakEndMinutes / 60), breakEndMinutes % 60, 0, 0);
+        } else {
+          // Task ended
+          break;
+        }
       }
     }
     

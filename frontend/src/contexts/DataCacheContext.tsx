@@ -168,40 +168,6 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     }
   }, []);
 
-  // Auto-refresh data daily at 6 AM Singapore time
-  useEffect(() => {
-    const scheduleAutoRefresh = () => {
-      const now = new Date();
-      const singapore = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Singapore"}));
-      
-      // Calculate next 6 AM Singapore time
-      const nextRefresh = new Date(singapore);
-      nextRefresh.setHours(6, 0, 0, 0);
-      
-      // If it's already past 6 AM today, schedule for tomorrow
-      if (singapore.getHours() >= 6) {
-        nextRefresh.setDate(nextRefresh.getDate() + 1);
-      }
-      
-      const timeUntilRefresh = nextRefresh.getTime() - singapore.getTime();
-      
-      console.log(`Next auto-refresh scheduled for: ${nextRefresh.toLocaleString("en-US", {timeZone: "Asia/Singapore"})} (in ${Math.round(timeUntilRefresh / 1000 / 60 / 60)} hours)`);
-      
-      const timeoutId = setTimeout(() => {
-        console.log('Auto-refreshing data at 6 AM Singapore time...');
-        refreshData().then(() => {
-          // Schedule the next refresh
-          scheduleAutoRefresh();
-        });
-      }, timeUntilRefresh);
-      
-      return timeoutId;
-    };
-
-    const timeoutId = scheduleAutoRefresh();
-    
-    return () => clearTimeout(timeoutId);
-  }, []);
 
   // Provide the context value
   const contextValue: DataCacheContextType = {
