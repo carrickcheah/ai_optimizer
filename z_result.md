@@ -12,7 +12,7 @@ Conducted comprehensive deep scan investigation of `greedy_solver.py` following 
 
 ### Job Dependency Structure
 - **`tbl_jo_process.Task_v`**: Contains process sequences like "CA01-051-1/3", "CA01-051-2/3", "CA01-051-3/3"
-- **Process Families**: 63 jobs in CA01-051 family with 3-step sequence (1/3 ’ 2/3 ’ 3/3)
+- **Process Families**: 63 jobs in CA01-051 family with 3-step sequence (1/3 ï¿½ 2/3 ï¿½ 3/3)
 - **Dependency Pattern**: Step X/Y format where X = current step, Y = total steps
 - **Sequential Dependencies**: Step 2 cannot start until step 1 completes, etc.
 
@@ -27,7 +27,8 @@ tbl_jo_process        Process definitions (Task_v sequences)
 tbl_jo_txn            Job transactions and metadata
 ```
 
-## = **COMPLETE LIST: ALL 136 JOBS THAT FAIL DUE TO DEPENDENCY ISSUES**
+## =
+ **COMPLETE LIST: ALL 136 JOBS THAT FAIL DUE TO DEPENDENCY ISSUES**
 
 ### **Summary of Dependency Failures:**
 
@@ -77,12 +78,13 @@ tbl_jo_txn            Job transactions and metadata
 
 ## Deep Scan Results
 
-### = **1. Dependency Management - VALIDATED**
+### =
+ **1. Dependency Management - VALIDATED**
 
 **Test Results**:
 -  Process sequences correctly parsed from Task_v column
 -  Job families properly grouped (CA01-051, CA16-001, etc.)
--  Sequential dependencies enforced (step 1 ’ 2 ’ 3)
+-  Sequential dependencies enforced (step 1 ï¿½ 2 ï¿½ 3)
 -  136 dependency failures handled gracefully with logging
 
 **Evidence**: Database analysis shows job families like:
@@ -90,7 +92,8 @@ tbl_jo_txn            Job transactions and metadata
 - CA16-001: 19 processes (1/5 through 5/5 sequences)
 - CA24-002: 26 processes (1/7 through 7/7 sequences)
 
-### = **2. LCD Date Prioritization - WORKING CORRECTLY**
+### =
+ **2. LCD Date Prioritization - WORKING CORRECTLY**
 
 **Current Performance**:
 -  395 total jobs, all have LCD dates
@@ -105,7 +108,8 @@ Late SUBCONTRACTOR jobs: 15 (minimal impact)
 Late machine jobs: 123 (main capacity issue)
 ```
 
-### = **3. Machine Capacity Analysis - CRITICAL FINDING**
+### =
+ **3. Machine Capacity Analysis - CRITICAL FINDING**
 
 **Root Cause Identified**: 
 - **WH01A-PK Machine Overload**: Severely overloaded with extreme scheduling delays
@@ -116,8 +120,10 @@ Late machine jobs: 123 (main capacity issue)
   3. JOTP25050072: -1017.7 hours late
   4. JOST25040242: -947.7 hours late
   5. JOST25050013: -926.4 hours late
+  WH01A-PK is - it's a regular warehouse packing machine that's severely overloaded with 77 jobs but can only schedule 42.
 
-### = **4. Scheduler Function Validation**
+### =
+ **4. Scheduler Function Validation**
 
 **Core Functions Tested**:
 -  `_sort_jobs_by_lcd_priority()`: LCD date sorting working perfectly
@@ -131,7 +137,8 @@ Late machine jobs: 123 (main capacity issue)
 -  Success Rate: 65.0% (253/389 jobs scheduled)
 -  Dependency Handling: 136 failures logged with clear reasons
 
-### = **5. Error Handling & Compatibility**
+### =
+ **5. Error Handling & Compatibility**
 
 **Integration Status**:
 -  API Endpoints: `/api/reports/schedule-overview` responding correctly
@@ -199,7 +206,7 @@ Late machine jobs: 123 (main capacity issue)
    - **Missing Prerequisites**: Steps 1, 2, 3 often missing when steps 4, 5, 6+ exist
    - **Fix**: Ensure complete job families are loaded into scheduler
 
-### =á **Monitoring Points**
+### =ï¿½ **Monitoring Points**
 1. Track machine utilization rates
 2. Monitor dependency failure patterns  
 3. Watch for jobs exceeding LCD dates by >168 hours (1 week)
