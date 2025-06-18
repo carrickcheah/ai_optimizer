@@ -63,7 +63,7 @@ const Dashboard: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Retrieving resource allocation
-      addLog('🏭 The jobs are finishing scheduling in 60 seconds...');
+      addLog('🏭 The jobs will finish scheduling in 60 seconds...');
       await refreshData();
       
       // Clear processing logs and show final success messages

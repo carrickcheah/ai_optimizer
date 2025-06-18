@@ -787,7 +787,9 @@ const GanttChartDisplay: React.FC = () => {
     }
     
     // Always calculate ranges forward from today's date for time range selections
+    // Set startDate to beginning of today (00:00:00) to capture jobs that started earlier today
     let startDate = new Date(now);
+    startDate.setHours(0, 0, 0, 0); // Start from beginning of today
     let endDate = new Date(now);
     
     // Set end date based on timeframe (forward from today)
