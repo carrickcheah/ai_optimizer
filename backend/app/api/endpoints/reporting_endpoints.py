@@ -211,18 +211,30 @@ async def get_schedule_overview(
         # Calculate overview statistics with strict validation
         total_jobs = len(table_data)
         
-        # Get date range from scheduled times
+        # Get date range from scheduled times (all jobs for calendar span)
         start_times = []
         end_times = []
+        
+        # Separate machine work hours calculation (exclude subcontractor jobs)
+        machine_work_hours = 0
         
         for job in table_data:
             start_epoch = job.get('scheduled_start_epoch')
             end_epoch = job.get('scheduled_end_epoch')
+            machine_name = job.get('machine_name', '').upper()
             
+            # Include all jobs for date range calculation
             if isinstance(start_epoch, (int, float)) and start_epoch > 0:
                 start_times.append(start_epoch)
             if isinstance(end_epoch, (int, float)) and end_epoch > 0:
                 end_times.append(end_epoch)
+            
+            # Only count machine jobs for work duration (exclude subcontractor)
+            if (isinstance(start_epoch, (int, float)) and isinstance(end_epoch, (int, float)) and 
+                start_epoch > 0 and end_epoch > 0 and 
+                machine_name not in ['SUBCONTRACTOR', 'SUBCON']):
+                job_duration_hours = (end_epoch - start_epoch) / 3600
+                machine_work_hours += job_duration_hours
         
         if not start_times or not end_times:
             logger.error("❌ NO VALID TIMESTAMPS found in schedule data")
@@ -236,14 +248,15 @@ async def get_schedule_overview(
         end_date = datetime.fromtimestamp(latest_end).strftime("%d/%m/%y")
         date_range = f"{start_date} to {end_date}"
         
-        # Calculate total duration
-        duration_hours = (latest_end - earliest_start) / 3600
-        if duration_hours >= 24:
-            days = int(duration_hours // 24)
-            hours = duration_hours % 24
+        # Format machine work duration (exclude subcontractor hours)
+        logger.info(f"📊 Work duration calculation: {machine_work_hours:.1f} machine hours (subcontractor hours excluded)")
+        
+        if machine_work_hours >= 24:
+            days = int(machine_work_hours // 24)
+            hours = machine_work_hours % 24
             total_duration = f"{days} days {hours:.1f} hours" if hours > 0 else f"{days} days"
         else:
-            total_duration = f"{duration_hours:.1f} hours"
+            total_duration = f"{machine_work_hours:.1f} hours"
         
         # Count buffer statuses with strict validation
         buffer_counts = {"Late": 0, "Critical": 0, "Warning": 0, "Caution": 0, "OK": 0, "Unknown": 0}

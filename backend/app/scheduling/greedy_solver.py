@@ -313,15 +313,19 @@ class JobCategorizer:
             machine_name = job.get('MachineName_v')
             if machine_name == 'NOT_ASSIGN':
                 categories['not_assign'].append(job)
-            elif machine_name == 'SUBCONTRACTOR':
-                categories['subcontractor'].append(job)
             else:
+                # Check for dependencies FIRST, regardless of machine type
                 family = extract_job_family(job['job_id'])
                 process_num = extract_process_number(job['job_id'])
                 
                 if family and process_num > 1:
+                    # Jobs with dependencies go to dependency category (including subcontractor jobs)
                     categories['dependency'].append(job)
+                elif machine_name == 'SUBCONTRACTOR':
+                    # Only independent subcontractor jobs (P1) go to subcontractor category
+                    categories['subcontractor'].append(job)
                 else:
+                    # Independent machine jobs
                     categories['independent'].append(job)
         
         logger.info(
@@ -706,25 +710,46 @@ class GreedyScheduler:
                 else:
                     earliest_start = schedule_state['current_time']
                 
-                # Find machine
-                machines = list(schedule_state['machine_available_time'].keys())
-                machine_id = MachineManager.find_best_machine(job_item, machines, schedule_state['machine_available_time'])
-                
-                if not machine_id:
-                    logger.warning(f"No machine available for job {job_id}")
-                    schedule_state['unscheduled_jobs'].append(job_item)
-                    continue
-                
-                # Start search from the later of machine availability or dependency requirement
-                start_search_time = max(
-                    schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time']),
-                    earliest_start
-                )
-                
-                self._find_and_schedule_job(
-                    job_item, machine_id, start_search_time, schedule_state,
-                    family, process_num, max_operators
-                )
+                # Handle subcontractor vs machine jobs differently
+                machine_name = job_item.get('MachineName_v')
+                if machine_name == 'SUBCONTRACTOR':
+                    # Subcontractor job with dependencies
+                    start_time = max(earliest_start, schedule_state['current_time'])
+                    processing_time = job_item.get('processing_time', 3600)  # Default 1 hour if missing
+                    end_time = self._calculate_preemptive_end_time(start_time, processing_time)
+                    
+                    # Add to subcontractor "machine" for chart display
+                    if 'SUBCONTRACTOR' not in schedule_state['schedule']:
+                        schedule_state['schedule']['SUBCONTRACTOR'] = []
+                    
+                    schedule_state['schedule']['SUBCONTRACTOR'].append((job_id, start_time, end_time))
+                    schedule_state['scheduled_jobs'].add(job_id)
+                    
+                    # Update dependency tracking
+                    schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], end_time)
+                    schedule_state['process_end_times'][(family, process_num)] = end_time
+                    
+                    logger.info(f"Scheduled SUBCONTRACTOR dependency job {job_id}: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')} to {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d %H:%M')} (after P{process_num-1})")
+                else:
+                    # Machine job with dependencies (existing logic)
+                    machines = list(schedule_state['machine_available_time'].keys())
+                    machine_id = MachineManager.find_best_machine(job_item, machines, schedule_state['machine_available_time'])
+                    
+                    if not machine_id:
+                        logger.warning(f"No machine available for job {job_id}")
+                        schedule_state['unscheduled_jobs'].append(job_item)
+                        continue
+                    
+                    # Start search from the later of machine availability or dependency requirement
+                    start_search_time = max(
+                        schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time']),
+                        earliest_start
+                    )
+                    
+                    self._find_and_schedule_job(
+                        job_item, machine_id, start_search_time, schedule_state,
+                        family, process_num, max_operators
+                    )
     
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
