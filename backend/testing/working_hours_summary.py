@@ -23,7 +23,7 @@ DB_PASSWORD = os.getenv("MARIADB_PASSWORD")
 DB_NAME = os.getenv("MARIADB_DATABASE")
 DB_PORT = os.getenv("MARIADB_PORT", "3306")
 
-SINGAPORE_TZ = pytz.timezone('Asia/Singapore')
+MALAYSIA_TZ = pytz.timezone('Asia/Kuala_Lumpur')
 
 def get_db_connection():
     """Get database connection."""
@@ -69,7 +69,7 @@ def main():
     """Main function to display working hours summary."""
     print("\n" + "#"*80)
     print("# WORKING HOURS CONFIGURATION SUMMARY")
-    print(f"# Generated: {datetime.now(SINGAPORE_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"# Generated: {datetime.now(MALAYSIA_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("#"*80)
     
     conn = get_db_connection()

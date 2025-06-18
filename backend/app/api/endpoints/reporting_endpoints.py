@@ -536,7 +536,7 @@ async def get_working_hours_configuration():
                 "normal_working_hours": float(normal_hours),
                 "ot_working_hours": float(ot_hours),
                 "emergency_ot_hours": float(emergency_hours),
-                "timezone": "Asia/Singapore"
+                "timezone": "Asia/Kuala_Lumpur"
             },
             "cache_info": {
                 "last_refreshed": datetime.now().isoformat(),

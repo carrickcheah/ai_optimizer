@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-SINGAPORE_TZ = pytz.timezone('Asia/Singapore')
+MALAYSIA_TZ = pytz.timezone('Asia/Kuala_Lumpur')
 
 
 class TimeAvailabilityError(Exception):
@@ -444,8 +444,8 @@ class TimeAvailabilityChecker:
         # Fall back to datetime method if epoch caches unavailable
         if not self.cache._working_hours_epoch_cache:
             logger.debug("Epoch caches not available, using datetime method")
-            start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
-            end_dt = datetime.fromtimestamp(end_epoch, tz=SINGAPORE_TZ)
+            start_dt = datetime.fromtimestamp(start_epoch, tz=MALAYSIA_TZ)
+            end_dt = datetime.fromtimestamp(end_epoch, tz=MALAYSIA_TZ)
             return self.is_time_range_available(start_dt, end_dt)
         
         # Check every hour in the range
@@ -603,8 +603,8 @@ def is_time_available(start_epoch: float, end_epoch: float, shift_id: Optional[i
     """Check if epoch time range is available for scheduling."""
     try:
         checker = TimeAvailabilityManager.get_instance()
-        start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
-        end_dt = datetime.fromtimestamp(end_epoch, tz=SINGAPORE_TZ)
+        start_dt = datetime.fromtimestamp(start_epoch, tz=MALAYSIA_TZ)
+        end_dt = datetime.fromtimestamp(end_epoch, tz=MALAYSIA_TZ)
         return checker.is_time_range_available(start_dt, end_dt)
     except Exception as e:
         logger.error(f"Error in is_time_available: {e}")
@@ -615,7 +615,7 @@ def get_next_available_slot(start_epoch: float, duration_hours: float, shift_id:
     """Find next available epoch slot."""
     try:
         checker = TimeAvailabilityManager.get_instance()
-        start_dt = datetime.fromtimestamp(start_epoch, tz=SINGAPORE_TZ)
+        start_dt = datetime.fromtimestamp(start_epoch, tz=MALAYSIA_TZ)
         next_dt = checker.get_next_available_datetime(start_dt, duration_hours)
         return next_dt.timestamp() if next_dt else None
     except Exception as e:
@@ -685,7 +685,7 @@ if __name__ == '__main__':
         print("✅ Time availability checker initialized successfully")
         
         # Test current time availability
-        now = datetime.now(tz=SINGAPORE_TZ)
+        now = datetime.now(tz=MALAYSIA_TZ)
         is_available = checker.is_time_available_for_scheduling(now)
         print(f"✅ Current time availability: {is_available}")
         

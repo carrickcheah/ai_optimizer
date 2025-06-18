@@ -379,7 +379,7 @@ const DetailedScheduleTable: React.FC = () => {
           <div className="header-info">
             <small className="text-light">
               Auto-moving window: {DATA_LOADING_CONFIG.bufferDays} days back to {DATA_LOADING_CONFIG.planningHorizonDays} days ahead | 
-              Auto-refresh: Daily at 6:00 AM (Singapore time) | 
+              Auto-refresh: Daily at 6:00 AM (Kuala Lumpur time) | 
               Last refresh: {lastRefresh.toLocaleTimeString()}
             </small>
           </div>

@@ -140,7 +140,7 @@ def get_db_connection() -> Optional[mysql.connector.MySQLConnection]:
 
 def convert_datetime_to_epoch(dt_value: Any) -> Optional[int]:
     """
-    Convert a datetime value to epoch timestamp in Singapore timezone.
+    Convert a datetime value to epoch timestamp in Kuala Lumpur timezone.
     Handles MariaDB datetime format: 2025-07-30 17:00:00.000
     
     Args:
@@ -175,18 +175,18 @@ def convert_datetime_to_epoch(dt_value: Any) -> Optional[int]:
         logger.warning(f"Unexpected datetime type: {type(dt_value)}")
         return None
         
-    singapore_tz = pytz.timezone('Asia/Singapore')
+    malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
     
     try:
         if isinstance(dt_value, pd.Timestamp):
             dt_value = dt_value.to_pydatetime()
             
         if dt_value.tzinfo is None:
-            sg_dt = singapore_tz.localize(dt_value, is_dst=None)
+            my_dt = malaysia_tz.localize(dt_value, is_dst=None)
         else:
-            sg_dt = dt_value.astimezone(singapore_tz)
+            my_dt = dt_value.astimezone(malaysia_tz)
         
-        return int(sg_dt.timestamp())
+        return int(my_dt.timestamp())
         
     except Exception as e:
         logger.debug(f"Error converting datetime to epoch: {e} for value {dt_value}")

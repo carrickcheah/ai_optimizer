@@ -390,15 +390,15 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     width: window.innerWidth * 0.95,
     xaxis: {
       type: 'date' as const,
-      title: 'Timeline (SGT)',
+      title: 'Timeline (MYT)',
       gridcolor: 'rgb(230, 230, 230)',
       gridwidth: 1,
       tickformat: '%b %d',
       dtick: 86400000,
       tickangle: -45,
       automargin: true,
-      // Force timezone to be consistent with backend (Singapore)
-      timezone: 'Asia/Singapore',
+      // Force timezone to be consistent with backend (Kuala Lumpur)
+      timezone: 'Asia/Kuala_Lumpur',
     },
     yaxis: {
       title: 'Machine Name', 
@@ -462,7 +462,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             range: xAxisRange,
             tickformat: '%H:%M', // Show hours like "08:00"
             dtick: 3600000, // 1-hour intervals (every hour)
-            timezone: 'Asia/Singapore',
+            timezone: 'Asia/Kuala_Lumpur',
           };
         } else {
           xAxisConfig = {
@@ -470,7 +470,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             range: xAxisRange,
             tickformat: '%b %d', // Show dates like "May 30"
             dtick: 86400000, // Daily intervals
-            timezone: 'Asia/Singapore',
+            timezone: 'Asia/Kuala_Lumpur',
           };
         }
       } else {
@@ -595,7 +595,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         range: xAxisRange,
         tickformat: '%H:%M', // Show hours like "08:00"
         dtick: 3600000, // 1-hour intervals (every hour)
-        timezone: 'Asia/Singapore',
+        timezone: 'Asia/Kuala_Lumpur',
       };
     } else {
       // For longer timeframes, show dates
@@ -604,7 +604,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         range: xAxisRange,
         tickformat: '%b %d', // Show dates like "May 30"
         dtick: 86400000, // Daily intervals
-        timezone: 'Asia/Singapore',
+        timezone: 'Asia/Kuala_Lumpur',
       };
     }
     

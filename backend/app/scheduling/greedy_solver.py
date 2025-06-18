@@ -464,8 +464,8 @@ class SchedulingConstraints:
             import pytz
             
             # Convert start time to datetime object
-            singapore_tz = pytz.timezone('Asia/Singapore')
-            start_dt = datetime.fromtimestamp(start_time, tz=singapore_tz)
+            malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
+            start_dt = datetime.fromtimestamp(start_time, tz=malaysia_tz)
             
             # For preemptive scheduling, only check if start time is during working hours
             # The job will automatically pause during breaks and resume after
@@ -1025,13 +1025,13 @@ class GreedyScheduler:
             from datetime import datetime
             import pytz
             
-            singapore_tz = pytz.timezone('Asia/Singapore')
+            malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
             current_time = proposed_time
             max_attempts = 24 * 60  # Maximum 1 day of searching in minutes
             attempts = 0
             
             while attempts < max_attempts:
-                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                current_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
                 
                 # Check if current time is during working hours and NOT during breaks
                 if is_time_available_for_scheduling(current_dt):
@@ -1047,14 +1047,14 @@ class GreedyScheduler:
             attempts = 0
             
             while attempts < max_attempts:
-                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                current_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
                 if is_time_available_for_scheduling(current_dt):
                     return current_time
                 current_time += 3600  # 1 hour
                 attempts += 1
             
             # If we can't find working time within a week, return original time
-            logger.warning(f"Could not find working time within 1 week from {datetime.fromtimestamp(proposed_time, tz=singapore_tz)}")
+            logger.warning(f"Could not find working time within 1 week from {datetime.fromtimestamp(proposed_time, tz=malaysia_tz)}")
             return proposed_time
             
         except ImportError:
@@ -1078,15 +1078,15 @@ class GreedyScheduler:
             from datetime import datetime
             import pytz
             
-            singapore_tz = pytz.timezone('Asia/Singapore')
+            malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
             current_time = start_time
             remaining_time = processing_time
             
-            logger.debug(f"Calculating preemptive end time: start={datetime.fromtimestamp(start_time, tz=singapore_tz)}, duration={processing_time/3600:.1f}h")
+            logger.debug(f"Calculating preemptive end time: start={datetime.fromtimestamp(start_time, tz=malaysia_tz)}, duration={processing_time/3600:.1f}h")
             
             # Process the job in working time chunks, pausing during breaks
             while remaining_time > 0:
-                current_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+                current_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
                 
                 # Check if current time is during working hours
                 if is_time_available_for_scheduling(current_dt):
@@ -1103,7 +1103,7 @@ class GreedyScheduler:
                     logger.warning(f"Preemptive scheduling exceeded 1 year limit - using simple end time")
                     return start_time + processing_time
             
-            end_dt = datetime.fromtimestamp(current_time, tz=singapore_tz)
+            end_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
             logger.debug(f"Preemptive end time calculated: {end_dt} (spans {(current_time - start_time)/86400:.1f} days)")
             return current_time
             

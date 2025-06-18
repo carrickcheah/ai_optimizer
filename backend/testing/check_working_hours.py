@@ -24,7 +24,7 @@ DB_PASSWORD = os.getenv("MARIADB_PASSWORD")
 DB_NAME = os.getenv("MARIADB_DATABASE")
 DB_PORT = os.getenv("MARIADB_PORT", "3306")
 
-SINGAPORE_TZ = pytz.timezone('Asia/Singapore')
+MALAYSIA_TZ = pytz.timezone('Asia/Kuala_Lumpur')
 
 def get_db_connection():
     """Get database connection."""
@@ -157,7 +157,7 @@ def check_holidays():
         cursor = conn.cursor(dictionary=True)
         
         # Get today's date and upcoming dates
-        today = datetime.now(SINGAPORE_TZ).date()
+        today = datetime.now(MALAYSIA_TZ).date()
         next_week = today + timedelta(days=7)
         
         # Query holidays
@@ -342,8 +342,8 @@ def analyze_scheduling_window():
     print("ANALYZING SCHEDULING WINDOWS")
     print("="*80)
     
-    now = datetime.now(SINGAPORE_TZ)
-    print(f"\nCurrent time in Singapore: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    now = datetime.now(MALAYSIA_TZ)
+    print(f"\nCurrent time in Kuala Lumpur: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"Day of week: {now.strftime('%A')} (Day {now.weekday() + 1})")
     
     # Check if jobs scheduled at 23:33 would be within working hours
@@ -382,7 +382,7 @@ def main():
     """Main function to run all checks."""
     print("\n" + "#"*80)
     print("# WORKING HOURS CONFIGURATION DIAGNOSTIC")
-    print(f"# Run time: {datetime.now(SINGAPORE_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"# Run time: {datetime.now(MALAYSIA_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("#"*80)
     
     # Check database connection first

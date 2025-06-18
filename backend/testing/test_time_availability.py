@@ -27,7 +27,7 @@ try:
         is_time_available,
         get_next_available_slot,
         is_holiday,
-        SINGAPORE_TZ
+        MALAYSIA_TZ
     )
     from app.data_ingestion.mariadb_parser import get_db_connection
 except ImportError:
@@ -41,7 +41,7 @@ except ImportError:
         is_time_available,
         get_next_available_slot,
         is_holiday,
-        SINGAPORE_TZ
+        MALAYSIA_TZ
     )
     from backend.app.data_ingestion.mariadb_parser import get_db_connection
 
@@ -254,7 +254,7 @@ class TimeAvailabilityTester:
             checker = TimeAvailabilityManager.get_instance()
             
             # Test 1: Current time availability
-            now = datetime.now(tz=SINGAPORE_TZ)
+            now = datetime.now(tz=MALAYSIA_TZ)
             is_available_now = checker.is_time_available_for_scheduling(now)
             results['tests'].append({
                 'name': 'Current Time Check',
@@ -264,7 +264,7 @@ class TimeAvailabilityTester:
             
             # Test 2: Holiday detection
             # Check a known date
-            test_date = datetime(2025, 1, 1, 10, 0, tzinfo=SINGAPORE_TZ)  # New Year's Day
+            test_date = datetime(2025, 1, 1, 10, 0, tzinfo=MALAYSIA_TZ)  # New Year's Day
             is_holiday_check = checker.is_holiday(test_date)
             results['tests'].append({
                 'name': 'Holiday Detection',
@@ -274,7 +274,7 @@ class TimeAvailabilityTester:
             
             # Test 3: Working hours check
             # Monday 9 AM (should be working)
-            monday_9am = datetime(2025, 6, 16, 9, 0, tzinfo=SINGAPORE_TZ)
+            monday_9am = datetime(2025, 6, 16, 9, 0, tzinfo=MALAYSIA_TZ)
             is_working = checker.is_within_working_hours(monday_9am)
             results['tests'].append({
                 'name': 'Working Hours Check',
@@ -284,7 +284,7 @@ class TimeAvailabilityTester:
             
             # Test 4: Break time check
             # Typical lunch time
-            lunch_time = datetime(2025, 6, 16, 12, 30, tzinfo=SINGAPORE_TZ)
+            lunch_time = datetime(2025, 6, 16, 12, 30, tzinfo=MALAYSIA_TZ)
             is_break = checker.is_break_time(lunch_time)
             results['tests'].append({
                 'name': 'Break Time Check',
@@ -293,8 +293,8 @@ class TimeAvailabilityTester:
             })
             
             # Test 5: Time range availability
-            start = datetime(2025, 6, 16, 14, 0, tzinfo=SINGAPORE_TZ)
-            end = datetime(2025, 6, 16, 16, 0, tzinfo=SINGAPORE_TZ)
+            start = datetime(2025, 6, 16, 14, 0, tzinfo=MALAYSIA_TZ)
+            end = datetime(2025, 6, 16, 16, 0, tzinfo=MALAYSIA_TZ)
             range_available = checker.is_time_range_available(start, end)
             results['tests'].append({
                 'name': 'Time Range Check',
@@ -311,8 +311,8 @@ class TimeAvailabilityTester:
             })
             
             # Test 7: Epoch-based checks
-            start_epoch = datetime(2025, 6, 16, 10, 0, tzinfo=SINGAPORE_TZ).timestamp()
-            end_epoch = datetime(2025, 6, 16, 11, 0, tzinfo=SINGAPORE_TZ).timestamp()
+            start_epoch = datetime(2025, 6, 16, 10, 0, tzinfo=MALAYSIA_TZ).timestamp()
+            end_epoch = datetime(2025, 6, 16, 11, 0, tzinfo=MALAYSIA_TZ).timestamp()
             epoch_available = checker.is_time_available_epoch(start_epoch, end_epoch)
             results['tests'].append({
                 'name': 'Epoch Time Check',
@@ -342,7 +342,7 @@ class TimeAvailabilityTester:
             start_time = time.time()
             
             for i in range(iterations):
-                test_dt = datetime.now(tz=SINGAPORE_TZ) + timedelta(hours=i)
+                test_dt = datetime.now(tz=MALAYSIA_TZ) + timedelta(hours=i)
                 checker.is_time_available_for_scheduling(test_dt)
             
             single_check_time = time.time() - start_time
@@ -359,7 +359,7 @@ class TimeAvailabilityTester:
             start_time = time.time()
             
             for i in range(range_iterations):
-                start_dt = datetime.now(tz=SINGAPORE_TZ) + timedelta(days=i)
+                start_dt = datetime.now(tz=MALAYSIA_TZ) + timedelta(days=i)
                 end_dt = start_dt + timedelta(hours=8)
                 checker.is_time_range_available(start_dt, end_dt)
             
@@ -395,7 +395,7 @@ class TimeAvailabilityTester:
             start_time = time.time()
             
             for i in range(slot_iterations):
-                start_dt = datetime.now(tz=SINGAPORE_TZ) + timedelta(days=i)
+                start_dt = datetime.now(tz=MALAYSIA_TZ) + timedelta(days=i)
                 checker.get_next_available_datetime(start_dt, 4.0)
             
             slot_check_time = time.time() - start_time
@@ -434,8 +434,8 @@ class TimeAvailabilityTester:
             checker = TimeAvailabilityManager.get_instance()
             
             # Test 1: Overnight shift handling
-            night_start = datetime(2025, 6, 16, 22, 0, tzinfo=SINGAPORE_TZ)
-            night_end = datetime(2025, 6, 17, 2, 0, tzinfo=SINGAPORE_TZ)
+            night_start = datetime(2025, 6, 16, 22, 0, tzinfo=MALAYSIA_TZ)
+            night_end = datetime(2025, 6, 17, 2, 0, tzinfo=MALAYSIA_TZ)
             overnight_available = checker.is_time_range_available(night_start, night_end)
             
             results['tests'].append({
@@ -445,8 +445,8 @@ class TimeAvailabilityTester:
             })
             
             # Test 2: Weekend handling
-            saturday = datetime(2025, 6, 21, 10, 0, tzinfo=SINGAPORE_TZ)  # Saturday
-            sunday = datetime(2025, 6, 22, 10, 0, tzinfo=SINGAPORE_TZ)    # Sunday
+            saturday = datetime(2025, 6, 21, 10, 0, tzinfo=MALAYSIA_TZ)  # Saturday
+            sunday = datetime(2025, 6, 22, 10, 0, tzinfo=MALAYSIA_TZ)    # Sunday
             
             sat_available = checker.is_time_available_for_scheduling(saturday)
             sun_available = checker.is_time_available_for_scheduling(sunday)
@@ -458,7 +458,7 @@ class TimeAvailabilityTester:
             })
             
             # Test 3: Very long duration jobs
-            long_job_start = datetime(2025, 6, 16, 8, 0, tzinfo=SINGAPORE_TZ)
+            long_job_start = datetime(2025, 6, 16, 8, 0, tzinfo=MALAYSIA_TZ)
             long_slot = checker.get_next_available_datetime(long_job_start, 24.0)
             
             results['tests'].append({
@@ -468,7 +468,7 @@ class TimeAvailabilityTester:
             })
             
             # Test 4: Past datetime handling
-            past_dt = datetime.now(tz=SINGAPORE_TZ) - timedelta(days=30)
+            past_dt = datetime.now(tz=MALAYSIA_TZ) - timedelta(days=30)
             past_available = checker.is_time_available_for_scheduling(past_dt)
             
             results['tests'].append({
@@ -478,7 +478,7 @@ class TimeAvailabilityTester:
             })
             
             # Test 5: Far future handling
-            future_dt = datetime.now(tz=SINGAPORE_TZ) + timedelta(days=365)
+            future_dt = datetime.now(tz=MALAYSIA_TZ) + timedelta(days=365)
             future_available = checker.is_time_available_for_scheduling(future_dt)
             
             results['tests'].append({
@@ -488,7 +488,7 @@ class TimeAvailabilityTester:
             })
             
             # Test 6: Midnight boundary
-            midnight = datetime(2025, 6, 16, 0, 0, tzinfo=SINGAPORE_TZ)
+            midnight = datetime(2025, 6, 16, 0, 0, tzinfo=MALAYSIA_TZ)
             midnight_available = checker.is_time_available_for_scheduling(midnight)
             
             results['tests'].append({
@@ -498,10 +498,10 @@ class TimeAvailabilityTester:
             })
             
             # Test 7: Daylight saving (if applicable)
-            # Singapore doesn't have DST, but test timezone handling
+            # Malaysia doesn't have DST, but test timezone handling
             utc_dt = datetime(2025, 6, 16, 1, 0, tzinfo=pytz.UTC)
-            sg_dt = utc_dt.astimezone(SINGAPORE_TZ)
-            tz_available = checker.is_time_available_for_scheduling(sg_dt)
+            my_dt = utc_dt.astimezone(MALAYSIA_TZ)
+            tz_available = checker.is_time_available_for_scheduling(my_dt)
             
             results['tests'].append({
                 'name': 'Timezone Conversion',
@@ -538,7 +538,7 @@ class TimeAvailabilityTester:
             # Test 2: Cache hit performance
             start_time = time.time()
             for _ in range(100):
-                checker.is_holiday(datetime.now(tz=SINGAPORE_TZ))
+                checker.is_holiday(datetime.now(tz=MALAYSIA_TZ))
             cache_hit_time = time.time() - start_time
             
             results['tests'].append({
@@ -565,7 +565,7 @@ class TimeAvailabilityTester:
             def concurrent_check():
                 try:
                     for _ in range(10):
-                        checker.is_time_available_for_scheduling(datetime.now(tz=SINGAPORE_TZ))
+                        checker.is_time_available_for_scheduling(datetime.now(tz=MALAYSIA_TZ))
                 except Exception as e:
                     errors.append(str(e))
             

@@ -20,7 +20,7 @@ def analyze_scheduled_job(job_id, start_epoch, end_epoch, machine):
     """Analyze if a scheduled job properly respects breaks"""
     from app.scheduling.time_availability import TimeAvailabilityManager
     
-    singapore_tz = pytz.timezone('Asia/Singapore')
+    malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
     checker = TimeAvailabilityManager.get_instance()
     
     start_dt = epoch_to_datetime(start_epoch)

@@ -19,7 +19,7 @@ from app.scheduling.time_availability import (
 
 def test_break_times():
     """Test if break times are being respected"""
-    singapore_tz = pytz.timezone('Asia/Singapore')
+    malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
     
     # Get time availability checker instance
     checker = TimeAvailabilityManager.get_instance()
@@ -30,7 +30,7 @@ def test_break_times():
     print("=== TESTING BREAK TIME DETECTION ===\n")
     
     # Test times throughout a typical workday
-    test_date = datetime.now(singapore_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    test_date = datetime.now(malaysia_tz).replace(hour=0, minute=0, second=0, microsecond=0)
     
     # If today is weekend, move to Monday
     while test_date.weekday() >= 5:  # Saturday = 5, Sunday = 6

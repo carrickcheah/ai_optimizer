@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 # Global reference time (scheduling start time)
 REFERENCE_TIME = None
-SINGAPORE_TZ = timezone(timedelta(hours=8))
+MALAYSIA_TZ = timezone(timedelta(hours=8))  # UTC+8 for Malaysia timezone
 
 def initialize_reference_time():
     """Initialize the reference time to current time."""
-    now = datetime.now(SINGAPORE_TZ)
+    now = datetime.now(MALAYSIA_TZ)
     logging.info(f"Reference time initialized to {now.isoformat()}")
     return now
 
@@ -67,7 +67,7 @@ def validate_timestamp(value, min_valid_timestamp=1000):
         
     # Try to convert to datetime as final validation
     try:
-        dt = datetime.fromtimestamp(value, SINGAPORE_TZ)
+        dt = datetime.fromtimestamp(value, MALAYSIA_TZ)
         # Additional check: reject very old dates
         if dt.year < 2000:
             logger.warning(f"Timestamp {value} converts to {dt.year} which is suspiciously old")
@@ -82,7 +82,7 @@ def datetime_to_epoch(dt):
         return None
     try:
         if not dt.tzinfo:
-            dt = dt.replace(tzinfo=SINGAPORE_TZ)
+            dt = dt.replace(tzinfo=MALAYSIA_TZ)
         return dt.timestamp()
     except (AttributeError, TypeError):
         logging.warning(f"Could not convert to epoch: {dt}")
@@ -99,7 +99,7 @@ def epoch_to_datetime(epoch):
         return None
         
     try:
-        return datetime.fromtimestamp(epoch, SINGAPORE_TZ)
+        return datetime.fromtimestamp(epoch, MALAYSIA_TZ)
     except (ValueError, TypeError, OSError) as e:
         logging.warning(f"Invalid epoch value: {epoch}, error: {e}")
         return None
@@ -135,7 +135,7 @@ def iso_to_datetime(iso_string):
     try:
         dt = datetime.fromisoformat(iso_string)
         if not dt.tzinfo:
-            dt = dt.replace(tzinfo=SINGAPORE_TZ)
+            dt = dt.replace(tzinfo=MALAYSIA_TZ)
         return dt
     except (ValueError, TypeError):
         logging.warning(f"Could not parse ISO datetime: {iso_string}")
@@ -147,7 +147,7 @@ def datetime_to_iso(dt):
         return None
     try:
         if not dt.tzinfo:
-            dt = dt.replace(tzinfo=SINGAPORE_TZ)
+            dt = dt.replace(tzinfo=MALAYSIA_TZ)
         return dt.isoformat()
     except (AttributeError, TypeError):
         logging.warning(f"Could not convert to ISO: {dt}")
@@ -159,7 +159,7 @@ def format_datetime_for_display(dt):
         return "N/A"
     try:
         if not dt.tzinfo:
-            dt = dt.replace(tzinfo=SINGAPORE_TZ)
+            dt = dt.replace(tzinfo=MALAYSIA_TZ)
         return dt.strftime('%Y-%m-%d %H:%M')
     except (AttributeError, TypeError):
         return "Invalid Date"
