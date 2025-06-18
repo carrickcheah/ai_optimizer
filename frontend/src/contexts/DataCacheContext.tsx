@@ -14,6 +14,7 @@ interface DataCacheContextType {
   data: CachedData;
   refreshData: () => Promise<void>;
   clearError: () => void;
+  clearCache: () => void;
 }
 
 const DataCacheContext = createContext<DataCacheContextType | undefined>(undefined);
@@ -159,6 +160,26 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     setData(prev => ({ ...prev, error: null }));
   };
 
+  const clearCache = () => {
+    console.log('🗑️ DataCacheContext: Clearing localStorage cache...');
+    try {
+      localStorage.removeItem('aiOptimizerCache');
+      setData({
+        ganttPriorityView: [],
+        ganttResourceView: [],
+        detailedSchedule: [],
+        scheduleOverview: null,
+        isLoading: false,
+        error: null,
+        lastRefresh: new Date(),
+      });
+      setHasValidCache(false);
+      console.log('✅ DataCacheContext: Cache cleared successfully');
+    } catch (error) {
+      console.warn('Failed to clear cache:', error);
+    }
+  };
+
   // Load cached data on mount
   useEffect(() => {
     const cachedData = loadDataFromLocalStorage();
@@ -174,6 +195,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     data,
     refreshData,
     clearError,
+    clearCache,
   };
 
   return (

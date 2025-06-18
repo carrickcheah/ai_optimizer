@@ -50,6 +50,134 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     }
   };
 
+  // Helper function to extract base job ID (remove _seg suffix)
+  const getBaseJobId = (taskId: string): string => {
+    // Remove _seg suffix if present (e.g., "JOB123-P1_seg0" -> "JOB123-P1")
+    const segIndex = taskId.lastIndexOf('_seg');
+    if (segIndex !== -1) {
+      return taskId.substring(0, segIndex);
+    }
+    return taskId;
+  };
+
+  // Interface for merged job data
+  interface MergedJobData {
+    baseJobId: string;
+    overallStartTime: number;
+    overallEndTime: number;
+    totalDuration: number;
+    segments: Array<{
+      start: number;
+      end: number;
+      startIso: string;
+      endIso: string;
+    }>;
+    gapPeriods: Array<{
+      start: number;
+      end: number;
+    }>;
+    originalTask: any; // Keep reference to original task data
+  }
+
+  // Helper function to create merged job bars with gap information
+  const createMergedJobBarsWithGaps = (tasks: any[]): MergedJobData[] => {
+    if (!tasks || tasks.length === 0) {
+      return [];
+    }
+
+    // Group tasks by base job ID
+    const jobGroups: Record<string, any[]> = {};
+    
+    tasks.forEach(task => {
+      const baseJobId = getBaseJobId(task.Task);
+      if (!jobGroups[baseJobId]) {
+        jobGroups[baseJobId] = [];
+      }
+      jobGroups[baseJobId].push(task);
+    });
+
+    // Create merged job data for each group
+    const mergedJobs: MergedJobData[] = [];
+    
+    Object.entries(jobGroups).forEach(([baseJobId, jobTasks]) => {
+      // Sort segments by start time
+      const sortedTasks = jobTasks.sort((a, b) => 
+        new Date(a.Start).getTime() - new Date(b.Start).getTime()
+      );
+      
+      const segments = sortedTasks.map(task => ({
+        start: new Date(task.Start).getTime(),
+        end: new Date(task.Finish).getTime(),
+        startIso: task.Start,
+        endIso: task.Finish
+      }));
+      
+      const overallStartTime = Math.min(...segments.map(s => s.start));
+      const overallEndTime = Math.max(...segments.map(s => s.end));
+      const totalDuration = overallEndTime - overallStartTime;
+      
+      // Calculate gap periods between segments
+      const gapPeriods: Array<{ start: number; end: number }> = [];
+      for (let i = 0; i < segments.length - 1; i++) {
+        const currentEnd = segments[i].end;
+        const nextStart = segments[i + 1].start;
+        
+        // If there's a gap between segments, record it
+        if (nextStart > currentEnd) {
+          gapPeriods.push({
+            start: currentEnd,
+            end: nextStart
+          });
+        }
+      }
+      
+      mergedJobs.push({
+        baseJobId,
+        overallStartTime,
+        overallEndTime,
+        totalDuration,
+        segments,
+        gapPeriods,
+        originalTask: sortedTasks[0] // Use first segment for original task data
+      });
+    });
+    
+    return mergedJobs;
+  };
+
+  // Helper function to generate Plotly shapes for job gaps
+  const generateJobGapShapes = (mergedJobs: MergedJobData[], resourceGroups: Array<{ name: string }>): any[] => {
+    const shapes: any[] = [];
+    
+    mergedJobs.forEach((job) => {
+      const resourceName = job.originalTask.Resource;
+      const yPosition = resourceGroups.findIndex(group => group.name === resourceName);
+      if (yPosition === -1) return;
+      
+      // Create shapes for gap periods (breaks/non-working time)
+      job.gapPeriods.forEach(gap => {
+        shapes.push({
+          type: 'rect',
+          xref: 'x',
+          yref: 'y',
+          x0: new Date(gap.start).toISOString(),
+          x1: new Date(gap.end).toISOString(),
+          y0: yPosition - 0.45,
+          y1: yPosition + 0.45,
+          fillcolor: 'rgba(255, 255, 255, 0.95)', // More opaque white background for gaps
+          line: {
+            color: 'rgba(150, 150, 150, 1.0)',
+            width: 2,
+            dash: 'dash'
+          },
+          layer: 'above'
+        });
+      });
+    });
+    
+    return shapes;
+  };
+
   // No automatic data loading - user must click refresh button
   
   // Log data when available  
@@ -96,23 +224,22 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
 
 
 
-  // Filter out subcontractor tasks and sort by resource, then by start time
+  // Filter out subcontractor tasks and create merged jobs
   const machineOnlyTasks = tasks.filter(task => task.Resource !== 'Subcon');
-  const sortedTasks = [...machineOnlyTasks].sort((a, b) => {
-    if (a.Resource !== b.Resource) {
-      return a.Resource.localeCompare(b.Resource);
-    }
-    return new Date(a.Start).getTime() - new Date(b.Start).getTime();
-  });
+  
+  // Create merged jobs from machine tasks
+  const mergedJobs = createMergedJobBarsWithGaps(machineOnlyTasks);
+  
+  console.log('[ResourceChart] Created merged jobs:', mergedJobs.length);
+  console.log('[ResourceChart] Sample merged job:', mergedJobs[0]);
 
   // Simple alphabetical sorting for machine resources only
   const sortMachineResources = (resources: string[]): string[] => {
     return resources.sort((a, b) => a.localeCompare(b));
   };
 
-  const resourceGroups = sortMachineResources([...new Set(sortedTasks.map(task => task.Resource))]);
+  const resourceGroups = sortMachineResources([...new Set(mergedJobs.map(job => job.originalTask.Resource))]);
   
-  console.log('[ResourceChart] Sorted tasks:', sortedTasks.length);
   console.log('[ResourceChart] Resource groups:', resourceGroups);
   
   // Buffer status color mapping
@@ -126,40 +253,75 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const plotData: Partial<PlotData>[] = [];
   
   resourceGroups.forEach(resource => {
-    const resourceTasks = sortedTasks.filter(task => task.Resource === resource);
+    const resourceJobs = mergedJobs.filter(job => job.originalTask.Resource === resource);
     
-    console.log(`[ResourceChart] Resource ${resource}: ${resourceTasks.length} tasks`);
+    console.log(`[ResourceChart] Resource ${resource}: ${resourceJobs.length} merged jobs`);
     
-    plotData.push({
-      type: 'bar',
-      name: resource, // Legend entry for this machine
-      x: resourceTasks.map(task => {
-        const start = new Date(task.Start);
-        const end = new Date(task.Finish);
-        return end.getTime() - start.getTime(); // Duration in milliseconds
-      }),
-                  y: resourceTasks.map(() => resource), // Y-value is the machine name
-      base: resourceTasks.map(task => new Date(task.Start).getTime()),
-      orientation: 'h',
-      marker: {
-        color: resourceTasks.map(task => {
-          // Use buffer status color only (ignore task.Color)
-          return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
-        })
-      },
-      text: resourceTasks.map(task => {
-        const tooltipParts = [
-          `<b>${task.Task}</b>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
-          `<b>Machine:</b> ${task.Resource}`,
-          `<b>Start:</b> ${formatDateTime(task.Start)}`,
-          `<b>End:</b> ${formatDateTime(task.Finish)}`,
-          `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
-        ];
-        return tooltipParts.join('<br>');
-      }),
-      hoverinfo: 'text',
-      showlegend: false
-    } as any);
+    // Create timeline visualization using scatter plots instead of problematic bar charts
+    resourceJobs.forEach((job, jobIndex) => {
+      const task = job.originalTask;
+      
+      // Get color for this job
+      const jobColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
+      
+      // Create tooltip text
+      const workDuration = job.segments.reduce((total, seg) => total + (seg.end - seg.start), 0) / (1000 * 3600);
+      const totalDuration = job.totalDuration / (1000 * 3600);
+      const gapDuration = totalDuration - workDuration;
+
+      const tooltipParts = [
+        `<b>${job.baseJobId}</b> <i>(Consolidated View)</i>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
+        `<b>Machine:</b> ${task.Resource}`,
+        `<b>Overall Start:</b> ${formatDateTime(new Date(job.overallStartTime).toISOString())}`,
+        `<b>Overall End:</b> ${formatDateTime(new Date(job.overallEndTime).toISOString())}`,
+        `<b>Work Duration:</b> ${workDuration.toFixed(1)} hours`,
+        `<b>Total Duration:</b> ${totalDuration.toFixed(1)} hours`
+      ];
+
+      if (gapDuration > 0) {
+        tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
+      }
+
+      if (job.segments.length > 1) {
+        tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments with gaps between`);
+        tooltipParts.push(`<b>Break Gaps:</b> ${job.gapPeriods.length} break periods (shown as empty space)`);
+      } else {
+        tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+      }
+
+      tooltipParts.push(`<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`);
+      
+      const tooltipText = tooltipParts.join('<br>');
+      
+      // Create work segments as thick lines
+      job.segments.forEach((segment, segIndex) => {
+        // Convert timestamps to local timezone without timezone offset
+        const startTime = new Date(segment.start);
+        const endTime = new Date(segment.end);
+        
+        // Format as local time without timezone offset for Plotly
+        const startLocal = new Date(startTime.getTime() - (startTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        const endLocal = new Date(endTime.getTime() - (endTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        
+        plotData.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: [startLocal, endLocal],
+          y: [resource, resource],
+          line: {
+            color: jobColor,
+            width: 20
+          },
+          text: [tooltipText, tooltipText],
+          hoverinfo: 'text',
+          showlegend: false,
+          name: `${job.baseJobId}_work_${segIndex}`
+        } as any);
+      });
+      
+      // Gap periods are shown as empty space between work segments
+      // No visual gap indicators needed - clean timeline view
+    });
   });
 
   console.log('[ResourceChart] Generated plotData:', plotData.length, 'series');
@@ -236,24 +398,24 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   };
 
   const getTimeFilteredData = () => {
-    // If timeframe is 'all' or we have no tasks, return complete data
-    if (timeRange === 'all' || sortedTasks.length === 0) {
-      console.log('[ResourceChart] Using all tasks for "all" timeframe:', sortedTasks.length);
+    // If timeframe is 'all' or we have no merged jobs, return complete data
+    if (timeRange === 'all' || mergedJobs.length === 0) {
+      console.log('[ResourceChart] Using all merged jobs for "all" timeframe:', mergedJobs.length);
       console.log('[ResourceChart] Returning plotData with', plotData.length, 'series');
       return plotData; // Return the default plotData
     }
     
     const now = new Date();
     console.log('[ResourceChart] Current timeRange:', timeRange);
-    console.log('[ResourceChart] Total tasks before filtering:', sortedTasks.length);
+    console.log('[ResourceChart] Total merged jobs before filtering:', mergedJobs.length);
     
-    // Find earliest and latest dates in the dataset to use as reference points
-    const validDates = sortedTasks
-      .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
-      .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+    // Find earliest and latest dates in the merged jobs dataset
+    const validDates = mergedJobs
+      .map(job => [new Date(job.overallStartTime), new Date(job.overallEndTime)])
+      .filter(([start, end]) => !isNaN(start.getTime()) && !isNaN(end.getTime()));
     
     if (validDates.length === 0) {
-      console.error('[ResourceChart] No valid dates found in task data');
+      console.error('[ResourceChart] No valid dates found in merged job data');
       return [];
     }
     
@@ -304,75 +466,80 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       end: endDate.toISOString()
     });
     
-    // Filter tasks to include anything that falls within our date range
+    // Filter merged jobs to include anything that falls within our date range
     const startTimestamp = startDate.getTime();
     const endTimestamp = endDate.getTime();
     
-    const filteredTasks = sortedTasks.filter(task => {
-      const taskStart = parseDateSafely(task.Start);
-      const taskEnd = parseDateSafely(task.Finish);
-      
-      // Skip tasks with invalid dates
-      if (!taskStart || !taskEnd) {
-        console.warn('[ResourceChart] Task has invalid date format:', task.Task, task.Start, task.Finish);
-        return false;
-      }
-      
-      const taskStartTime = taskStart.getTime();
-      const taskEndTime = taskEnd.getTime();
-      
-      // A task should be included if:
+    const filteredJobs = mergedJobs.filter(job => {
+      // A job should be included if:
       // 1. It starts within our date range, OR
       // 2. It ends within our date range, OR
       // 3. It spans our date range (starts before and ends after)
-      return (taskStartTime >= startTimestamp && taskStartTime <= endTimestamp) ||
-             (taskEndTime >= startTimestamp && taskEndTime <= endTimestamp) ||
-             (taskStartTime <= startTimestamp && taskEndTime >= endTimestamp);
+      return (job.overallStartTime >= startTimestamp && job.overallStartTime <= endTimestamp) ||
+             (job.overallEndTime >= startTimestamp && job.overallEndTime <= endTimestamp) ||
+             (job.overallStartTime <= startTimestamp && job.overallEndTime >= endTimestamp);
     });
     
-    console.log('[ResourceChart] Filtered tasks for', timeRange, ':', filteredTasks.length, 'of', sortedTasks.length);
+    console.log('[ResourceChart] Filtered merged jobs for', timeRange, ':', filteredJobs.length, 'of', mergedJobs.length);
     
-    // If no tasks matched, show an empty chart rather than erroring
-    if (filteredTasks.length === 0) {
-      console.warn('[ResourceChart] No tasks passed the time filter for:', timeRange);
+    // If no jobs matched, show an empty chart rather than erroring
+    if (filteredJobs.length === 0) {
+      console.warn('[ResourceChart] No merged jobs passed the time filter for:', timeRange);
       return [];
     }
     
     // Create filtered plotData
     const filteredPlotData: Partial<PlotData>[] = [];
     
-    // Get unique resources from filtered tasks
-    const filteredResourceGroups = sortMachineResources([...new Set(filteredTasks.map(task => task.Resource))]);
+    // Get unique resources from filtered jobs
+    const filteredResourceGroups = sortMachineResources([...new Set(filteredJobs.map(job => job.originalTask.Resource))]);
     
     filteredResourceGroups.forEach(resource => {
-      const resourceTasks = filteredTasks.filter(task => task.Resource === resource);
+      const resourceJobs = filteredJobs.filter(job => job.originalTask.Resource === resource);
       
-      if (resourceTasks.length > 0) {
+      if (resourceJobs.length > 0) {
         filteredPlotData.push({
           type: 'bar',
           name: resource, // Legend entry for this machine
-          x: resourceTasks.map(task => {
-            const start = new Date(task.Start);
-            const end = new Date(task.Finish);
-            return end.getTime() - start.getTime(); // Duration in milliseconds
-          }),
-          y: resourceTasks.map(() => resource), // Y-value is the machine name
-          base: resourceTasks.map(task => new Date(task.Start).getTime()),
+          x: resourceJobs.map(job => job.totalDuration), // Total duration including gaps
+          y: resourceJobs.map(() => resource), // Y-value is the machine name
+          base: resourceJobs.map(job => new Date(job.overallStartTime).toISOString()),
           orientation: 'h',
           marker: {
-            color: resourceTasks.map(task => {
+            color: resourceJobs.map(job => {
+              const task = job.originalTask;
               // Use buffer status color only (ignore task.Color)
               return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
             })
           },
-          text: resourceTasks.map(task => {
+          text: resourceJobs.map(job => {
+            const task = job.originalTask;
+            const workDuration = job.segments.reduce((total, seg) => total + (seg.end - seg.start), 0) / (1000 * 3600);
+            const totalDuration = job.totalDuration / (1000 * 3600);
+            const gapDuration = totalDuration - workDuration;
+
             const tooltipParts = [
-              `<b>${task.Task}</b>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
+              `<b>${job.baseJobId}</b> <i>(Consolidated View)</i>${task.JobFamily ? ` (${task.JobFamily})` : ''}`,
               `<b>Machine:</b> ${task.Resource}`,
-              `<b>Start:</b> ${formatDateTime(task.Start)}`,
-              `<b>End:</b> ${formatDateTime(task.Finish)}`,
-              `<b>Duration:</b> ${((new Date(task.Finish).getTime() - new Date(task.Start).getTime()) / (1000 * 3600)).toFixed(1)} hours`
+              `<b>Overall Start:</b> ${formatDateTime(new Date(job.overallStartTime).toISOString())}`,
+              `<b>Overall End:</b> ${formatDateTime(new Date(job.overallEndTime).toISOString())}`,
+              `<b>Work Duration:</b> ${workDuration.toFixed(1)} hours`,
+              `<b>Total Duration:</b> ${totalDuration.toFixed(1)} hours`
             ];
+
+            if (gapDuration > 0) {
+              tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
+            }
+
+            if (job.segments.length > 1) {
+              tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments merged into single bar`);
+              tooltipParts.push(`<b>Gaps Shown:</b> ${job.gapPeriods.length} break periods as white dashed areas`);
+            } else {
+              tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+            }
+
+            tooltipParts.push(`<b>Priority:</b> ${task.PriorityLabel || 'Unknown'}`);
+
             return tooltipParts.join('<br>');
           }),
           hoverinfo: 'text',
@@ -421,31 +588,36 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       xanchor: 'right' as const,
     },
     barmode: 'stack' as const, // Stack bars for the same machine if they overlap (though base should prevent this for distinct tasks)
-    shapes: [{
-      type: 'line',
-      x0: new Date().toISOString(),
-      y0: -0.5,
-      x1: new Date().toISOString(),
-      y1: resourceGroups.length - 0.5,
-      line: {
-        color: 'red',
-        width: 2,
-        dash: 'dash'
+    shapes: [
+      // Add gap shapes for merged jobs
+      ...generateJobGapShapes(mergedJobs, resourceGroups.map(name => ({ name }))),
+      // Current time line
+      {
+        type: 'line',
+        x0: new Date().toISOString(),
+        y0: -0.5,
+        x1: new Date().toISOString(),
+        y1: resourceGroups.length - 0.5,
+        line: {
+          color: 'red',
+          width: 2,
+          dash: 'dash'
+        }
       }
-    }]
+    ]
   };
 
-  // Calculate layout based on filtered tasks
+  // Calculate layout based on filtered merged jobs
   const calculateFilteredLayout = () => {
-    // For "all" timeframe, we can just use all tasks
+    // For "all" timeframe, we can just use all merged jobs
     if (timeRange === 'all') {
       // Get all unique resources for the y-axis
-      const allResourceGroups = sortMachineResources([...new Set(sortedTasks.map(task => task.Resource))]);
+      const allResourceGroups = sortMachineResources([...new Set(mergedJobs.map(job => job.originalTask.Resource))]);
       
       // Calculate the actual data range for 'all' timeframe
-      const allValidDates = sortedTasks
-        .map(task => [parseDateSafely(task.Start), parseDateSafely(task.Finish)])
-        .filter(([start, end]) => start !== null && end !== null) as [Date, Date][];
+      const allValidDates = mergedJobs
+        .map(job => [new Date(job.overallStartTime), new Date(job.overallEndTime)])
+        .filter(([start, end]) => !isNaN(start.getTime()) && !isNaN(end.getTime()));
       
       let xAxisConfig;
       if (allValidDates.length > 0) {
@@ -490,18 +662,23 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
                   categoryarray: sortMachineResources([...allResourceGroups]),
           autorange: 'reversed' as const,
         },
-        shapes: [{
-          type: 'line',
-          x0: new Date().toISOString(),
-          y0: -0.5,
-          x1: new Date().toISOString(),
-          y1: allResourceGroups.length - 0.5,
-          line: {
-            color: 'red',
-            width: 2,
-            dash: 'dash'
+        shapes: [
+          // Add gap shapes for merged jobs
+          ...generateJobGapShapes(mergedJobs, allResourceGroups.map(name => ({ name }))),
+          // Current time line
+          {
+            type: 'line',
+            x0: new Date().toISOString(),
+            y0: -0.5,
+            x1: new Date().toISOString(),
+            y1: allResourceGroups.length - 0.5,
+            line: {
+              color: 'red',
+              width: 2,
+              dash: 'dash'
+            }
           }
-        }]
+        ]
       };
     }
     
