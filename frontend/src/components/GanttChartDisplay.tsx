@@ -616,7 +616,13 @@ const GanttChartDisplay: React.FC = () => {
       type: 'bar',
       x: filteredJobs.map(job => job.totalDuration), // Total duration including gaps
       y: filteredJobs.map(job => job.baseJobId),
-      base: filteredJobs.map(job => new Date(job.overallStartTime).toISOString()),
+      base: filteredJobs.map(job => {
+        // Convert timestamp to local time format for Plotly
+        // When timezone is set to Asia/Kuala_Lumpur, Plotly expects local time without Z suffix
+        const startDate = new Date(job.overallStartTime);
+        const localISOString = new Date(startDate.getTime() - (startDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        return localISOString;
+      }),
       orientation: 'h',
       marker: {
         color: filteredJobs.map(job => {
@@ -787,9 +793,9 @@ const GanttChartDisplay: React.FC = () => {
         height: 700,
         shapes: [{
           type: 'line',
-          x0: new Date().toISOString(),
+          x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y0: -0.5,
-          x1: new Date().toISOString(),
+          x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y1: 10,
           line: {
             color: 'red',
@@ -845,7 +851,10 @@ const GanttChartDisplay: React.FC = () => {
     const adjustedHeight = Math.max(700, filteredJobsForLayout.length * 30 + 150);
     
     // Set the x-axis range to show our filtered window
-    const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
+    // Convert to local time format for Plotly (without Z suffix)
+    const startDateLocal = new Date(startDate.getTime() - (startDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+    const endDateLocal = new Date(endDate.getTime() - (endDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+    const xAxisRange = [startDateLocal, endDateLocal];
     
     // Configure x-axis format based on timeframe
     let xAxisConfig;
@@ -880,9 +889,9 @@ const GanttChartDisplay: React.FC = () => {
         ...gapShapes,
         {
           type: 'line',
-          x0: new Date().toISOString(),
+          x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y0: -0.5,
-          x1: new Date().toISOString(),
+          x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y1: filteredJobsForLayout.length > 0 ? filteredJobsForLayout.length - 0.5 : 10,
           line: {
             color: 'red',
@@ -1130,8 +1139,43 @@ const GanttChartDisplay: React.FC = () => {
       {!isLoading && !error && sortedMergedJobs.length > 0 && (
         <Plot
           data={getTimeFilteredData() as any}
-          layout={adjustedLayout as any}
-          config={{ responsive: true }}
+          layout={{
+            ...adjustedLayout,
+            hovermode: 'x unified',
+            hoverlabel: {
+              bgcolor: 'white',
+              bordercolor: 'lightgray',
+              font: { size: 13 }
+            },
+            xaxis: {
+              ...adjustedLayout.xaxis,
+              showspikes: true,
+              spikemode: 'across',
+              spikesnap: 'cursor',
+              showline: false,
+              showgrid: true,
+              spikecolor: 'grey',
+              spikethickness: 1,
+              spikedash: 'dash'
+            },
+            yaxis: {
+              ...adjustedLayout.yaxis,
+              showspikes: true,
+              spikemode: 'across',
+              spikesnap: 'cursor',
+              showline: false,
+              showgrid: true,
+              spikecolor: 'grey',
+              spikethickness: 1,
+              spikedash: 'dash'
+            }
+          } as any}
+          config={{ 
+            responsive: true,
+            displayModeBar: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d']
+          }}
         />
       )}
     </div>

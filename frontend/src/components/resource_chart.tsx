@@ -168,8 +168,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           type: 'rect',
           xref: 'x',
           yref: 'y',
-          x0: new Date(gap.start).toISOString(),
-          x1: new Date(gap.end).toISOString(),
+          x0: new Date(new Date(gap.start).getTime() - (new Date(gap.start).getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
+          x1: new Date(new Date(gap.end).getTime() - (new Date(gap.end).getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y0: yPosition - 0.45,
           y1: yPosition + 0.45,
           fillcolor: 'rgba(255, 255, 255, 0.95)', // More opaque white background for gaps
@@ -632,9 +632,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       // Current time line
       {
         type: 'line',
-        x0: new Date().toISOString(),
+        x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
         y0: -0.5,
-        x1: new Date().toISOString(),
+        x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
         y1: resourceGroups.length - 0.5,
         line: {
           color: 'red',
@@ -662,7 +662,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         const allTimestamps = allValidDates.flatMap(([start, end]) => [start.getTime(), end.getTime()]);
         const minDate = new Date(Math.min(...allTimestamps));
         const maxDate = new Date(Math.max(...allTimestamps));
-        const xAxisRange = [minDate.toISOString(), maxDate.toISOString()];
+        // Format dates without timezone offset for consistent display
+        const minDateLocal = new Date(minDate.getTime() - (minDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        const maxDateLocal = new Date(maxDate.getTime() - (maxDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        const xAxisRange = [minDateLocal, maxDateLocal];
         
         // Check if data spans less than 2 days, use hour format
         const timeSpanHours = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60);
@@ -706,9 +709,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           // Current time line
           {
             type: 'line',
-            x0: new Date().toISOString(),
+            x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
             y0: -0.5,
-            x1: new Date().toISOString(),
+            x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
             y1: allResourceGroups.length - 0.5,
             line: {
               color: 'red',
@@ -733,9 +736,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
         height: 700,
         shapes: [{
           type: 'line',
-          x0: new Date().toISOString(),
+          x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y0: -0.5,
-          x1: new Date().toISOString(),
+          x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y1: resourceGroups.length - 0.5,
           line: {
             color: 'red',
@@ -799,7 +802,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const filteredResourceGroups = sortMachineResources([...new Set(filteredTasksForLayout.map(task => task.Resource))]);
     
     // Set the x-axis range to show our filtered window
-    const xAxisRange = [startDate.toISOString(), endDate.toISOString()];
+    // Convert to local time format for Plotly (without Z suffix)
+    const startDateLocal = new Date(startDate.getTime() - (startDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+    const endDateLocal = new Date(endDate.getTime() - (endDate.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+    const xAxisRange = [startDateLocal, endDateLocal];
     
     // Configure x-axis format based on timeframe
     let xAxisConfig;
@@ -836,9 +842,9 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       },
       shapes: [{
         type: 'line',
-        x0: new Date().toISOString(),
+        x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
         y0: -0.5,
-        x1: new Date().toISOString(),
+        x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
         y1: filteredResourceGroups.length - 0.5,
         line: {
           color: 'red',
@@ -1072,8 +1078,43 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       {!isLoading && !error && (
         <Plot
           data={getTimeFilteredData()}
-          layout={adjustedLayout as any} // Cast to any to handle Plotly type complexities with categoryarray etc.
-          config={{ responsive: true }}
+          layout={{
+            ...adjustedLayout,
+            hovermode: 'x unified',
+            hoverlabel: {
+              bgcolor: 'white',
+              bordercolor: 'lightgray',
+              font: { size: 13 }
+            },
+            xaxis: {
+              ...adjustedLayout.xaxis,
+              showspikes: true,
+              spikemode: 'across',
+              spikesnap: 'cursor',
+              showline: false,
+              showgrid: true,
+              spikecolor: 'grey',
+              spikethickness: 1,
+              spikedash: 'dash'
+            },
+            yaxis: {
+              ...adjustedLayout.yaxis,
+              showspikes: true,
+              spikemode: 'across',
+              spikesnap: 'cursor',
+              showline: false,
+              showgrid: true,
+              spikecolor: 'grey',
+              spikethickness: 1,
+              spikedash: 'dash'
+            }
+          } as any}
+          config={{ 
+            responsive: true,
+            displayModeBar: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d']
+          }}
         />
       )}
     </div>
