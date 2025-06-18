@@ -33,13 +33,12 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const overview = data.scheduleOverview;
   
   // DEBUG: Log what data we're actually receiving
-  console.log('[ResourceChart] Component state:', {
-    isLoading,
-    error,
-    tasksLength: tasks.length,
-    hasOverview: !!overview,
-    tasksSample: tasks[0]
-  });
+  // Only log component state once when data loads
+  useEffect(() => {
+    if (!isLoading && tasks.length > 0) {
+      console.log('✅ [ResourceChart] Component ready with', tasks.length, 'tasks');
+    }
+  }, [isLoading, tasks.length]);
 
 
 
@@ -189,45 +188,33 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
 
   // No automatic data loading - user must click refresh button
   
-  // Log data when available  
+  // Log data when available (debounced to prevent spam)
   useEffect(() => {
     if (tasks.length > 0) {
-      console.log('[ResourceChart] Using cached data:', tasks.length, 'tasks');
-      
-      // Log a sample task to inspect the date format
-      console.log('[ResourceChart] Sample task from cache:', tasks[0]);
-      
-      // Calculate date range from the cached data
-      const dates = tasks.flatMap(task => [
-        new Date(task.Start),
-        new Date(task.Finish)
-      ]).filter(date => !isNaN(date.getTime()));
-      
-      if (dates.length > 0) {
-        const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
-        let maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
+      const dataLogKey = `resource-data-${tasks.length}`;
+      if ((window as any).lastResourceDataLog !== dataLogKey) {
+        console.log('📊 [ResourceChart] Using cached data:', tasks.length, 'tasks');
+        (window as any).lastResourceDataLog = dataLogKey;
         
-        console.log('[ResourceChart] Data date range:', {
-          earliest: minDate.toISOString(),
-          latest: maxDate.toISOString(),
-          span: Math.round((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
-        });
+        // Calculate date range from the cached data
+        const dates = tasks.flatMap(task => [
+          new Date(task.Start),
+          new Date(task.Finish)
+        ]).filter(date => !isNaN(date.getTime()));
         
-        // Ensure date range is at most 1 year
-        const oneYearFromMin = new Date(minDate);
-        oneYearFromMin.setFullYear(oneYearFromMin.getFullYear() + 1);
-        
-        if (maxDate > oneYearFromMin) {
-          console.log('[ResourceChart] Limiting max date to one year from min date');
-          maxDate = oneYearFromMin;
+        if (dates.length > 0) {
+          const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+          let maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
+          
+          console.log('📅 [ResourceChart] Data spans', Math.round((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)), 'days');
         }
-        
-
-      } else {
-        console.warn('[ResourceChart] No valid dates found in cached data!');
       }
     } else if (!isLoading) {
-      console.warn('[ResourceChart] No cached data available');
+      const noDataLogKey = 'resource-no-data';
+      if ((window as any).lastResourceNoDataLog !== noDataLogKey) {
+        console.warn('⚠️ [ResourceChart] No cached data available');
+        (window as any).lastResourceNoDataLog = noDataLogKey;
+      }
     }
   }, [tasks, isLoading]);
 
@@ -239,10 +226,13 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   // Create merged jobs from machine tasks
   const mergedJobs = createMergedJobBarsWithGaps(machineOnlyTasks);
   
-  console.log('[ResourceChart] Raw tasks received:', tasks.length);
-  console.log('[ResourceChart] Machine-only tasks after filter:', machineOnlyTasks.length);
-  console.log('[ResourceChart] Created merged jobs:', mergedJobs.length);
-  console.log('[ResourceChart] Sample merged job:', mergedJobs[0]);
+  // Debounce merged jobs logging to reduce console spam
+  const jobsLogKey = `merged-jobs-${mergedJobs.length}-${machineOnlyTasks.length}`;
+  if ((window as any).lastMergedJobsLogs?.[jobsLogKey] !== true) {
+    console.log('📊 [ResourceChart] Created', mergedJobs.length, 'merged machine jobs');
+    if (!(window as any).lastMergedJobsLogs) (window as any).lastMergedJobsLogs = {};
+    (window as any).lastMergedJobsLogs[jobsLogKey] = true;
+  }
 
   // Simple alphabetical sorting for machine resources only
   const sortMachineResources = (resources: string[]): string[] => {
@@ -251,7 +241,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
 
   const resourceGroups = sortMachineResources([...new Set(mergedJobs.map(job => job.originalTask.Resource))]);
   
-  console.log('[ResourceChart] Resource groups:', resourceGroups);
+  // console.log('[ResourceChart] Resource groups:', resourceGroups);
   
   // Buffer status color mapping
   const bufferStatusColors: Record<string, string> = {
@@ -266,7 +256,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   resourceGroups.forEach(resource => {
     const resourceJobs = mergedJobs.filter(job => job.originalTask.Resource === resource);
     
-    console.log(`[ResourceChart] Resource ${resource}: ${resourceJobs.length} merged jobs`);
+    // console.log(`[ResourceChart] Resource ${resource}: ${resourceJobs.length} merged jobs`);
     
     // Create timeline visualization using scatter plots instead of problematic bar charts
     resourceJobs.forEach((job, jobIndex) => {
@@ -335,23 +325,23 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     });
   });
 
-  console.log('[ResourceChart] Generated plotData:', plotData.length, 'series');
-  console.log('[ResourceChart] Sample plotData entry:', plotData[0]);
+  // console.log('[ResourceChart] Generated plotData:', plotData.length, 'series');
+  // console.log('[ResourceChart] Sample plotData entry:', plotData[0]);
   
   // Debug the actual chart data values
   if (plotData.length > 0 && plotData[0]) {
-    console.log('[ResourceChart] First series x values (durations):', plotData[0].x);
-    console.log('[ResourceChart] First series y values (resources):', plotData[0].y);
-    console.log('[ResourceChart] First series base values (start times):', (plotData[0] as any).base);
+    // console.log('[ResourceChart] First series x values (durations):', plotData[0].x);
+    // console.log('[ResourceChart] First series y values (resources):', plotData[0].y);
+    // console.log('[ResourceChart] First series base values (start times):', (plotData[0] as any).base);
   }
 
   const chartTitle = title || 'Production Planning System (by Resource)';
   
   const handleTimeRangeChange = (range: string) => {
-    console.log('[ResourceChart] Time range changing from', timeRange, 'to', range);
+    // console.log('[ResourceChart] Time range changing from', timeRange, 'to', range);
     if (range !== timeRange) {
       setTimeRange(range);
-      console.log('[ResourceChart] Time range state updated to:', range);
+      // console.log('[ResourceChart] Time range state updated to:', range);
       // No loading state toggle to prevent blinking
     }
   };
@@ -411,31 +401,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   };
 
   const getTimeFilteredData = () => {
-    console.log('[ResourceChart] getTimeFilteredData called with timeRange:', timeRange);
-    
-    // TEMPORARY DEBUG: Always return simple test data for non-'all' timeframes
-    if (timeRange !== 'all') {
-      console.log('[ResourceChart] DEBUG: Returning test scatter plot data for timeframe:', timeRange);
-      return [{
-        type: 'scatter',
-        mode: 'lines',
-        x: ['2025-06-23T09:00:00', '2025-06-23T10:00:00'],
-        y: ['PP01-110T-C', 'PP01-110T-C'],
-        line: { color: 'red', width: 10 },
-        name: 'test_trace'
-      }];
-    }
+    // console.log('[ResourceChart] getTimeFilteredData called with timeRange:', timeRange);
     
     // If timeframe is 'all' or we have no merged jobs, return complete data
     if (timeRange === 'all' || mergedJobs.length === 0) {
-      console.log('[ResourceChart] Using all merged jobs for "all" timeframe:', mergedJobs.length);
-      console.log('[ResourceChart] Returning plotData with', plotData.length, 'series');
+      // console.log('[ResourceChart] Using all merged jobs for "all" timeframe:', mergedJobs.length);
+      // console.log('[ResourceChart] Returning plotData with', plotData.length, 'series');
       return plotData; // Return the default plotData
     }
     
     const now = new Date();
-    console.log('[ResourceChart] Current timeRange:', timeRange);
-    console.log('[ResourceChart] Total merged jobs before filtering:', mergedJobs.length);
+    // console.log('[ResourceChart] Current timeRange:', timeRange);
+    // console.log('[ResourceChart] Total merged jobs before filtering:', mergedJobs.length);
     
     // Find earliest and latest dates in the merged jobs dataset
     const validDates = mergedJobs
@@ -452,11 +429,11 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     const earliestDate = new Date(Math.min(...allTimestamps));
     const latestDate = new Date(Math.max(...allTimestamps));
     
-    console.log('[ResourceChart] Dataset date range:', {
-      earliest: earliestDate.toISOString(),
-      latest: latestDate.toISOString(),
-      span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
-    });
+    // console.log('[ResourceChart] Dataset date range:', {
+    //   earliest: earliestDate.toISOString(),
+    //   latest: latestDate.toISOString(),
+    //   span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+    // });
     
     // Always filter forward from today's date for time range selections
     // Set startDate to beginning of today (00:00:00) to capture jobs that started earlier today
@@ -464,7 +441,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     startDate.setHours(0, 0, 0, 0); // Start from beginning of today
     let endDate = new Date(now);
     
-    console.log('[ResourceChart] Filtering forward from today for timeRange:', timeRange);
+    // console.log('[ResourceChart] Filtering forward from today for timeRange:', timeRange);
     
     // Set end date based on timeframe (forward from today)
     if (timeRange === '1d') {
@@ -491,10 +468,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       endDate.setMonth(now.getMonth() + 3);
     }
     
-    console.log('[ResourceChart] Filter date range:', {
-      start: startDate.toISOString(),
-      end: endDate.toISOString()
-    });
+    // console.log('[ResourceChart] Filter date range:', {
+    //   start: startDate.toISOString(),
+    //   end: endDate.toISOString()
+    // });
     
     // Filter merged jobs to include anything that falls within our date range
     const startTimestamp = startDate.getTime();
@@ -510,7 +487,15 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
              (job.overallStartTime <= startTimestamp && job.overallEndTime >= endTimestamp);
     });
     
-    console.log('[ResourceChart] Filtered merged jobs for', timeRange, ':', filteredJobs.length, 'of', mergedJobs.length);
+    // Only log significant filter changes (debounce duplicates)
+    if (filteredJobs.length < mergedJobs.length) {
+      const logKey = `resource-filter-${timeRange}-${filteredJobs.length}-${mergedJobs.length}`;
+      if ((window as any).lastResourceFilterLogs?.[logKey] !== true) {
+        console.log('🔍 [ResourceChart] Filtered to', filteredJobs.length, 'of', mergedJobs.length, 'jobs for', timeRange);
+        if (!(window as any).lastResourceFilterLogs) (window as any).lastResourceFilterLogs = {};
+        (window as any).lastResourceFilterLogs[logKey] = true;
+      }
+    }
     
     // If no jobs matched, show an empty chart rather than erroring
     if (filteredJobs.length === 0) {
@@ -593,9 +578,14 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       });
     });
     
-    console.log('[ResourceChart] Created filtered scatter plot data:', filteredPlotData.length, 'traces');
-    console.log('[ResourceChart] Filtered jobs used:', filteredJobs.length);
-    console.log('[ResourceChart] Sample filtered trace:', filteredPlotData[0]);
+    // Debounce trace generation log
+    const traceLogKey = `resource-traces-${timeRange}-${filteredPlotData.length}-${filteredJobs.length}`;
+    if ((window as any).lastResourceTraceLogs?.[traceLogKey] !== true) {
+      console.log('🎯 [ResourceChart] Generated', filteredPlotData.length, 'scatter traces for', timeRange);
+      if (!(window as any).lastResourceTraceLogs) (window as any).lastResourceTraceLogs = {};
+      (window as any).lastResourceTraceLogs[traceLogKey] = true;
+    }
+    // console.log('[ResourceChart] Sample filtered trace:', filteredPlotData[0]);
     return filteredPlotData;
   };
 

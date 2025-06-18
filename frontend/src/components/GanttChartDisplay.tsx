@@ -146,7 +146,7 @@ const generateJobGapShapes = (mergedJobs: MergedJobData[], yAxisLabels: string[]
         y1: yPosition + 0.45,
         fillcolor: 'rgba(255, 255, 255, 0.95)', // More opaque white background for gaps
         line: {
-          color: 'rgba(150, 150, 150, 1.0)',
+          color: '#fbfbfb',
           width: 2,
           dash: 'dash'
         },
@@ -183,6 +183,13 @@ const GanttChartDisplay: React.FC = () => {
   const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
   const [timeRange, setTimeRange] = useState<string>('all');
   const [chartTitle] = useState<string>('Production Planning System');
+  
+  // DEBUG: Check working hours config (only log once when config loads)
+  useEffect(() => {
+    if (workingHoursConfig && !workingHoursLoading) {
+      console.log('[GanttChart] ✅ Working hours config loaded successfully');
+    }
+  }, [workingHoursConfig, workingHoursLoading]);
 
   // Use cached data instead of local state
   const tasks = data.ganttPriorityView;
@@ -232,7 +239,7 @@ const GanttChartDisplay: React.FC = () => {
   const createTaskSegmentsWithBreaks = (task: any) => {
     // If working hours config is not available, return original task without segmentation
     if (!workingHoursConfig) {
-      console.warn('Working hours configuration not available, using original task without segmentation');
+      // Don't log warning - this is normal during initial load
       return [task];
     }
 
@@ -428,7 +435,7 @@ const GanttChartDisplay: React.FC = () => {
   const getTimeFilteredData = () => {
     // Use merged jobs for all timeframes to show consolidated view
     if (timeRange === 'all' || sortedMergedJobs.length === 0) {
-      console.log('Using all merged jobs for "all" timeframe:', sortedMergedJobs.length);
+      // console.log('Using all merged jobs for "all" timeframe:', sortedMergedJobs.length);
       
       // Create timeline visualization using scatter plots instead of problematic bar charts
       const timelineTraces: any[] = [];
@@ -516,8 +523,8 @@ const GanttChartDisplay: React.FC = () => {
     }
     
     const now = new Date();
-    console.log('Current timeRange:', timeRange);
-    console.log('Total merged jobs before filtering:', sortedMergedJobs.length);
+    // console.log('Current timeRange:', timeRange);
+    // console.log('Total merged jobs before filtering:', sortedMergedJobs.length);
     
     // Find earliest and latest dates in the merged jobs dataset
     const validDates = sortedMergedJobs
@@ -534,17 +541,17 @@ const GanttChartDisplay: React.FC = () => {
     const earliestDate = new Date(Math.min(...allTimestamps));
     const latestDate = new Date(Math.max(...allTimestamps));
     
-    console.log('Dataset date range:', {
-      earliest: earliestDate.toISOString(),
-      latest: latestDate.toISOString(),
-      span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
-    });
+    // console.log('Dataset date range:', {
+    //   earliest: earliestDate.toISOString(),
+    //   latest: latestDate.toISOString(),
+    //   span: Math.round((latestDate.getTime() - earliestDate.getTime()) / (1000 * 60 * 60 * 24)) + ' days'
+    // });
     
     // Always filter forward from today's date for time range selections
     let startDate = new Date(now);
     let endDate = new Date(now);
     
-    console.log('Filtering forward from today for timeRange:', timeRange);
+    // console.log('Filtering forward from today for timeRange:', timeRange);
     
     // Set end date based on timeframe (forward from today)
     if (timeRange === '1d') {
@@ -571,10 +578,10 @@ const GanttChartDisplay: React.FC = () => {
       endDate.setMonth(now.getMonth() + 3);
     }
     
-    console.log('Filter date range:', {
-      start: startDate.toISOString(),
-      end: endDate.toISOString()
-    });
+    // console.log('Filter date range:', {
+    //   start: startDate.toISOString(),
+    //   end: endDate.toISOString()
+    // });
     
     // Filter merged jobs to include anything that falls within our date range
     const startTimestamp = startDate.getTime();
@@ -590,7 +597,14 @@ const GanttChartDisplay: React.FC = () => {
              (job.overallStartTime <= startTimestamp && job.overallEndTime >= endTimestamp);
     });
     
-    console.log('Filtered merged jobs for', timeRange, ':', filteredJobs.length, 'of', sortedMergedJobs.length);
+    // Only log when filter actually changes results (debounce duplicates)
+    if (filteredJobs.length !== sortedMergedJobs.length) {
+      const logKey = `${timeRange}-${filteredJobs.length}`;
+      if (window.lastFilterLog !== logKey) {
+        console.log('📊 [GanttChart] Filtered to', filteredJobs.length, 'of', sortedMergedJobs.length, 'jobs for', timeRange);
+        (window as any).lastFilterLog = logKey;
+      }
+    }
     
     // If no jobs matched, show an empty chart rather than erroring
     if (filteredJobs.length === 0) {
@@ -751,7 +765,7 @@ const GanttChartDisplay: React.FC = () => {
             x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
             y1: sortedMergedJobs.length > 0 ? sortedMergedJobs.length - 0.5 : 10,
             line: {
-              color: 'red',
+              color: '#fbfbfb',
               width: 2,
               dash: 'dash'
             }
