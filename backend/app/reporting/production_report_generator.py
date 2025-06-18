@@ -107,9 +107,7 @@ class ReportConfig:
                 invalid_vars.append(f"START_DATE_TOLERANCE_HOURS={start_tolerance}")
                 start_tolerance = 1.0
         
-        timezone_str = get_required_str_env('TIMEZONE') or 'Asia/Kuala_Lumpur'
-        if timezone_str == 'Asia/Kuala_Lumpur' and os.getenv('TIMEZONE') is None:
-            logger.warning("TIMEZONE not set in .env, using 'Asia/Kuala_Lumpur'")
+        timezone_str = 'Asia/Kuala_Lumpur'  # Hardcoded timezone
         
         # Check for critical errors
         if missing_vars:

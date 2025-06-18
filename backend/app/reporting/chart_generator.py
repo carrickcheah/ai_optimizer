@@ -83,18 +83,10 @@ class ChartConfig:
                 return None
         
         # Load required configuration
-        timezone_str = get_required_str_env('TIMEZONE')
+        timezone_str = 'Asia/Kuala_Lumpur'  # Hardcoded timezone
         buffer_critical = get_required_float_env('CHART_BUFFER_CRITICAL_HOURS')
         buffer_warning = get_required_float_env('CHART_BUFFER_WARNING_HOURS')
         buffer_caution = get_required_float_env('CHART_BUFFER_CAUTION_HOURS')
-        
-        # Validate timezone
-        if timezone_str:
-            try:
-                pytz.timezone(timezone_str)
-            except pytz.exceptions.UnknownTimeZoneError:
-                invalid_vars.append(f"TIMEZONE={timezone_str}")
-                timezone_str = None
         
         # Check for critical errors
         if missing_vars:
