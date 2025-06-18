@@ -157,13 +157,18 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const generateJobGapShapes = (mergedJobs: MergedJobData[], resourceGroups: string[]): any[] => {
     const shapes: any[] = [];
     
-    mergedJobs.forEach((job) => {
+    mergedJobs.forEach((job, jobIndex) => {
       const resourceName = job.originalTask.Resource;
       const yPosition = resourceGroups.indexOf(resourceName);
       if (yPosition === -1) return;
       
       // Create shapes for gap periods (breaks/non-working time)
-      job.gapPeriods.forEach(gap => {
+      job.gapPeriods.forEach((gap, gapIndex) => {
+        const gapDurationHours = (gap.end - gap.start) / (1000 * 60 * 60);
+        const gapCenterX = new Date((gap.start + gap.end) / 2);
+        const gapCenterXLocal = new Date(gapCenterX.getTime() - (gapCenterX.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+        
+        // Main gap rectangle with enhanced visibility
         shapes.push({
           type: 'rect',
           xref: 'x',
@@ -172,14 +177,90 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
           x1: new Date(new Date(gap.end).getTime() - (new Date(gap.end).getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
           y0: yPosition - 0.45,
           y1: yPosition + 0.45,
-          fillcolor: 'rgba(255, 255, 255, 0.95)', // More opaque white background for gaps
+          fillcolor: 'rgba(255, 240, 240, 0.9)', // Light pink background for better visibility
           line: {
-            color: '#fbfbfb',
-            width: 2,
-            dash: 'dash'
+            color: '#ff4444', // Bright red border
+            width: 3, // Thicker border
+            dash: 'dashdot' // More prominent dash pattern
           },
           layer: 'above'
         });
+        
+        // Add diagonal stripes pattern for gaps > 30 minutes
+        if (gapDurationHours >= 0.5) {
+          // Add diagonal line pattern across the gap
+          const x0 = new Date(new Date(gap.start).getTime() - (new Date(gap.start).getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+          const x1 = new Date(new Date(gap.end).getTime() - (new Date(gap.end).getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+          
+          // Add multiple diagonal lines for stripe effect
+          for (let i = 0; i < 3; i++) {
+            shapes.push({
+              type: 'line',
+              xref: 'x',
+              yref: 'y',
+              x0: x0,
+              x1: x1,
+              y0: yPosition - 0.3 + (i * 0.3),
+              y1: yPosition + 0.3 - (i * 0.3),
+              line: {
+                color: 'rgba(255, 0, 0, 0.6)',
+                width: 2,
+                dash: 'solid'
+              },
+              layer: 'above'
+            });
+          }
+        }
+        
+        // Add prominent circle indicator for gaps >= 1 hour
+        if (gapDurationHours >= 1) {
+          shapes.push({
+            type: 'circle',
+            xref: 'x',
+            yref: 'y',
+            x0: gapCenterXLocal,
+            x1: gapCenterXLocal,
+            y0: yPosition - 0.15,
+            y1: yPosition + 0.15,
+            fillcolor: 'rgba(255, 0, 0, 0.9)', // Bright red fill
+            line: { color: 'rgba(150, 0, 0, 1)', width: 3 }, // Dark red border
+            layer: 'above'
+          });
+        }
+        
+        // Add small triangle indicators for shorter gaps (15min - 1hr)
+        else if (gapDurationHours >= 0.25) {
+          // Create triangle shape using path
+          const triangleSize = 0.08;
+          shapes.push({
+            type: 'path',
+            path: `M ${gapCenterXLocal} ${yPosition - triangleSize} L ${gapCenterXLocal} ${yPosition + triangleSize} L ${gapCenterXLocal} ${yPosition} Z`,
+            xref: 'x',
+            yref: 'y',
+            fillcolor: 'rgba(255, 100, 0, 0.9)', // Orange fill
+            line: { color: 'rgba(200, 80, 0, 1)', width: 2 },
+            layer: 'above'
+          });
+        }
+        
+        // Add text label for significant gaps (> 2 hours)
+        if (gapDurationHours >= 2) {
+          shapes.push({
+            type: 'text',
+            xref: 'x',
+            yref: 'y',
+            x: gapCenterXLocal,
+            y: yPosition + 0.2,
+            text: `${gapDurationHours.toFixed(1)}h`,
+            font: { 
+              color: 'rgba(150, 0, 0, 1)', 
+              size: 10, 
+              family: 'Arial Black'
+            },
+            layer: 'above',
+            showarrow: false
+          });
+        }
       });
     });
     
