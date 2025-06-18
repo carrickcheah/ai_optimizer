@@ -669,7 +669,7 @@ const GanttChartDisplay: React.FC = () => {
       gridwidth: 1,
       tickformat: '%b %d',
       dtick: 86400000,
-      tickangle: -45,
+      tickangle: -90,
       automargin: true,
       // Force timezone to be consistent with backend (Kuala Lumpur)
       timezone: 'Asia/Kuala_Lumpur',
