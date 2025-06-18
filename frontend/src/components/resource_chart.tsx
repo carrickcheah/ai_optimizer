@@ -24,7 +24,7 @@ interface ResourceChartProps {
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const { data } = useDataCache();
-  const [timeRange, setTimeRange] = useState<string>('all');
+  const [timeRange, setTimeRange] = useState<string>('5d');
 
   // Use cached data instead of local state
   const tasks: TaskData[] = data.ganttResourceView;

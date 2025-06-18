@@ -36,7 +36,7 @@ const DashboardCard: React.FC<DashboardCardProps> = ({
 };
 
 const Dashboard: React.FC = () => {
-  const { refreshData, clearError } = useDataCache();
+  const { refreshData, clearError, clearCache } = useDataCache();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshLogs, setRefreshLogs] = useState<string[]>([]);
 
@@ -52,6 +52,11 @@ const Dashboard: React.FC = () => {
     clearError();
     
     try {
+      // Clear cache first
+      addLog('🗑️ Clearing cache...');
+      clearCache();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
       // Fetching schedule data with animated dots
       addLog('📡 Fetching schedule data...');
 

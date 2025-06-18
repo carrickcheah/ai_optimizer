@@ -179,9 +179,9 @@ const formatDateTime = (dateTimeString: string): string => {
 
 
 const GanttChartDisplay: React.FC = () => {
-  const { data, clearCache, refreshData } = useDataCache();
+  const { data, refreshData } = useDataCache();
   const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
-  const [timeRange, setTimeRange] = useState<string>('all');
+  const [timeRange, setTimeRange] = useState<string>('5d');
   const [chartTitle] = useState<string>('Production Planning System');
   
   // DEBUG: Check working hours config (only log once when config loads)
@@ -976,27 +976,6 @@ const GanttChartDisplay: React.FC = () => {
             onClick={() => handleTimeRangeChange('all')}
             style={{width: '55px'}}
           >all</button>
-        </div>
-        <div style={{marginLeft: '20px'}}>
-          <button 
-            className="flat-inactive"
-            onClick={async () => {
-              clearCache();
-              await refreshData();
-            }}
-            style={{
-              backgroundColor: '#dc3545',
-              color: 'white',
-              border: 'none',
-              padding: '8px 12px',
-              borderRadius: '4px',
-              fontSize: '12px',
-              cursor: 'pointer'
-            }}
-            title="Clear cache and reload fresh data"
-          >
-            🗑️ Clear Cache
-          </button>
         </div>
       </div>
       
