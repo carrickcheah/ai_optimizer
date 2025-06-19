@@ -130,7 +130,14 @@ const generateJobGapShapes = (mergedJobs: MergedJobData[], yAxisLabels: string[]
     const yPosition = yAxisLabels.indexOf(job.baseJobId);
     if (yPosition === -1) return;
     
-    // Create shapes for gap periods (breaks/non-working time)
+    // CRITICAL FIX: Skip gap shapes for subcontractor jobs - they should display as solid grey bars
+    const task = job.originalTask;
+    if (task && (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work')) {
+      // No gap shapes for subcontractor jobs - they display as single solid light grey bars
+      return;
+    }
+    
+    // Create shapes for gap periods (breaks/non-working time) only for machine jobs
     job.gapPeriods.forEach(gap => {
       shapes.push({
         type: 'rect',
@@ -198,7 +205,12 @@ const GanttChartDisplay: React.FC = () => {
     'Late': '#f44336',      // Red
     'Warning': '#ff9800',   // Orange
     'Caution': '#9c27b0',   // Purple
-    'OK': '#7FFF00'         // Bright lime green
+    'OK': '#7FFF00'         // Bright lime green (restored per user preference)
+  };
+
+  // Color normalization function (currently no normalization needed)
+  const normalizeColor = (color: string): string => {
+    return color; // Return color as-is
   };
 
   // No automatic data loading - user must click refresh button
@@ -442,15 +454,17 @@ const GanttChartDisplay: React.FC = () => {
         
         // Get color for this job
         let jobColor;
-        if (task.Resource === 'Subcon') {
-          const baseColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
-          jobColor = baseColor ? `${baseColor}80` : '#888888';
+        if (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') {
+          // All subcontractor jobs show as solid light grey - no buffer status colors
+          jobColor = '#dadada';
         } else {
-          jobColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
+          // Use API color if available, otherwise buffer status color, with normalization
+          const apiColor = task.Color || (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
+          jobColor = normalizeColor(apiColor);
         }
         
         // Create tooltip text
-        const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
+        const resourceType = (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') ? '(Subcontractor)' : '(Machine)';
         const workDuration = job.segments.reduce((total, seg) => total + (seg.end - seg.start), 0) / (1000 * 3600);
         const totalDuration = job.totalDuration / (1000 * 3600);
         const gapDuration = totalDuration - workDuration;
@@ -463,15 +477,23 @@ const GanttChartDisplay: React.FC = () => {
           `<b>Total Duration:</b> ${totalDuration.toFixed(1)} hours`,
         ];
         
-        if (gapDuration > 0) {
-          tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
-        }
-        
-        if (job.segments.length > 1) {
-          tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments with gaps between`);
-          tooltipParts.push(`<b>Break Gaps:</b> ${job.gapPeriods.length} break periods (shown as empty space)`);
+        // Show gap information differently for subcontractor vs machine jobs
+        if (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') {
+          // Subcontractor jobs show as single solid bar regardless of internal segments
+          tooltipParts.push(`<b>Work Periods:</b> Single solid bar (subcontractor work)`);
+          tooltipParts.push(`<b>Display:</b> No gaps shown - solid grey bar`);
         } else {
-          tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+          // Machine jobs show gap details
+          if (gapDuration > 0) {
+            tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
+          }
+          
+          if (job.segments.length > 1) {
+            tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments with gaps between`);
+            tooltipParts.push(`<b>Break Gaps:</b> ${job.gapPeriods.length} break periods (shown as empty space)`);
+          } else {
+            tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+          }
         }
         
         tooltipParts.push(
@@ -485,13 +507,12 @@ const GanttChartDisplay: React.FC = () => {
         
         const tooltipText = tooltipParts.join('<br>');
         
-        // Create work segments as thick lines
-        job.segments.forEach((segment, segIndex) => {
-          // Convert timestamps to local timezone without timezone offset
-          const startTime = new Date(segment.start);
-          const endTime = new Date(segment.end);
+        // For subcontractor jobs, create single solid bar spanning entire duration
+        if (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') {
+          // Single grey bar for entire subcontractor job duration
+          const startTime = new Date(job.overallStartTime);
+          const endTime = new Date(job.overallEndTime);
           
-          // Format as local time without timezone offset for Plotly
           const startLocal = new Date(startTime.getTime() - (startTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
           const endLocal = new Date(endTime.getTime() - (endTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
           
@@ -507,9 +528,35 @@ const GanttChartDisplay: React.FC = () => {
             text: [tooltipText, tooltipText],
             hoverinfo: 'text',
             showlegend: false,
-            name: `${job.baseJobId}_work_${segIndex}`
+            name: `${job.baseJobId}_subcon_single`
           });
-        });
+        } else {
+          // Create work segments as thick lines for machine jobs
+          job.segments.forEach((segment, segIndex) => {
+            // Convert timestamps to local timezone without timezone offset
+            const startTime = new Date(segment.start);
+            const endTime = new Date(segment.end);
+            
+            // Format as local time without timezone offset for Plotly
+            const startLocal = new Date(startTime.getTime() - (startTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+            const endLocal = new Date(endTime.getTime() - (endTime.getTimezoneOffset() * 60000)).toISOString().slice(0, -1);
+            
+            timelineTraces.push({
+              type: 'scatter',
+              mode: 'lines',
+              x: [startLocal, endLocal],
+              y: [job.baseJobId, job.baseJobId],
+              line: {
+                color: jobColor,
+                width: 20
+              },
+              text: [tooltipText, tooltipText],
+              hoverinfo: 'text',
+              showlegend: false,
+              name: `${job.baseJobId}_work_${segIndex}`
+            });
+          });
+        }
         
         // Gap periods are shown as empty space between work segments
         // No visual gap indicators needed - clean timeline view
@@ -628,18 +675,18 @@ const GanttChartDisplay: React.FC = () => {
       marker: {
         color: reversedJobs.map(job => {
           const task = job.originalTask;
-          // For subcontractor tasks, use a distinct pattern by modifying the color
-          if (task.Resource === 'Subcon') {
-            const baseColor = (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]);
-            // Use a lighter/striped version for subcon tasks or a distinct color scheme
-            return baseColor ? `${baseColor}80` : '#888888'; // Add transparency or use grey
+          // All subcontractor jobs show as solid grey - no buffer status colors or gaps
+          if (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') {
+            return '#dadada'; // Solid light grey for all subcontractor jobs
           }
-          return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
+          // Use API color if available, otherwise buffer status color, with normalization
+          const apiColor = task.Color || (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
+          return normalizeColor(apiColor);
         })
       },
       text: reversedJobs.map(job => {
         const task = job.originalTask;
-        const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
+        const resourceType = (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') ? '(Subcontractor)' : '(Machine)';
         const workDuration = job.segments.reduce((total, seg) => total + (seg.end - seg.start), 0) / (1000 * 3600);
         const totalDuration = job.totalDuration / (1000 * 3600);
         const gapDuration = totalDuration - workDuration;
@@ -652,15 +699,23 @@ const GanttChartDisplay: React.FC = () => {
           `<b>Total Duration:</b> ${totalDuration.toFixed(1)} hours`,
         ];
         
-        if (gapDuration > 0) {
-          tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
-        }
-        
-        if (job.segments.length > 1) {
-          tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments merged into single bar`);
-          tooltipParts.push(`<b>Gaps Shown:</b> ${job.gapPeriods.length} break periods as white dashed areas`);
+        // Show gap information differently for subcontractor vs machine jobs
+        if (task.Resource === 'Subcon' || task.Resource === 'Subcontractor' || task.Resource === 'Subcontractor Work') {
+          // Subcontractor jobs show as single solid grey bar regardless of internal segments
+          tooltipParts.push(`<b>Work Periods:</b> Single solid grey bar (subcontractor work)`);
+          tooltipParts.push(`<b>Display:</b> No gaps or break periods shown`);
         } else {
-          tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+          // Machine jobs show gap details
+          if (gapDuration > 0) {
+            tooltipParts.push(`<b>Break Time:</b> ${gapDuration.toFixed(1)} hours (${((gapDuration/totalDuration)*100).toFixed(1)}%)`);
+          }
+          
+          if (job.segments.length > 1) {
+            tooltipParts.push(`<b>Work Periods:</b> ${job.segments.length} segments merged into single bar`);
+            tooltipParts.push(`<b>Gaps Shown:</b> ${job.gapPeriods.length} break periods as white dashed areas`);
+          } else {
+            tooltipParts.push(`<b>Work Periods:</b> Single continuous work period`);
+          }
         }
         
         tooltipParts.push(

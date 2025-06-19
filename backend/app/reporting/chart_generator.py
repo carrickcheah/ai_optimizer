@@ -154,7 +154,7 @@ BUFFER_COLORS = {
     'Critical': '#ff5722',  # Deep orange
     'Warning': '#ff9800',   # Orange
     'Caution': '#9c27b0',   # Purple
-    'OK': '#7FFF00'         # Bright lime green
+    'OK': '#7FFF00'         # Bright lime green (restored per user preference)
 }
 
 def safe_timestamp_to_datetime(timestamp: Union[int, float, str]) -> Optional[datetime]:
@@ -497,7 +497,7 @@ def prepare_gantt_data_priority_view(schedule: Dict[str, Any], jobs_input_data: 
     
             # Use special display for subcontractor jobs in priority view
             if str(machine) == 'SUBCONTRACTOR':
-                color = '#4CAF50'  # Green for subcontractor work
+                color = '#dadada'  # Light grey for subcontractor work - matches frontend expectation
                 resource_display = 'Subcontractor Work'
                 buffer_label = 'Subcontractor'
             else:
@@ -612,7 +612,7 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
                 
             # Use special color for subcontractor jobs
             if str(machine) == 'SUBCONTRACTOR':
-                color = '#4CAF50'  # Green for subcontractor work
+                color = '#dadada'  # Light grey for subcontractor work - matches frontend expectation
                 resource_label = 'Subcontractor Work'
             else:
                 color = BUFFER_COLORS.get(buffer_status, '#808080')
