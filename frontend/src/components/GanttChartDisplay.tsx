@@ -8,27 +8,23 @@ import './GanttChartDisplay.css'; // Import the CSS file
 
 // Helper function to parse task string into job group and process number
 const getTaskParts = (taskString: string): { jobGroup: string; processNum: number } => {
-  const lastPIndex = taskString.lastIndexOf('-P');
+  // Match the backend's fraction pattern: extract process number from formats like "CP08-552-3/7"
+  // Pattern matches: digit(s) followed by "/" and more digit(s) at the end of string
+  const fractionPattern = /(\d+)\/\d+$/;
+  const match = taskString.match(fractionPattern);
   
-  // If '-P' is not found, or it's not followed by a number, treat the whole string as the job group
-  // and assign a default process number (e.g., 0 or a high number if unparsed should go last).
-  // For "P1 first" (visually top), unparsable ones could be at the bottom of their group if processNum is high.
-  // Or top if processNum is low (e.g. -1 or 0). Let's use 0 for now.
-  if (lastPIndex === -1 || lastPIndex >= taskString.length - 2) {
-    // console.warn(`[GanttChart] Task string "${taskString}" does not follow expected 'JOB-Pxx' format.`);
-    return { jobGroup: taskString, processNum: 0 }; // Default if parsing fails
-  }
-
-  const jobGroup = taskString.substring(0, lastPIndex);
-  const processNumStr = taskString.substring(lastPIndex + 2);
-  const processNum = parseInt(processNumStr, 10);
-
-  if (isNaN(processNum)) {
-    // console.warn(`[GanttChart] Could not parse process number from "${processNumStr}" in task "${taskString}".`);
-    return { jobGroup: jobGroup, processNum: 0 }; // Default if number parsing fails
+  if (match) {
+    // Extract the numerator as the process number (e.g., "3" from "3/7")
+    const processNum = parseInt(match[1], 10);
+    // Job group is everything before the fraction (e.g., "JOTP25040202_CP08-552" from "JOTP25040202_CP08-552-3/7")
+    const jobGroup = taskString.substring(0, taskString.lastIndexOf('-' + match[0]));
+    
+    return { jobGroup, processNum };
   }
   
-  return { jobGroup, processNum };
+  // Fallback: if no fraction pattern found, treat whole string as job group with process number 0
+  // This handles edge cases or jobs without process numbers
+  return { jobGroup: taskString, processNum: 0 };
 };
 
 // Helper function to extract base job ID from segmented task names
@@ -181,7 +177,7 @@ const formatDateTime = (dateTimeString: string): string => {
 const GanttChartDisplay: React.FC = () => {
   const { data, refreshData } = useDataCache();
   const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
-  const [timeRange, setTimeRange] = useState<string>('5d');
+  const [timeRange, setTimeRange] = useState<string>('7d');
   const [chartTitle] = useState<string>('Production Planning System');
   
   // DEBUG: Check working hours config (only log once when config loads)
@@ -394,12 +390,10 @@ const GanttChartDisplay: React.FC = () => {
       return jobCompare;
     }
 
-    // If jobGroups are the same, sort by processNum descending
-    // This makes P1 (smaller number) appear visually above P2 (larger number)
-    // because Plotly puts higher index items at the top for horizontal bars.
-    // So, if P1 should be "first" (top), it needs a higher effective sort order for this part.
-    // partsB.processNum - partsA.processNum: if B(P1) num is 1, A(P2) num is 2 -> 1-2 = -1. A comes before B (P2, P1). This is correct.
-    return partsB.processNum - partsA.processNum;
+    // If jobGroups are the same, sort by processNum ascending
+    // This ensures jobs follow their natural sequence: P1, P2, P3, P4, P5, P6...
+    // P1 (processNum=1) will come before P2 (processNum=2), and so on
+    return partsA.processNum - partsB.processNum;
   });
   
   // For backward compatibility, also keep the segmented tasks sorted (some functions may still need this)
@@ -412,7 +406,7 @@ const GanttChartDisplay: React.FC = () => {
       return jobCompare;
     }
 
-    return partsB.processNum - partsA.processNum;
+    return partsA.processNum - partsB.processNum;
   });
 
 
@@ -435,12 +429,14 @@ const GanttChartDisplay: React.FC = () => {
   const getTimeFilteredData = () => {
     // Use merged jobs for all timeframes to show consolidated view
     if (timeRange === 'all' || sortedMergedJobs.length === 0) {
-      // console.log('Using all merged jobs for "all" timeframe:', sortedMergedJobs.length);
       
       // Create timeline visualization using scatter plots instead of problematic bar charts
       const timelineTraces: any[] = [];
       
-      sortedMergedJobs.forEach((job, jobIndex) => {
+      // CRITICAL FIX: Reverse order for Plotly display consistency
+      const reversedJobsForAll = [...sortedMergedJobs].reverse();
+      
+      reversedJobsForAll.forEach((job, jobIndex) => {
         const task = job.originalTask;
         const yPosition = jobIndex;
         
@@ -612,11 +608,16 @@ const GanttChartDisplay: React.FC = () => {
       return [];
     }
     
+    // CRITICAL FIX: Reverse the order for Plotly display
+    // Plotly displays horizontal bars from bottom to top, so we need to reverse
+    // to get the correct sequence order (1/7 at top, higher numbers below)
+    const reversedJobs = [...filteredJobs].reverse();
+    
     return [{
       type: 'bar',
-      x: filteredJobs.map(job => job.totalDuration), // Total duration including gaps
-      y: filteredJobs.map(job => job.baseJobId),
-      base: filteredJobs.map(job => {
+      x: reversedJobs.map(job => job.totalDuration), // Total duration including gaps
+      y: reversedJobs.map(job => job.baseJobId),
+      base: reversedJobs.map(job => {
         // Convert timestamp to local time format for Plotly
         // When timezone is set to Asia/Kuala_Lumpur, Plotly expects local time without Z suffix
         const startDate = new Date(job.overallStartTime);
@@ -625,7 +626,7 @@ const GanttChartDisplay: React.FC = () => {
       }),
       orientation: 'h',
       marker: {
-        color: filteredJobs.map(job => {
+        color: reversedJobs.map(job => {
           const task = job.originalTask;
           // For subcontractor tasks, use a distinct pattern by modifying the color
           if (task.Resource === 'Subcon') {
@@ -636,7 +637,7 @@ const GanttChartDisplay: React.FC = () => {
           return (task.BufferStatusLabel && bufferStatusColors[task.BufferStatusLabel]) || '#cccccc';
         })
       },
-      text: filteredJobs.map(job => {
+      text: reversedJobs.map(job => {
         const task = job.originalTask;
         const resourceType = task.Resource === 'Subcon' ? '(Subcontractor)' : '(Machine)';
         const workDuration = job.segments.reduce((total, seg) => total + (seg.end - seg.start), 0) / (1000 * 3600);
@@ -755,12 +756,13 @@ const GanttChartDisplay: React.FC = () => {
         };
       }
       
-      // Generate gap shapes for all merged jobs
-      const gapShapes = generateJobGapShapes(sortedMergedJobs, sortedMergedJobs.map(job => job.baseJobId));
+      // Generate gap shapes for all merged jobs (use reversed order for consistency)
+      const reversedJobsForLayout = [...sortedMergedJobs].reverse();
+      const gapShapes = generateJobGapShapes(reversedJobsForLayout, reversedJobsForLayout.map(job => job.baseJobId));
       
       return {
         ...layout,
-        height: Math.max(700, sortedMergedJobs.length * 30 + 150),
+        height: Math.max(700, reversedJobsForLayout.length * 30 + 150),
         xaxis: xAxisConfig,
         shapes: [
           ...gapShapes,
@@ -769,7 +771,7 @@ const GanttChartDisplay: React.FC = () => {
             x0: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
             y0: -0.5,
             x1: new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, -1),
-            y1: sortedMergedJobs.length > 0 ? sortedMergedJobs.length - 0.5 : 10,
+            y1: reversedJobsForLayout.length > 0 ? reversedJobsForLayout.length - 0.5 : 10,
             line: {
               color: '#fbfbfb',
               width: 2,
