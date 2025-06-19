@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import loginImage from './qw.png'
+import loginImage from './qqw.png'
 
 export const LoginForm = () => {
   const [email, setEmail] = useState('')
@@ -36,7 +36,7 @@ export const LoginForm = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="flex w-full max-w-6xl bg-white rounded-lg shadow-lg overflow-hidden">
+      <div className="flex w-full max-w-6xl bg-white rounded-lg shadow-lg overflow-hidden" style={{ transform: 'scale(1.1)' }}>
         {/* Left side - Illustration */}
         <div className="hidden lg:flex lg:w-5/12 bg-gray-50 p-12 items-center justify-center">
           <img 
