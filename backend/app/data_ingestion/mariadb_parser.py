@@ -25,7 +25,7 @@ Functions for loading job data from MariaDB with security and lint fixes
 import logging
 import os
 import time
-from datetime import datetime, date, time as dt_time
+from datetime import datetime, date, time as dt_time, timedelta
 from typing import Dict, List, Tuple, Optional, Union, Any
 
 import mysql.connector
@@ -138,13 +138,76 @@ def get_db_connection() -> Optional[mysql.connector.MySQLConnection]:
         raise
 
 
-def convert_datetime_to_epoch(dt_value: Any) -> Optional[int]:
+# Cache for working hours to avoid repeated database lookups
+_working_hours_cache = {}
+
+def get_working_day_end_time(target_date: date) -> dt_time:
+    """
+    Get the end time for working day based on day of week.
+    Uses database working hours configuration with caching.
+    
+    Args:
+        target_date: The date to check
+        
+    Returns:
+        Time object representing end of working day
+    """
+    # Monday=0, Sunday=6 -> MySQL: Monday=2, Sunday=1
+    weekday = target_date.weekday()
+    mysql_day = weekday + 2 if weekday < 6 else 1
+    
+    # Check cache first
+    if mysql_day in _working_hours_cache:
+        return _working_hours_cache[mysql_day]
+    
+    # Default to 18:00 if database lookup fails
+    default_end_time = dt_time(18, 0, 0)
+    
+    try:
+        conn = get_db_connection()
+        if conn and conn.is_connected():
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT end_time FROM ai_arrangable_hour WHERE arrange_day = %s AND is_working = 1", 
+                (mysql_day,)
+            )
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if result and result['end_time']:
+                end_time_value = result['end_time']
+                # Convert timedelta to time object
+                if isinstance(end_time_value, timedelta):
+                    total_seconds = int(end_time_value.total_seconds())
+                    hours = total_seconds // 3600
+                    minutes = (total_seconds % 3600) // 60
+                    seconds = total_seconds % 60
+                    cached_time = dt_time(hours, minutes, seconds)
+                elif isinstance(end_time_value, dt_time):
+                    cached_time = end_time_value
+                else:
+                    cached_time = default_end_time
+                
+                # Cache the result
+                _working_hours_cache[mysql_day] = cached_time
+                return cached_time
+    except Exception as e:
+        logger.warning(f"Could not fetch working hours for day {mysql_day}: {e}")
+    
+    # Cache the default and return it
+    _working_hours_cache[mysql_day] = default_end_time
+    return default_end_time
+
+
+def convert_datetime_to_epoch(dt_value: Any, is_lcd_date: bool = False) -> Optional[int]:
     """
     Convert a datetime value to epoch timestamp in Kuala Lumpur timezone.
     Handles MariaDB datetime format: 2025-07-30 17:00:00.000
     
     Args:
         dt_value: Datetime value from database
+        is_lcd_date: If True, date-only values will be set to end of working day
         
     Returns:
         Unix timestamp (epoch) in seconds or None if conversion fails
@@ -168,8 +231,14 @@ def convert_datetime_to_epoch(dt_value: Any) -> Optional[int]:
     
     # Handle datetime.date objects by converting to datetime
     if isinstance(dt_value, date) and not isinstance(dt_value, datetime):
-        dt_value = datetime.combine(dt_value, dt_time.min)
-        logger.debug(f"Converted date to datetime: {dt_value}")
+        if is_lcd_date:
+            # For LCD dates, use end of working day instead of midnight
+            end_time = get_working_day_end_time(dt_value)
+            dt_value = datetime.combine(dt_value, end_time)
+            logger.debug(f"Converted LCD date to end of working day: {dt_value}")
+        else:
+            dt_value = datetime.combine(dt_value, dt_time.min)
+            logger.debug(f"Converted date to datetime: {dt_value}")
     
     if not isinstance(dt_value, (pd.Timestamp, datetime)):
         logger.warning(f"Unexpected datetime type: {type(dt_value)}")
@@ -310,7 +379,9 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
                 f"type = {type(job_row[date_field])}"
             )
             
-            epoch_value = convert_datetime_to_epoch(job_row[date_field])
+            # Use end of working day for LCD dates to fix Late job issue
+            is_lcd = (date_field == 'lcd_date')
+            epoch_value = convert_datetime_to_epoch(job_row[date_field], is_lcd_date=is_lcd)
             logger.debug(f"Converted {date_field} to epoch: {epoch_value}")
             
             if epoch_value is not None:
