@@ -473,12 +473,12 @@ body {
   background-color: #7FFF00;
 }
 
-.buffer-label-na {
+.buffer-label-unscheduled {
   background-color: #f5f5f5;
   color: #666;
 }
 
-.buffer-na {
+.buffer-unscheduled {
   background-color: #cccccc;
 }
 

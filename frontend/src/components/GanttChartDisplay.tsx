@@ -1109,13 +1109,18 @@ const GanttChartDisplay: React.FC = () => {
             <div className="buffer-overview">
               <div className="buffer-rows">
                 {(() => {
-                  // Calculate actual buffer status counts from merged jobs - FIXED: Include N/A category
+                  // Calculate actual buffer status counts from merged jobs - FIXED: Count unscheduled jobs properly
                   const bufferCounts = {
                     Late: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Late').length,
                     Warning: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Warning').length,
                     Caution: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Caution').length,
                     OK: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'OK').length,
-                    'N/A': sortedMergedJobs.filter(job => !job.originalTask.BufferStatusLabel || job.originalTask.BufferStatusLabel === null || job.originalTask.BufferStatusLabel === '').length
+                    'Unscheduled': sortedMergedJobs.filter(job => 
+                      job.originalTask.BufferStatusLabel !== 'Late' && 
+                      job.originalTask.BufferStatusLabel !== 'Warning' && 
+                      job.originalTask.BufferStatusLabel !== 'Caution' && 
+                      job.originalTask.BufferStatusLabel !== 'OK'
+                    ).length
                   };
                   const totalJobs = sortedMergedJobs.length || 1; // Avoid division by zero
                   
@@ -1170,13 +1175,13 @@ const GanttChartDisplay: React.FC = () => {
                       </div>
                       
                       <div className="buffer-row">
-                        <div className="buffer-label buffer-label-na">N/A</div>
+                        <div className="buffer-label buffer-label-unscheduled">Unscheduled</div>
                         <div className="buffer-bar-container">
                           <div 
-                            className="buffer-bar-fill buffer-na" 
-                            style={{ width: `${(bufferCounts['N/A'] / totalJobs) * 100}%` }}
+                            className="buffer-bar-fill buffer-unscheduled" 
+                            style={{ width: `${(bufferCounts['Unscheduled'] / totalJobs) * 100}%` }}
                           >
-                            <span className="buffer-count">{bufferCounts['N/A']} jobs</span>
+                            <span className="buffer-count">{bufferCounts['Unscheduled']} jobs</span>
                           </div>
                         </div>
                       </div>
@@ -1208,7 +1213,7 @@ const GanttChartDisplay: React.FC = () => {
         </div>
         <div className="priority-item">
           <span className="priority-color" style={{ backgroundColor: '#cccccc' }}></span>
-          <span className="priority-label">N/A (Unknown)</span>
+          <span className="priority-label">Unscheduled jobs</span>
         </div>
 
       </div>

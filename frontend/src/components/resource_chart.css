@@ -35,6 +35,10 @@
   flex: 1;
 }
 
+.buffer-status-only {
+  width: 100%;
+}
+
 .overview-section h3 {
   margin: 0 0 15px 0;
   font-size: 16px;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   createColumnHelper,
   flexRender,
@@ -203,12 +203,17 @@ const DetailedScheduleTable: React.FC = () => {
   const error = cacheData.error;
   const lastRefresh = cacheData.lastRefresh;
 
-  // Apply client-side pagination to cached data
-  const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
-  const endIndex = startIndex + pagination.itemsPerPage;
-  const data = allData.slice(startIndex, endIndex);
-  
-  console.log(`[DetailedScheduleTable] Pagination: page=${pagination.currentPage}, startIndex=${startIndex}, endIndex=${endIndex}, data.length=${data.length}`);
+  // Apply client-side pagination to cached data (memoized to prevent re-renders)
+  const data = useMemo(() => {
+    const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
+    const endIndex = startIndex + pagination.itemsPerPage;
+    const slicedData = allData.slice(startIndex, endIndex);
+    
+    // Debug pagination only when it actually changes
+    console.log(`[DetailedScheduleTable] Pagination: page=${pagination.currentPage}, startIndex=${startIndex}, endIndex=${endIndex}, data.length=${slicedData.length}`);
+    
+    return slicedData;
+  }, [allData, pagination.currentPage, pagination.itemsPerPage]);
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
@@ -430,14 +435,28 @@ const DetailedScheduleTable: React.FC = () => {
             <div className="buffer-overview">
               <div className="buffer-rows">
                 {(() => {
-                  // Calculate buffer status counts from table data - FIXED: Include N/A category
-                  const bufferCounts = {
-                    Late: allData.filter(job => job.buffer_status === 'Late').length,
-                    Warning: allData.filter(job => job.buffer_status === 'Warning').length,
-                    Caution: allData.filter(job => job.buffer_status === 'Caution').length,
-                    OK: allData.filter(job => job.buffer_status === 'OK').length,
-                    'N/A': allData.filter(job => !job.buffer_status || job.buffer_status === null || job.buffer_status === '').length
-                  };
+                  // Memoized buffer status calculation to prevent infinite loops
+                  const bufferCounts = useMemo(() => {
+                    const counts = {
+                      Late: allData.filter(job => job.buffer_status === 'Late').length,
+                      Warning: allData.filter(job => job.buffer_status === 'Warning').length,
+                      Caution: allData.filter(job => job.buffer_status === 'Caution').length,
+                      OK: allData.filter(job => job.buffer_status === 'OK').length,
+                      'Unscheduled': allData.filter(job => 
+                        job.buffer_status !== 'Late' && 
+                        job.buffer_status !== 'Warning' && 
+                        job.buffer_status !== 'Caution' && 
+                        job.buffer_status !== 'OK'
+                      ).length
+                    };
+                    
+                    // Debug logging only on recalculation
+                    if (counts.Unscheduled > 0) {
+                      console.log('✅ Found', counts.Unscheduled, 'unscheduled jobs!');
+                    }
+                    
+                    return counts;
+                  }, [allData]);
                   const totalJobs = allData.length || 1; // Avoid division by zero
                   
                   return (
@@ -491,13 +510,13 @@ const DetailedScheduleTable: React.FC = () => {
                       </div>
                       
                       <div className="buffer-row">
-                        <div className="buffer-label buffer-label-na">N/A</div>
+                        <div className="buffer-label buffer-label-unscheduled">Unscheduled</div>
                         <div className="buffer-bar-container">
                           <div 
-                            className="buffer-bar-fill buffer-na" 
-                            style={{ width: `${(bufferCounts['N/A'] / totalJobs) * 100}%` }}
+                            className="buffer-bar-fill buffer-unscheduled" 
+                            style={{ width: `${(bufferCounts['Unscheduled'] / totalJobs) * 100}%` }}
                           >
-                            <span className="buffer-count">{bufferCounts['N/A']} jobs</span>
+                            <span className="buffer-count">{bufferCounts['Unscheduled']} jobs</span>
                           </div>
                         </div>
                       </div>
@@ -531,7 +550,7 @@ const DetailedScheduleTable: React.FC = () => {
           </div>
           <div className="priority-item">
             <span className="priority-color" style={{ backgroundColor: '#cccccc' }}></span>
-            <span className="priority-label">N/A (Unknown)</span>
+            <span className="priority-label">Unscheduled jobs</span>
           </div>
         </div>
       )}
