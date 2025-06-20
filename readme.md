@@ -7,9 +7,9 @@ A **production scheduling system** that optimizes manufacturing job sequences to
 The AI Optimizer handles complex manufacturing workflows with:
 - **440+ jobs** with multi-process dependencies (P1→P2→P3→P4→P5)
 - **76 machines** with specialized capabilities and constraints
-- **Real-time working hours** management (6:30 AM - 6:00 PM)
-- **Chain completion analysis** preventing entire production chains from being late
-- **100x priority boost system** for ultra-critical jobs
+- **Real-time working hours** management (6:30 AM - 6:00 PM).
+- **Chain completion analysis** preventing entire production chains from being late.
+- **100x priority boost system** for ultra-critical jobs.
 
 ## 🏗️ Core Architecture
 
