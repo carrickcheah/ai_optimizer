@@ -116,13 +116,6 @@ const Dashboard: React.FC = () => {
       linkText: 'View Machine Allocation'
     },
     { 
-      title: 'Manpower Allocation', 
-      iconClass: 'fas fa-users-cog', 
-      description: 'Assign personnel to production tasks based on skills, availability, and workload balancing.',
-      linkTo: '/manpower',
-      linkText: 'Manage Personnel'
-    },
-    { 
       title: 'Logs Report', 
       iconClass: 'fas fa-file-alt', 
       description: 'View system logs, audit trails, and activity reports for production scheduling and optimization.',
@@ -135,13 +128,6 @@ const Dashboard: React.FC = () => {
       description: 'Generate AI-powered insights and reporting on production efficiency, bottlenecks, and optimization opportunities.',
       linkTo: '/reports',
       linkText: 'View Reports'
-    },
-    { 
-      title: 'Settings', 
-      iconClass: 'fas fa-cogs', 
-      description: 'Configure system preferences, user access, notification rules, and integration settings.',
-      linkTo: '/settings',
-      linkText: 'Manage Settings'
     },
   ];
 
