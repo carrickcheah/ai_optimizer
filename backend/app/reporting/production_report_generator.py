@@ -11,6 +11,13 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# REPORT CONFIGURATION CONSTANTS
+# =============================================================================
+# Utilization Thresholds
+HIGH_UTILIZATION_THRESHOLD = 90.0    # High utilization alert threshold (%)
+LOW_UTILIZATION_THRESHOLD = 50.0     # Low utilization warning threshold (%)
+
 @dataclass
 class ReportConfig:
     """Configuration class for report generation settings - all values must be loaded from .env."""
@@ -73,28 +80,9 @@ class ReportConfig:
         buffer_warning_hours = 24.0   # Hardcoded: Warning buffer threshold (hours)
         buffer_caution_hours = 72.0   # Hardcoded: Caution buffer threshold (hours)
         
-        # Additional thresholds (with fallback to common values but log if missing)
-        high_util_threshold = os.getenv('HIGH_UTILIZATION_THRESHOLD')
-        if high_util_threshold is None:
-            logger.warning("HIGH_UTILIZATION_THRESHOLD not set in .env, using 90.0")
-            high_util_threshold = 90.0
-        else:
-            try:
-                high_util_threshold = float(high_util_threshold)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"HIGH_UTILIZATION_THRESHOLD={high_util_threshold}")
-                high_util_threshold = 90.0
-        
-        low_util_threshold = os.getenv('LOW_UTILIZATION_THRESHOLD')
-        if low_util_threshold is None:
-            logger.warning("LOW_UTILIZATION_THRESHOLD not set in .env, using 50.0")
-            low_util_threshold = 50.0
-        else:
-            try:
-                low_util_threshold = float(low_util_threshold)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"LOW_UTILIZATION_THRESHOLD={low_util_threshold}")
-                low_util_threshold = 50.0
+        # Load utilization thresholds from constants
+        high_util_threshold = HIGH_UTILIZATION_THRESHOLD
+        low_util_threshold = LOW_UTILIZATION_THRESHOLD
         
         start_tolerance = os.getenv('START_DATE_TOLERANCE_HOURS')
         if start_tolerance is None:

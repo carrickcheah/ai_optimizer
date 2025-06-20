@@ -43,9 +43,16 @@ def normalize_schedule_format(schedule_output: Dict[str, List]) -> Dict[str, Lis
     logger.info(f"✅ Normalized {total_normalized} jobs across {len(normalized)} machines")
     return normalized
 
+# =============================================================================
+# CHART CONFIGURATION CONSTANTS
+# =============================================================================
+CHART_BUFFER_CRITICAL_HOURS = 8.0   # Critical buffer threshold for chart status
+CHART_BUFFER_WARNING_HOURS = 24.0   # Warning buffer threshold for chart status
+CHART_BUFFER_CAUTION_HOURS = 72.0   # Caution buffer threshold for chart status
+
 @dataclass
 class ChartConfig:
-    """Chart configuration loaded from environment variables with strict validation."""
+    """Chart configuration with hardcoded constants for reliable operation."""
     
     # Time configuration
     timezone: str
@@ -82,11 +89,11 @@ class ChartConfig:
                 invalid_vars.append(f"{key}={value}")
                 return None
         
-        # Load required configuration
+        # Load required configuration from constants
         timezone_str = 'Asia/Kuala_Lumpur'  # Hardcoded timezone
-        buffer_critical = 8.0   # Hardcoded: Critical buffer threshold (hours)
-        buffer_warning = 24.0   # Hardcoded: Warning buffer threshold (hours)
-        buffer_caution = 72.0   # Hardcoded: Caution buffer threshold (hours)
+        buffer_critical = CHART_BUFFER_CRITICAL_HOURS
+        buffer_warning = CHART_BUFFER_WARNING_HOURS
+        buffer_caution = CHART_BUFFER_CAUTION_HOURS
         
         # Validate buffer thresholds
         if buffer_critical >= buffer_warning:
