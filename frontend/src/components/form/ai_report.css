@@ -1,0 +1,384 @@
+/* AI Report Component Styles */
+
+.ai-report-container {
+  padding: 20px;
+  background-color: #f5f7fa;
+  min-height: 100vh;
+}
+
+.ai-report-header {
+  margin-bottom: 30px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.ai-report-header h1 {
+  color: #2c3e50;
+  font-size: 2rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+.back-button {
+  background-color: #3498db;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.back-button:hover {
+  background-color: #2980b9;
+}
+
+.generate-button {
+  background-color: #9b59b6;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.generate-button:hover:not(:disabled) {
+  background-color: #8e44ad;
+  transform: translateY(-1px);
+}
+
+.generate-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-report-content {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.error-message {
+  background-color: #f8d7da;
+  color: #721c24;
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 4px solid #dc3545;
+}
+
+.loading-container {
+  padding: 60px 20px;
+  text-align: center;
+  color: #6c757d;
+}
+
+.loading-container p {
+  margin-top: 20px;
+  font-size: 16px;
+}
+
+.no-report {
+  padding: 80px 20px;
+  text-align: center;
+  color: #6c757d;
+}
+
+.no-report i {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  color: #9b59b6;
+}
+
+.no-report h3 {
+  margin-bottom: 15px;
+  color: #495057;
+}
+
+.generate-button-large {
+  background-color: #9b59b6;
+  color: white;
+  border: none;
+  padding: 15px 30px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.generate-button-large:hover {
+  background-color: #8e44ad;
+  transform: translateY(-2px);
+}
+
+.report-sections {
+  padding: 0;
+}
+
+.report-meta {
+  background-color: #f8f9fa;
+  padding: 20px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.report-status {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+
+.status-badge {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-success {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.status-fallback {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.status-error {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-unknown {
+  background-color: #e2e3e5;
+  color: #383d41;
+}
+
+.generated-time {
+  color: #6c757d;
+  font-size: 14px;
+}
+
+.data-points {
+  color: #495057;
+  font-size: 14px;
+}
+
+.report-section {
+  border-bottom: 1px solid #e9ecef;
+}
+
+.report-section:last-child {
+  border-bottom: none;
+}
+
+.section-title {
+  background-color: #f8f9fa;
+  margin: 0;
+  padding: 20px;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #495057;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.section-title i {
+  color: #6c757d;
+  width: 20px;
+}
+
+.section-content {
+  padding: 25px;
+  line-height: 1.6;
+}
+
+.report-paragraph {
+  margin-bottom: 15px;
+  color: #495057;
+  font-size: 15px;
+}
+
+.report-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.report-bullet,
+.report-numbered {
+  margin-bottom: 8px;
+  color: #495057;
+  font-size: 15px;
+  list-style: none;
+  position: relative;
+  padding-left: 20px;
+}
+
+.report-bullet::before {
+  content: "•";
+  color: #6c757d;
+  position: absolute;
+  left: 0;
+  font-weight: bold;
+}
+
+.report-numbered {
+  margin-bottom: 8px;
+  color: #495057;
+  font-size: 15px;
+  padding-left: 20px;
+  list-style-type: decimal;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .ai-report-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 15px;
+  }
+  
+  .ai-report-header h1 {
+    text-align: center;
+  }
+  
+  .section-title {
+    font-size: 1.1rem;
+    padding: 15px;
+  }
+  
+  .section-content {
+    padding: 20px;
+  }
+  
+  .report-meta {
+    padding: 15px;
+  }
+}
+
+/* Streaming styles */
+.streaming-container {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  margin-bottom: 20px;
+  border: 2px solid #9b59b6;
+  box-shadow: 0 4px 6px rgba(155, 89, 182, 0.1);
+  width: 100%;
+  min-height: 500px;
+}
+
+.streaming-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.streaming-header h3 {
+  margin: 0;
+  color: #9b59b6;
+  font-size: 1.3rem;
+}
+
+.streaming-indicator {
+  display: flex;
+  gap: 5px;
+}
+
+.streaming-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #9b59b6;
+  animation: streaming-pulse 1.5s infinite;
+}
+
+.streaming-dot:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.streaming-dot:nth-child(3) {
+  animation-delay: 1s;
+}
+
+@keyframes streaming-pulse {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.streaming-content {
+  min-height: 300px;
+  max-height: 600px;
+  overflow-y: auto;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 20px;
+  font-size: 16px;
+}
+
+.streaming-text {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 16px;
+  line-height: 1.8;
+  color: #495057;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Print styles */
+@media print {
+  .ai-report-container {
+    background: white;
+    padding: 0;
+  }
+  
+  .ai-report-header {
+    display: none;
+  }
+  
+  .ai-report-content {
+    box-shadow: none;
+    border-radius: 0;
+  }
+  
+  .report-section {
+    break-inside: avoid;
+  }
+  
+  .streaming-container {
+    display: none;
+  }
+}
