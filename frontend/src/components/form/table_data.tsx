@@ -455,30 +455,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('BALANCE_QUANTITY')}>
                         BALANCE<br/>QUANTITY
                       </th>
-                      <th className={`text-center sortable ${sortField === 'HOURS_NEED' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('HOURS_NEED')}>
-                        HOURS<br/>NEED
-                      </th>
-                      <th className={`text-center sortable ${sortField === 'DAY_NEED' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('DAY_NEED')}>
-                        DAY<br/>NEED
-                      </th>
-                      <th className={`text-center sortable ${sortField === 'SETTING_HOURS' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('SETTING_HOURS')}>
-                        SETUP<br/>HOURS
-                      </th>
-                      <th className={`text-center sortable ${sortField === 'BREAK_HOURS' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('BREAK_HOURS')}>
-                        BREAK<br/>HOURS
-                      </th>
-                      <th className={`text-center sortable ${sortField === 'NO_PROD' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('NO_PROD')}>
-                        NO<br/>PROD
-                      </th>
-                      <th className={`text-center sortable ${sortField === 'PRIORITY' ? `sort-${sortOrder}` : ''}`}
-                          onClick={() => handleSort('PRIORITY')}>
-                        PRIORITY
-                      </th>
                       <th className={`text-center sortable ${sortField === 'REDUCE_OPERATION_HOURS' ? `sort-${sortOrder}` : ''}`}
                           onClick={() => handleSort('REDUCE_OPERATION_HOURS')}>
                         REDUCE<br/>HRS
@@ -489,7 +465,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                   <tbody id="jobsTableBody">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={20} className="text-center py-4">
+                        <td colSpan={16} className="text-center py-4">
                           <div className="spinner-border text-primary" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
@@ -498,7 +474,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                                                  <td colSpan={20} className="text-center">No production schedule found</td>
+                                                  <td colSpan={16} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
@@ -515,12 +491,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{job.JOB_QUANTITY}</td>
                           <td className="text-center">{job.ACCUMULATED_DAILY_OUTPUT}</td>
                           <td className="text-center">{job.BALANCE_QUANTITY}</td>
-                          <td className="text-center">{job.HOURS_NEED}</td>
-                          <td className="text-center">{job.DAY_NEED}</td>
-                          <td className="text-center">{job.SETTING_HOURS}</td>
-                          <td className="text-center">{job.BREAK_HOURS}</td>
-                          <td className="text-center">{job.NO_PROD}</td>
-                          <td className="text-center">{job.PRIORITY}</td>
                           <td className="text-center">{job.REDUCE_OPERATION_HOURS ? formatReduceHours(job.REDUCE_OPERATION_HOURS) : 'NO'}</td>
                           <td className="text-center">
                             <Link to={`/job/view/${job.TxnId_i}`} className="action-btn action-btn-view" title="View">
