@@ -40,7 +40,7 @@ async def get_recent_logs(
         Dictionary containing log entries and metadata
     """
     try:
-        log_file_path = os.path.join(os.path.dirname(__file__), '../../../../app.log')
+        log_file_path = os.path.join(os.path.dirname(__file__), '../../../app.log')
         
         if not os.path.exists(log_file_path):
             logger.warning(f"Log file not found at {log_file_path}")
