@@ -365,9 +365,15 @@ def process_job_row(job_row: Dict[str, Any]) -> Dict[str, Any]:
         "job": job_value if job_value else composite_job_id
     }
     
-    # Handle plan_date directly without epoch conversion
+    # Handle plan_date with epoch conversion
     if 'plan_date' in job_row and job_row['plan_date'] is not None:
         job['plan_date'] = job_row['plan_date']
+        # Convert plan_date to epoch for scheduling logic
+        plan_epoch = convert_datetime_to_epoch(job_row['plan_date'], is_lcd_date=False)
+        if plan_epoch is not None:
+            job['plan_date_epoch'] = plan_epoch
+            job['PLAN_DATE_EPOCH'] = plan_epoch
+            logger.debug(f"Converted plan_date to epoch for job {composite_job_id}: {plan_epoch}")
     
     # Handle date field conversions
     date_fields = ['lcd_date', 'material_arrival', 'start_date']
