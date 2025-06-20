@@ -522,6 +522,59 @@ class GreedyScheduler:
         
         return sorted(jobs, key=sort_key)
     
+    @staticmethod
+    def _sort_jobs_by_urgency(jobs: List[Dict[str, Any]], current_time: float) -> List[Dict[str, Any]]:
+        """Sort jobs by urgency considering both plan_date and LCD date.
+        
+        Urgency factors:
+        1. Jobs past their plan_date (most urgent)
+        2. Time ratio: (time_since_plan) / (time_until_lcd)
+        3. LCD date as fallback
+        """
+        def urgency_key(job):
+            plan_date = job.get('plan_date_epoch')
+            lcd_date = job.get('lcd_date_epoch')
+            
+            # If no plan_date, use standard LCD sorting
+            if not plan_date:
+                if lcd_date:
+                    return (1, lcd_date, job.get('priority', 99))
+                else:
+                    return (3, float('inf'), job.get('priority', 99))
+            
+            # Calculate urgency metrics
+            days_overdue = max(0, (current_time - plan_date) / 86400)  # Days past plan date
+            
+            if lcd_date and lcd_date > current_time:
+                days_until_due = (lcd_date - current_time) / 86400
+                # Urgency ratio: how overdue vs time remaining
+                urgency_ratio = days_overdue / max(days_until_due, 0.1)  # Avoid div by zero
+            else:
+                # Job is past LCD or no LCD - highest urgency
+                urgency_ratio = 1000 + days_overdue
+            
+            # Sort by:
+            # 1. Jobs past plan_date first (urgency_ratio)
+            # 2. LCD date
+            # 3. Original priority
+            return (urgency_ratio * -1, lcd_date if lcd_date else float('inf'), job.get('priority', 99))
+        
+        sorted_jobs = sorted(jobs, key=urgency_key)
+        
+        # Log urgency analysis for visibility
+        logger.info("Job urgency analysis (top 10):")
+        for i, job in enumerate(sorted_jobs[:10]):
+            plan_date = job.get('plan_date_epoch')
+            lcd_date = job.get('lcd_date_epoch')
+            if plan_date:
+                days_overdue = (current_time - plan_date) / 86400
+                if days_overdue > 0:
+                    logger.info(f"  {job['job_id']}: {days_overdue:.1f} days overdue from plan_date")
+                else:
+                    logger.info(f"  {job['job_id']}: scheduled to start in {-days_overdue:.1f} days")
+        
+        return sorted_jobs
+    
     def schedule_jobs(self, jobs: List[Dict[str, Any]], machines: List[str],
                      setup_times: Optional[Dict] = None, enforce_sequence: bool = True,
                      max_operators: int = 0) -> Dict[str, List[Tuple]]:
@@ -598,12 +651,20 @@ class GreedyScheduler:
         """Schedule NOT_ASSIGN jobs on Subcon machine."""
         logger.info(f"Scheduling {len(not_assign_jobs)} NOT_ASSIGN jobs on 'Subcon'")
         
-        # Sort by LCD date first, then priority
-        sorted_jobs = self._sort_jobs_by_lcd_priority(not_assign_jobs, include_processing_time=False)
+        # Sort by urgency considering plan_date
+        sorted_jobs = self._sort_jobs_by_urgency(not_assign_jobs, schedule_state['current_time'])
         
         for job in sorted_jobs:
             machine_id = 'Subcon'
-            start_search_time = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
+            # Consider plan_date for start time
+            machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
+            plan_date = job.get('plan_date_epoch', schedule_state['current_time'])
+            start_search_time = max(machine_available, plan_date)
+            
+            # Log if job is being scheduled past its plan date
+            if plan_date and plan_date < schedule_state['current_time']:
+                days_late = (schedule_state['current_time'] - plan_date) / 86400
+                logger.warning(f"Job {job['job_id']} is {days_late:.1f} days past its plan_date")
             
             self._find_and_schedule_job(
                 job, machine_id, start_search_time, schedule_state,
@@ -615,16 +676,22 @@ class GreedyScheduler:
         """Schedule subcontractor jobs with estimated timing for chart display."""
         logger.info(f"Scheduling {len(subcontractor_jobs)} SUBCONTRACTOR jobs")
         
-        # Sort subcontractor jobs by LCD date first
-        sorted_subcontractor_jobs = self._sort_jobs_by_lcd_priority(subcontractor_jobs, include_processing_time=False)
+        # Sort subcontractor jobs by urgency considering plan_date
+        sorted_subcontractor_jobs = self._sort_jobs_by_urgency(subcontractor_jobs, schedule_state['current_time'])
         
         # Subcontractor jobs don't compete for machine time but need timing for dependencies
         for job in sorted_subcontractor_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
                 continue
             
-            # Estimate start time as current time or after any dependencies
-            start_time = schedule_state['current_time']
+            # Consider plan_date for start time
+            plan_date = job.get('plan_date_epoch', schedule_state['current_time'])
+            start_time = max(schedule_state['current_time'], plan_date)
+            
+            # Log if job is being scheduled past its plan date
+            if plan_date and plan_date < schedule_state['current_time']:
+                days_late = (schedule_state['current_time'] - plan_date) / 86400
+                logger.warning(f"SUBCONTRACTOR job {job['job_id']} is {days_late:.1f} days past its plan_date")
             processing_time = job.get('processing_time', 3600)  # Default 1 hour if missing
             end_time = self._calculate_preemptive_end_time(start_time, processing_time)
             
@@ -642,8 +709,8 @@ class GreedyScheduler:
         """Schedule independent jobs (no dependencies)."""
         logger.info(f"Scheduling {len(independent_jobs)} independent jobs")
         
-        # Sort by LCD date first, then priority, then processing time (shorter jobs first)
-        sorted_jobs = self._sort_jobs_by_lcd_priority(independent_jobs, include_processing_time=True)
+        # Sort by urgency considering plan_date
+        sorted_jobs = self._sort_jobs_by_urgency(independent_jobs, schedule_state['current_time'])
         
         for job in sorted_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
@@ -656,7 +723,15 @@ class GreedyScheduler:
                 schedule_state['unscheduled_jobs'].append(job)
                 continue
             
-            start_search_time = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
+            # Consider plan_date for start time
+            machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
+            plan_date = job.get('plan_date_epoch', schedule_state['current_time'])
+            start_search_time = max(machine_available, plan_date)
+            
+            # Log if job is being scheduled past its plan date
+            if plan_date and plan_date < schedule_state['current_time']:
+                days_late = (schedule_state['current_time'] - plan_date) / 86400
+                logger.warning(f"Job {job['job_id']} is {days_late:.1f} days past its plan_date")
             
             try:
                 from app.scheduling.scheduler_utils import extract_job_family, extract_process_number
@@ -713,8 +788,14 @@ class GreedyScheduler:
                 # Handle subcontractor vs machine jobs differently
                 machine_name = job_item.get('MachineName_v')
                 if machine_name == 'SUBCONTRACTOR':
-                    # Subcontractor job with dependencies
-                    start_time = max(earliest_start, schedule_state['current_time'])
+                    # Subcontractor job with dependencies - consider plan_date
+                    plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
+                    start_time = max(earliest_start, schedule_state['current_time'], plan_date)
+                    
+                    # Log if job is being scheduled past its plan date
+                    if plan_date and plan_date < schedule_state['current_time']:
+                        days_late = (schedule_state['current_time'] - plan_date) / 86400
+                        logger.warning(f"SUBCONTRACTOR dependency job {job_id} is {days_late:.1f} days past its plan_date")
                     processing_time = job_item.get('processing_time', 3600)  # Default 1 hour if missing
                     end_time = self._calculate_preemptive_end_time(start_time, processing_time)
                     
@@ -740,11 +821,15 @@ class GreedyScheduler:
                         schedule_state['unscheduled_jobs'].append(job_item)
                         continue
                     
-                    # Start search from the later of machine availability or dependency requirement
-                    start_search_time = max(
-                        schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time']),
-                        earliest_start
-                    )
+                    # Start search from the later of machine availability, dependency requirement, or plan_date
+                    machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
+                    plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
+                    start_search_time = max(machine_available, earliest_start, plan_date)
+                    
+                    # Log if job is being scheduled past its plan date
+                    if plan_date and plan_date < schedule_state['current_time']:
+                        days_late = (schedule_state['current_time'] - plan_date) / 86400
+                        logger.warning(f"Dependency job {job_id} is {days_late:.1f} days past its plan_date")
                     
                     self._find_and_schedule_job(
                         job_item, machine_id, start_search_time, schedule_state,

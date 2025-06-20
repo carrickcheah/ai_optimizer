@@ -373,6 +373,152 @@ const DetailedScheduleTable: React.FC = () => {
         </button>
       </div>
       
+      {/* Schedule Overview Section */}
+      {allData.length > 0 && (
+        <div className="overview-section">
+          <div className="overview-left">
+            <h3>Schedule Overview</h3>
+            <div className="overview-stats">
+              <div className="stat-item">
+                <span className="stat-label">Total Jobs:</span>
+                <span className="stat-value">{allData.length}</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Date Range:</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (allData.length === 0) return 'N/A';
+                    const dates = allData.map(job => [job.scheduled_start_time_str, job.scheduled_end_time_str]).flat().filter(d => d);
+                    if (dates.length === 0) return 'N/A';
+                    
+                    // Extract dates from datetime strings
+                    const extractedDates = dates.map(dateStr => {
+                      if (dateStr && dateStr.includes(' ')) {
+                        return dateStr.split(' ')[0]; // Get just the date part
+                      }
+                      return dateStr;
+                    }).filter(d => d);
+                    
+                    if (extractedDates.length === 0) return 'N/A';
+                    
+                    const sortedDates = extractedDates.sort();
+                    const earliest = sortedDates[0];
+                    const latest = sortedDates[sortedDates.length - 1];
+                    return earliest === latest ? earliest : `${earliest} to ${latest}`;
+                  })()
+                }</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Work Duration:</span>
+                <span className="stat-value">{
+                  (() => {
+                    if (allData.length === 0) return '0 hours';
+                    const totalHours = allData.reduce((total, job) => total + (job.hours_need || 0), 0);
+                    return `${Math.round(totalHours).toLocaleString()} hours`;
+                  })()
+                }</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-label">Records Displayed:</span>
+                <span className="stat-value">{data.length}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="overview-right">
+            <h3>Buffer Status</h3>
+            <div className="buffer-overview">
+              <div className="buffer-rows">
+                {(() => {
+                  // Calculate buffer status counts from table data
+                  const bufferCounts = {
+                    Late: allData.filter(job => job.buffer_status === 'Late').length,
+                    Warning: allData.filter(job => job.buffer_status === 'Warning').length,
+                    Caution: allData.filter(job => job.buffer_status === 'Caution').length,
+                    OK: allData.filter(job => job.buffer_status === 'OK').length
+                  };
+                  const totalJobs = allData.length || 1; // Avoid division by zero
+                  
+                  return (
+                    <>
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-late">Late</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-late" 
+                            style={{ width: `${(bufferCounts.Late / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Late} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-warning">Warning</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-warning" 
+                            style={{ width: `${(bufferCounts.Warning / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Warning} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-caution">Caution</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-caution" 
+                            style={{ width: `${(bufferCounts.Caution / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.Caution} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-ok">OK</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-ok" 
+                            style={{ width: `${(bufferCounts.OK / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts.OK} jobs</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Priority Legend */}
+      {allData.length > 0 && (
+        <div className="priority-legend">
+          <div className="priority-item">
+            <span className="priority-color" style={{ backgroundColor: '#f44336' }}></span>
+            <span className="priority-label">Late (&lt;0h)</span>
+          </div>
+          <div className="priority-item">
+            <span className="priority-color" style={{ backgroundColor: '#ff9800' }}></span>
+            <span className="priority-label">Warning (&lt;24h)</span>
+          </div>
+          <div className="priority-item">
+            <span className="priority-color" style={{ backgroundColor: '#9c27b0' }}></span>
+            <span className="priority-label">Caution (&lt;72h)</span>
+          </div>
+          <div className="priority-item">
+            <span className="priority-color" style={{ backgroundColor: '#7FFF00' }}></span>
+            <span className="priority-label">OK (&gt;72h)</span>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="card-header">
           <h2>Detailed Production Schedule</h2>

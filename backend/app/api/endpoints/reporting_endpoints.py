@@ -405,6 +405,42 @@ async def get_data_quality_analysis(
         logger.error(f"❌ DATA QUALITY ANALYSIS FAILED: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze data quality: {str(e)}")
 
+@router.get("/late-jobs-analysis", response_model=Dict[str, Any])
+async def get_late_jobs_analysis(
+    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
+):
+    """Analyze jobs scheduled past their plan dates."""
+    try:
+        from app.reporting.late_job_analyzer import LateJobAnalyzer
+        
+        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        
+        # Get schedule and job data
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
+        
+        logger.info("🔄 Analyzing late jobs")
+        
+        # Run late job analysis
+        late_analysis = LateJobAnalyzer.analyze_late_jobs(schedule_output, jobs_input_data)
+        
+        # Add report text
+        late_analysis['report_text'] = LateJobAnalyzer.generate_late_job_report(late_analysis)
+        
+        logger.info(f"✅ Late job analysis complete: {late_analysis['late_jobs_count']} late jobs "
+                   f"out of {late_analysis['total_scheduled']} ({late_analysis['late_percentage']:.1f}%)")
+        
+        return late_analysis
+        
+    except ImportError:
+        logger.error("❌ Late job analyzer not available")
+        raise HTTPException(status_code=501, detail="Late job analysis feature not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ LATE JOB ANALYSIS FAILED: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze late jobs: {str(e)}")
+
 @router.get("/health", response_model=Dict[str, Any])
 async def reporting_health_check():
     """Health check for reporting endpoints with STRICT validation."""
