@@ -430,12 +430,13 @@ const DetailedScheduleTable: React.FC = () => {
             <div className="buffer-overview">
               <div className="buffer-rows">
                 {(() => {
-                  // Calculate buffer status counts from table data
+                  // Calculate buffer status counts from table data - FIXED: Include N/A category
                   const bufferCounts = {
                     Late: allData.filter(job => job.buffer_status === 'Late').length,
                     Warning: allData.filter(job => job.buffer_status === 'Warning').length,
                     Caution: allData.filter(job => job.buffer_status === 'Caution').length,
-                    OK: allData.filter(job => job.buffer_status === 'OK').length
+                    OK: allData.filter(job => job.buffer_status === 'OK').length,
+                    'N/A': allData.filter(job => !job.buffer_status || job.buffer_status === null || job.buffer_status === '').length
                   };
                   const totalJobs = allData.length || 1; // Avoid division by zero
                   
@@ -488,6 +489,18 @@ const DetailedScheduleTable: React.FC = () => {
                           </div>
                         </div>
                       </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-na">N/A</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-na" 
+                            style={{ width: `${(bufferCounts['N/A'] / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts['N/A']} jobs</span>
+                          </div>
+                        </div>
+                      </div>
                     </>
                   );
                 })()}
@@ -515,6 +528,10 @@ const DetailedScheduleTable: React.FC = () => {
           <div className="priority-item">
             <span className="priority-color" style={{ backgroundColor: '#7FFF00' }}></span>
             <span className="priority-label">OK (&gt;72h)</span>
+          </div>
+          <div className="priority-item">
+            <span className="priority-color" style={{ backgroundColor: '#cccccc' }}></span>
+            <span className="priority-label">N/A (Unknown)</span>
           </div>
         </div>
       )}

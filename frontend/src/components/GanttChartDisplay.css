@@ -411,6 +411,15 @@
   background-color: #7FFF00;
 }
 
+.buffer-label-na {
+  background-color: #f5f5f5;
+  color: #666;
+}
+
+.buffer-na {
+  background-color: #cccccc;
+}
+
 @media (max-width: 768px) {
   .overview-section {
     flex-direction: column;

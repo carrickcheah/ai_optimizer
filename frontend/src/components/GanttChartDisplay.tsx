@@ -194,8 +194,22 @@ const GanttChartDisplay: React.FC = () => {
     }
   }, [workingHoursConfig, workingHoursLoading]);
 
-  // Use cached data instead of local state
-  const tasks = data.ganttPriorityView;
+  // Use cached data instead of local state - CHANGED: Use same data source as DetailedScheduleTable (440 jobs)
+  const rawTasks = data.detailedSchedule;
+  
+  // Transform detailedSchedule data to match GanttChart format
+  const tasks = rawTasks.map((row: any) => ({
+    Task: row.job_id || row.op_id || 'Unknown',
+    Start: row.scheduled_start_time_str || '',
+    Finish: row.scheduled_end_time_str || '', 
+    Resource: row.MachineName_v || row.rsc_code || 'Unknown',
+    BufferStatusLabel: row.buffer_status || null,
+    PriorityLabel: row.priority ? `Priority ${row.priority}` : 'Unknown',
+    JobFamily: row.job || 'Unknown',
+    ProcessNumber: row.process_code || 1,
+    Color: null // Will use buffer status colors
+  }));
+  
   const isLoading = data.isLoading || workingHoursLoading;
   const error = data.error || workingHoursError;
   const overview = data.scheduleOverview;
@@ -1095,12 +1109,13 @@ const GanttChartDisplay: React.FC = () => {
             <div className="buffer-overview">
               <div className="buffer-rows">
                 {(() => {
-                  // Calculate actual buffer status counts from merged jobs
+                  // Calculate actual buffer status counts from merged jobs - FIXED: Include N/A category
                   const bufferCounts = {
                     Late: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Late').length,
                     Warning: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Warning').length,
                     Caution: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'Caution').length,
-                    OK: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'OK').length
+                    OK: sortedMergedJobs.filter(job => job.originalTask.BufferStatusLabel === 'OK').length,
+                    'N/A': sortedMergedJobs.filter(job => !job.originalTask.BufferStatusLabel || job.originalTask.BufferStatusLabel === null || job.originalTask.BufferStatusLabel === '').length
                   };
                   const totalJobs = sortedMergedJobs.length || 1; // Avoid division by zero
                   
@@ -1153,6 +1168,18 @@ const GanttChartDisplay: React.FC = () => {
                           </div>
                         </div>
                       </div>
+                      
+                      <div className="buffer-row">
+                        <div className="buffer-label buffer-label-na">N/A</div>
+                        <div className="buffer-bar-container">
+                          <div 
+                            className="buffer-bar-fill buffer-na" 
+                            style={{ width: `${(bufferCounts['N/A'] / totalJobs) * 100}%` }}
+                          >
+                            <span className="buffer-count">{bufferCounts['N/A']} jobs</span>
+                          </div>
+                        </div>
+                      </div>
                     </>
                   );
                 })()}
@@ -1178,6 +1205,10 @@ const GanttChartDisplay: React.FC = () => {
         <div className="priority-item">
           <span className="priority-color" style={{ backgroundColor: '#7FFF00' }}></span>
           <span className="priority-label">OK (&gt;72h)</span>
+        </div>
+        <div className="priority-item">
+          <span className="priority-color" style={{ backgroundColor: '#cccccc' }}></span>
+          <span className="priority-label">N/A (Unknown)</span>
         </div>
 
       </div>
