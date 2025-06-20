@@ -212,11 +212,11 @@ const DetailedScheduleTable: React.FC = () => {
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
 
-  // Data loading strategy parameters (for display only - reports endpoint uses its own config)
+  // Data loading strategy parameters (for display only - actual config from backend .env)
   const DATA_LOADING_CONFIG = {
-    bufferDays: 7,            // Display: Buffer jobs from 7 days ago 
-    planningHorizonDays: 60,  // Display: Auto-moving 60-day window forward 
-    refreshIntervalMinutes: 60 // Refresh every 60 minutes
+    planningHorizonDays: 180,  // Backend: 180-day planning horizon from .env
+    maxJobsLimit: 1000,        // Backend: MAX_JOBS_LIMIT from .env  
+    refreshType: 'manual'      // Manual refresh via "Refreshing All Data" button
   };
 
   // No automatic data loading - user must click refresh button
@@ -542,8 +542,9 @@ const DetailedScheduleTable: React.FC = () => {
           <h2>Detailed Production Schedule</h2>
           <div className="header-info">
             <small className="text-light">
-              Auto-moving window: {DATA_LOADING_CONFIG.bufferDays} days back to {DATA_LOADING_CONFIG.planningHorizonDays} days ahead | 
-              Auto-refresh: Daily at 6:00 AM (Kuala Lumpur time) | 
+              Planning horizon: {DATA_LOADING_CONFIG.planningHorizonDays} days | 
+              Max jobs: {DATA_LOADING_CONFIG.maxJobsLimit} | 
+              Refresh: Manual via dashboard button | 
               Last refresh: {lastRefresh.toLocaleTimeString()}
             </small>
           </div>
