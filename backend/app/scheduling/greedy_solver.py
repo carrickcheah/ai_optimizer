@@ -249,12 +249,12 @@ class MachineManager:
         # Handle case where machines is a list of dictionaries
         if machines and isinstance(machines[0], dict):
             machine_names = [
-                m.get('MachineName_v', str(m)) for m in machines 
+                m.get('MachineName_v') for m in machines 
                 if m.get('MachineName_v')
             ]
             logger.info(f"Extracted {len(machine_names)} machine names from dictionary format")
         else:
-            machine_names = machines
+            machine_names = list(machines)  # Ensure it's a proper list
         
         # Don't add Subcon/SUBCONTRACTOR to machine list - they're handled separately
         
@@ -318,14 +318,17 @@ class JobCategorizer:
                 family = extract_job_family(job['job_id'])
                 process_num = extract_process_number(job['job_id'])
                 
-                if family and process_num > 1:
-                    # Jobs with dependencies go to dependency category (including subcontractor jobs)
+                # CRITICAL FIX: Check if job is part of a multi-process chain (not just process_num > 1)
+                # If the family exists and has structure, ALL jobs in that family should be dependency jobs
+                # for proper chain completion prioritization
+                if family and ('/' in job['job_id'] or process_num > 0):
+                    # All jobs in structured families go to dependency category for chain analysis
                     categories['dependency'].append(job)
                 elif machine_name == 'SUBCONTRACTOR':
-                    # Only independent subcontractor jobs (P1) go to subcontractor category
+                    # Only truly independent subcontractor jobs go to subcontractor category
                     categories['subcontractor'].append(job)
                 else:
-                    # Independent machine jobs
+                    # Independent machine jobs (single-process or no clear family structure)
                     categories['independent'].append(job)
         
         logger.info(
@@ -583,6 +586,9 @@ class GreedyScheduler:
         logger.info(f"Starting greedy scheduling for {len(jobs)} jobs on {len(machines)} machines")
         logger.info(f"Configuration: enforce_sequence={enforce_sequence}, max_operators={max_operators}")
         
+        # Prepare machines (convert from dict format if needed)
+        machine_names = MachineManager.prepare_machines(machines)
+        
         # Count jobs per machine for overload detection
         machine_job_counts = {}
         for job in jobs:
@@ -591,7 +597,7 @@ class GreedyScheduler:
                 machine_job_counts[machine_id] = machine_job_counts.get(machine_id, 0) + 1
         
         # Initialize scheduling state
-        schedule_state = self._initialize_schedule_state(machines)
+        schedule_state = self._initialize_schedule_state(machine_names)
         schedule_state['machine_job_counts'] = machine_job_counts
         
         # Log machine workloads for debugging
@@ -673,11 +679,19 @@ class GreedyScheduler:
     
     def _schedule_subcontractor_jobs(self, subcontractor_jobs: List[Dict[str, Any]],
                                     schedule_state: Dict[str, Any]) -> None:
-        """Schedule subcontractor jobs with estimated timing for chart display."""
+        """Schedule subcontractor jobs with enhanced LCD-based priority to fix bottlenecks."""
         logger.info(f"Scheduling {len(subcontractor_jobs)} SUBCONTRACTOR jobs")
         
-        # Sort subcontractor jobs by urgency considering plan_date
-        sorted_subcontractor_jobs = self._sort_jobs_by_urgency(subcontractor_jobs, schedule_state['current_time'])
+        # ENHANCEMENT: Use LCD-based critical priority for subcontractor bottleneck
+        try:
+            from app.scheduling.chain_analyzer import ChainAnalyzer
+            sorted_subcontractor_jobs = ChainAnalyzer.identify_critical_subcontractor_jobs(
+                subcontractor_jobs, schedule_state['current_time']
+            )
+            logger.info("✅ Using enhanced LCD-based priority for SUBCONTRACTOR jobs")
+        except ImportError:
+            logger.warning("Chain analyzer not available, falling back to basic urgency sorting")
+            sorted_subcontractor_jobs = self._sort_jobs_by_urgency(subcontractor_jobs, schedule_state['current_time'])
         
         # Subcontractor jobs don't compete for machine time but need timing for dependencies
         for job in sorted_subcontractor_jobs:
@@ -706,11 +720,19 @@ class GreedyScheduler:
     
     def _schedule_independent_jobs(self, independent_jobs: List[Dict[str, Any]],
                                   schedule_state: Dict[str, Any], max_operators: int) -> None:
-        """Schedule independent jobs (no dependencies)."""
+        """Schedule independent jobs using enhanced LCD-based priority."""
         logger.info(f"Scheduling {len(independent_jobs)} independent jobs")
         
-        # Sort by urgency considering plan_date
-        sorted_jobs = self._sort_jobs_by_urgency(independent_jobs, schedule_state['current_time'])
+        # ENHANCEMENT: Use enhanced priority calculation for independent jobs
+        try:
+            from app.scheduling.priority_calculator import PriorityCalculator
+            sorted_jobs = PriorityCalculator.sort_jobs_by_enhanced_priority(
+                independent_jobs, schedule_state['current_time']
+            )
+            logger.info("✅ Using enhanced LCD-based priority for independent jobs")
+        except ImportError:
+            logger.warning("Priority calculator not available, falling back to basic urgency sorting")
+            sorted_jobs = self._sort_jobs_by_urgency(independent_jobs, schedule_state['current_time'])
         
         for job in sorted_jobs:
             if job['job_id'] in schedule_state['scheduled_jobs']:
@@ -748,7 +770,7 @@ class GreedyScheduler:
     
     def _schedule_dependency_jobs(self, dependency_jobs: List[Dict[str, Any]],
                                  schedule_state: Dict[str, Any], max_operators: int) -> None:
-        """Schedule jobs with dependencies by family and process order."""
+        """Schedule jobs with dependencies using enhanced family-level LCD priority."""
         logger.info(f"Scheduling {len(dependency_jobs)} jobs with dependencies")
         
         try:
@@ -762,16 +784,64 @@ class GreedyScheduler:
             self._schedule_independent_jobs(dependency_jobs, schedule_state, max_operators)
             return
         
-        # Process families in order
-        for family, family_jobs in job_families.items():
+        # ENHANCEMENT: Prioritize families with chain completion lookahead
+        try:
+            from app.scheduling.chain_analyzer import ChainAnalyzer
+            # Get comprehensive chain analysis including completion requirements
+            chain_analysis = ChainAnalyzer.analyze_job_chains(job_families, schedule_state['current_time'])
+            
+            family_priorities = ChainAnalyzer.prioritize_families_by_urgency(
+                job_families, schedule_state['current_time']
+            )
+            logger.info("✅ Using enhanced chain completion analysis for dependency scheduling")
+            # Sort families by priority (most urgent first)
+            ordered_families = [(family, job_families[family]) for family, _ in family_priorities]
+        except ImportError:
+            logger.warning("Chain analyzer not available, using original family order")
+            ordered_families = list(job_families.items())
+            chain_analysis = {}
+        
+        # Process families in priority order
+        for family, family_jobs in ordered_families:
             if not family_jobs:
                 continue
             
             logger.info(f"Processing family '{family}' with {len(family_jobs)} jobs")
             
-            for process_num, job_id, job_item in family_jobs:
+            # ENHANCEMENT: Sort jobs within family by chain completion priority
+            try:
+                from app.scheduling.priority_calculator import PriorityCalculator
+                # Convert family_jobs to job dictionaries for priority calculation
+                family_job_items = [(process_num, job_id, job_item) for process_num, job_id, job_item in family_jobs]
+                
+                # Sort by enhanced priority including chain completion
+                def family_job_priority_key(job_tuple):
+                    process_num, job_id, job_item = job_tuple
+                    chain_info = chain_analysis.get(job_id, {})
+                    priority = PriorityCalculator.calculate_comprehensive_priority(
+                        job_item, schedule_state['current_time'], chain_info
+                    )
+                    # Combine with process order (earlier processes first within same priority)
+                    return (-priority, process_num)
+                
+                sorted_family_jobs = sorted(family_job_items, key=family_job_priority_key)
+                logger.info(f"✅ Applied chain completion priority sorting for family '{family}'")
+            except ImportError:
+                logger.warning("Priority calculator not available, using original order")
+                sorted_family_jobs = family_jobs
+            
+            for process_num, job_id, job_item in sorted_family_jobs:
                 if job_id in schedule_state['scheduled_jobs']:
                     continue
+                
+                # Log chain completion analysis if available
+                chain_info = chain_analysis.get(job_id, {})
+                if chain_info.get('chain_completion_critical', False):
+                    boost = chain_info.get('critical_urgency_boost', 1.0)
+                    must_start_by = chain_info.get('must_start_by')
+                    if must_start_by:
+                        must_start_str = datetime.fromtimestamp(must_start_by).strftime('%Y-%m-%d %H:%M')
+                        logger.info(f"🚨 CHAIN CRITICAL: {job_id} needs {boost}x priority boost - must start by {must_start_str}")
                 
                 # Check dependency
                 if process_num > 1:
@@ -821,10 +891,26 @@ class GreedyScheduler:
                         schedule_state['unscheduled_jobs'].append(job_item)
                         continue
                     
-                    # Start search from the later of machine availability, dependency requirement, or plan_date
+                    # ENHANCEMENT: Chain-critical jobs override machine availability for priority placement
                     machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
                     plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
-                    start_search_time = max(machine_available, earliest_start, plan_date)
+                    
+                    # Check if this job has chain completion urgency
+                    if chain_info.get('chain_completion_critical', False):
+                        boost = chain_info.get('critical_urgency_boost', 1.0)
+                        if boost >= 100.0:  # Ultra-critical jobs - complete preemption
+                            # Force immediate scheduling, push other jobs later
+                            start_search_time = max(earliest_start, schedule_state['current_time'])
+                            # Reset machine availability to allow immediate start
+                            schedule_state['machine_available_time'][machine_id] = start_search_time
+                            logger.warning(f"🚨🚨🚨 ULTRA-CRITICAL PREEMPTION: {job_id} with {boost}x boost takes machine immediately, other jobs rescheduled")
+                        elif boost >= 50.0:  # Very urgent jobs
+                            start_search_time = max(earliest_start, schedule_state['current_time'])
+                            logger.warning(f"🚨🚨 CRITICAL PREEMPTION: {job_id} with {boost}x boost bypasses machine queue")
+                        else:
+                            start_search_time = max(machine_available, earliest_start, plan_date)
+                    else:
+                        start_search_time = max(machine_available, earliest_start, plan_date)
                     
                     # Log if job is being scheduled past its plan date
                     if plan_date and plan_date < schedule_state['current_time']:
@@ -833,12 +919,12 @@ class GreedyScheduler:
                     
                     self._find_and_schedule_job(
                         job_item, machine_id, start_search_time, schedule_state,
-                        family, process_num, max_operators
+                        family, process_num, max_operators, chain_info
                     )
     
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
-                              max_operators: int) -> bool:
+                              max_operators: int, chain_info: Dict = None) -> bool:
         """Find next available slot and schedule job - optimized with smart jumping and reduced logging."""
         job_id = job['job_id']
         processing_time = job.get('processing_time', 3600)

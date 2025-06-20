@@ -207,12 +207,7 @@ const DetailedScheduleTable: React.FC = () => {
   const data = useMemo(() => {
     const startIndex = (pagination.currentPage - 1) * pagination.itemsPerPage;
     const endIndex = startIndex + pagination.itemsPerPage;
-    const slicedData = allData.slice(startIndex, endIndex);
-    
-    // Debug pagination only when it actually changes
-    console.log(`[DetailedScheduleTable] Pagination: page=${pagination.currentPage}, startIndex=${startIndex}, endIndex=${endIndex}, data.length=${slicedData.length}`);
-    
-    return slicedData;
+    return allData.slice(startIndex, endIndex);
   }, [allData, pagination.currentPage, pagination.itemsPerPage]);
 
   const rowOptions = [50, 100, 250, 500]; // Options for rows per page
@@ -228,20 +223,13 @@ const DetailedScheduleTable: React.FC = () => {
 
   // Update pagination when cached data changes
   useEffect(() => {
-    console.log(`[DetailedScheduleTable] Data state: allData.length=${allData.length}, isLoading=${isLoading}, error=${error}`);
-    
     if (allData.length > 0) {
-      console.log(`[DetailedScheduleTable] Using cached data: ${allData.length} schedule items`);
-      console.log(`[DetailedScheduleTable] Sample data:`, allData[0]);
-      
       // Update pagination state for client-side pagination
       setPagination(prev => ({
         ...prev,
         totalPages: Math.ceil(allData.length / prev.itemsPerPage),
         totalItems: allData.length
       }));
-    } else if (!isLoading) {
-      console.warn('[DetailedScheduleTable] No cached data available');
     }
   }, [allData, isLoading]);
 
@@ -348,7 +336,6 @@ const DetailedScheduleTable: React.FC = () => {
   }
 
   if (data.length === 0) {
-    console.log(`[DetailedScheduleTable] Showing empty state: allData.length=${allData.length}, data.length=${data.length}, isLoading=${isLoading}`);
     return (
       <div className="container-fluid">
         <div className="card">
@@ -449,11 +436,6 @@ const DetailedScheduleTable: React.FC = () => {
                         job.buffer_status !== 'OK'
                       ).length
                     };
-                    
-                    // Debug logging only on recalculation
-                    if (counts.Unscheduled > 0) {
-                      console.log('✅ Found', counts.Unscheduled, 'unscheduled jobs!');
-                    }
                     
                     return counts;
                   }, [allData]);
