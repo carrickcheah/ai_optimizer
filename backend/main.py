@@ -209,7 +209,7 @@ def create_app() -> FastAPI:
     try:
         # Import and include routers - with error handling
         from app.api import router as api_router
-        from app.api.endpoints import production_jobs_endpoints, reporting_endpoints
+        from app.api.endpoints import production_jobs_endpoints, reporting_endpoints, logs_endpoints
         
         # Include routers with error handling
         app.include_router(api_router, prefix="/api", tags=["API"])
@@ -222,6 +222,11 @@ def create_app() -> FastAPI:
             reporting_endpoints.router, 
             prefix="/api/reports", 
             tags=["Reporting"]
+        )
+        app.include_router(
+            logs_endpoints.router, 
+            prefix="/api/logs", 
+            tags=["Logs"]
         )
         
         logger.info("✅ API routes configured successfully")

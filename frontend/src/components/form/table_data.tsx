@@ -465,7 +465,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                   <tbody id="jobsTableBody">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={16} className="text-center py-4">
+                        <td colSpan={14} className="text-center py-4">
                           <div className="spinner-border text-primary" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
@@ -474,7 +474,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                                                  <td colSpan={16} className="text-center">No production schedule found</td>
+                                                  <td colSpan={14} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (

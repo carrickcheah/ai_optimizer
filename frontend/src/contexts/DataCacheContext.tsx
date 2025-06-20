@@ -5,6 +5,7 @@ interface CachedData {
   ganttResourceView: any[];
   detailedSchedule: any[];
   scheduleOverview: any;
+  systemLogs: any[];
   isLoading: boolean;
   error: string | null;
   lastRefresh: Date;
@@ -37,6 +38,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     ganttResourceView: [],
     detailedSchedule: [],
     scheduleOverview: null,
+    systemLogs: [],
     isLoading: false,
     error: null,
     lastRefresh: new Date(),
@@ -91,42 +93,47 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
       
       // Fetch all data concurrently
       console.log('🚀 DataCacheContext: Starting concurrent API calls...');
-      const [ganttPriorityResponse, ganttResourceResponse, detailedScheduleResponse, scheduleOverviewResponse] = await Promise.all([
+      const [ganttPriorityResponse, ganttResourceResponse, detailedScheduleResponse, scheduleOverviewResponse, logsResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/api/reports/gantt/priority-view?solver=${solver}&force_refresh=true`),
         fetch(`${API_BASE_URL}/api/reports/gantt/resource-view?solver=${solver}&force_refresh=true`),
         fetch(`${API_BASE_URL}/api/reports/detailed-schedule?solver=${solver}&force_refresh=true`),
-        fetch(`${API_BASE_URL}/api/reports/schedule-overview?solver=${solver}&force_refresh=true`)
+        fetch(`${API_BASE_URL}/api/reports/schedule-overview?solver=${solver}&force_refresh=true`),
+        fetch(`${API_BASE_URL}/api/logs/recent?lines=500`)
       ]);
 
       console.log('📊 DataCacheContext: API responses:', {
         ganttPriority: ganttPriorityResponse.status,
         ganttResource: ganttResourceResponse.status,
         detailedSchedule: detailedScheduleResponse.status,
-        scheduleOverview: scheduleOverviewResponse.status
+        scheduleOverview: scheduleOverviewResponse.status,
+        logs: logsResponse.status
       });
 
-      if (!ganttPriorityResponse.ok || !ganttResourceResponse.ok || !detailedScheduleResponse.ok || !scheduleOverviewResponse.ok) {
+      if (!ganttPriorityResponse.ok || !ganttResourceResponse.ok || !detailedScheduleResponse.ok || !scheduleOverviewResponse.ok || !logsResponse.ok) {
         const errors = [];
         if (!ganttPriorityResponse.ok) errors.push(`ganttPriority: ${ganttPriorityResponse.status}`);
         if (!ganttResourceResponse.ok) errors.push(`ganttResource: ${ganttResourceResponse.status}`);
         if (!detailedScheduleResponse.ok) errors.push(`detailedSchedule: ${detailedScheduleResponse.status}`);
         if (!scheduleOverviewResponse.ok) errors.push(`scheduleOverview: ${scheduleOverviewResponse.status}`);
+        if (!logsResponse.ok) errors.push(`logs: ${logsResponse.status}`);
         throw new Error(`API requests failed: ${errors.join(', ')}`);
       }
 
       console.log('🔄 DataCacheContext: Parsing JSON responses...');
-      const [ganttPriorityData, ganttResourceData, detailedScheduleData, scheduleOverviewData] = await Promise.all([
+      const [ganttPriorityData, ganttResourceData, detailedScheduleData, scheduleOverviewData, logsData] = await Promise.all([
         ganttPriorityResponse.json(),
         ganttResourceResponse.json(),
         detailedScheduleResponse.json(),
-        scheduleOverviewResponse.json()
+        scheduleOverviewResponse.json(),
+        logsResponse.json()
       ]);
 
       console.log('📈 DataCacheContext: Data sizes:', {
         ganttPriority: ganttPriorityData.length,
         ganttResource: ganttResourceData.length,
         detailedSchedule: detailedScheduleData.length,
-        scheduleOverview: scheduleOverviewData ? 'present' : 'missing'
+        scheduleOverview: scheduleOverviewData ? 'present' : 'missing',
+        logs: logsData.logs ? logsData.logs.length : 0
       });
 
       const newData: CachedData = {
@@ -134,6 +141,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
         ganttResourceView: ganttResourceData,
         detailedSchedule: detailedScheduleData,
         scheduleOverview: scheduleOverviewData,
+        systemLogs: logsData.logs || [],
         isLoading: false,
         error: null,
         lastRefresh: new Date(),

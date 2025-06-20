@@ -123,11 +123,11 @@ const Dashboard: React.FC = () => {
       linkText: 'Manage Personnel'
     },
     { 
-      title: 'Maintenance', 
-      iconClass: 'fas fa-tools', 
-      description: 'Schedule and track preventive and corrective maintenance activities for production equipment.',
-      linkTo: '/maintenance',
-      linkText: 'Manage Maintenance'
+      title: 'Logs Report', 
+      iconClass: 'fas fa-file-alt', 
+      description: 'View system logs, audit trails, and activity reports for production scheduling and optimization.',
+      linkTo: '/logs',
+      linkText: 'View Logs'
     },
     { 
       title: 'AI Report', 
