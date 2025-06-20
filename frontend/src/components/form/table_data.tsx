@@ -502,7 +502,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
-                        <tr key={job.TxnId_i}>
+                        <tr key={`${job.TxnId_i}-${index}`}>
                           <td className="text-center">{formatDate(job.LCD_DATE)}</td>
                           <td className="text-center">{job.TxnId_i}</td>
                           <td className="text-center">{formatDateTimeMilliseconds(job.START_DATE)}</td>
