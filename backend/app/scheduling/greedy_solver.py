@@ -77,13 +77,24 @@ class GreedyConfigManager:
         config_values = {}
         missing_vars = []
         
-        # Check all required environment variables
+        # Check all required environment variables, except hardcoded buffer values
+        buffer_vars = {'BUFFER_CRITICAL_HOURS', 'BUFFER_WARNING_HOURS', 'BUFFER_CAUTION_HOURS'}
+        
         for env_var, config_key in config_vars.items():
-            value = os.getenv(env_var)
-            if value is None:
-                missing_vars.append(env_var)
+            if env_var in buffer_vars:
+                # Use hardcoded values for buffer configuration
+                if env_var == 'BUFFER_CRITICAL_HOURS':
+                    config_values[config_key] = '8'   # Critical buffer threshold (hours)
+                elif env_var == 'BUFFER_WARNING_HOURS':
+                    config_values[config_key] = '24'  # Warning buffer threshold (hours)
+                elif env_var == 'BUFFER_CAUTION_HOURS':
+                    config_values[config_key] = '72'  # Caution buffer threshold (hours)
             else:
-                config_values[config_key] = value
+                value = os.getenv(env_var)
+                if value is None:
+                    missing_vars.append(env_var)
+                else:
+                    config_values[config_key] = value
         
         if missing_vars:
             raise GreedyConfigurationError(

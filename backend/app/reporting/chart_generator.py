@@ -84,22 +84,11 @@ class ChartConfig:
         
         # Load required configuration
         timezone_str = 'Asia/Kuala_Lumpur'  # Hardcoded timezone
-        buffer_critical = get_required_float_env('CHART_BUFFER_CRITICAL_HOURS')
-        buffer_warning = get_required_float_env('CHART_BUFFER_WARNING_HOURS')
-        buffer_caution = get_required_float_env('CHART_BUFFER_CAUTION_HOURS')
+        buffer_critical = 8.0   # Hardcoded: Critical buffer threshold (hours)
+        buffer_warning = 24.0   # Hardcoded: Warning buffer threshold (hours)
+        buffer_caution = 72.0   # Hardcoded: Caution buffer threshold (hours)
         
-        # Check for critical errors
-        if missing_vars:
-            error_msg = f"❌ CRITICAL CHART CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        if invalid_vars:
-            error_msg = f"❌ CRITICAL CHART CONFIG ERROR: Invalid environment variable values: {', '.join(invalid_vars)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Validate threshold logic
+        # Validate buffer thresholds
         if buffer_critical >= buffer_warning:
             error_msg = f"❌ CRITICAL CHART CONFIG ERROR: CHART_BUFFER_CRITICAL_HOURS ({buffer_critical}) must be less than CHART_BUFFER_WARNING_HOURS ({buffer_warning})"
             logger.error(error_msg)
@@ -110,7 +99,7 @@ class ChartConfig:
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        logger.info(f"✅ Successfully loaded chart configuration from .env")
+        logger.info(f"✅ Successfully loaded chart configuration with hardcoded values")
         
         return cls(
             timezone=timezone_str,

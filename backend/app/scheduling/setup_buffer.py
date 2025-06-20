@@ -55,29 +55,22 @@ class SetupBufferConfigManager:
     
     @staticmethod
     def load_config() -> BufferConfig:
-        """Load configuration from .env variables with validation - NO DEFAULTS."""
-        config_vars = {
-            'BUFFER_CRITICAL_HOURS': 'buffer_critical_hours',
-            'BUFFER_WARNING_HOURS': 'buffer_warning_hours',
-            'BUFFER_CAUTION_HOURS': 'buffer_caution_hours',
-            'MINIMUM_TIME_SHIFT_SECONDS': 'minimum_time_shift_seconds'
+        """Load configuration with hardcoded buffer values."""
+        # Hardcoded buffer configuration
+        config_values = {
+            'buffer_critical_hours': 8,    # Critical buffer threshold (hours)
+            'buffer_warning_hours': 24,    # Warning buffer threshold (hours)
+            'buffer_caution_hours': 72,    # Caution buffer threshold (hours)
+            'minimum_time_shift_seconds': 300  # Default minimum time shift (5 minutes)
         }
         
-        config_values = {}
-        missing_vars = []
-        
-        # Check all required environment variables
-        for env_var, config_key in config_vars.items():
-            value = os.getenv(env_var)
-            if value is None:
-                missing_vars.append(env_var)
-            else:
-                config_values[config_key] = value
-        
-        if missing_vars:
-            raise SetupBufferConfigurationError(
-                f"❌ MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
-            )
+        # Still check for MINIMUM_TIME_SHIFT_SECONDS in env if needed
+        min_time_shift = os.getenv('MINIMUM_TIME_SHIFT_SECONDS')
+        if min_time_shift is not None:
+            try:
+                config_values['minimum_time_shift_seconds'] = int(min_time_shift)
+            except ValueError:
+                logger.warning(f"Invalid MINIMUM_TIME_SHIFT_SECONDS value: {min_time_shift}, using default: 300")
         
         # Convert and validate values
         try:

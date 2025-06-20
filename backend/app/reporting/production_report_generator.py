@@ -69,9 +69,9 @@ class ReportConfig:
         emergency_ot_hours = get_required_float_env('EMERGENCY_OT_HOURS')
         grace_period_hours = get_required_float_env('GRACE_PERIOD_HOURS')
         
-        buffer_critical_hours = get_required_float_env('CHART_BUFFER_CRITICAL_HOURS')
-        buffer_warning_hours = get_required_float_env('CHART_BUFFER_WARNING_HOURS')
-        buffer_caution_hours = get_required_float_env('CHART_BUFFER_CAUTION_HOURS')
+        buffer_critical_hours = 8.0   # Hardcoded: Critical buffer threshold (hours)
+        buffer_warning_hours = 24.0   # Hardcoded: Warning buffer threshold (hours)
+        buffer_caution_hours = 72.0   # Hardcoded: Caution buffer threshold (hours)
         
         # Additional thresholds (with fallback to common values but log if missing)
         high_util_threshold = os.getenv('HIGH_UTILIZATION_THRESHOLD')
