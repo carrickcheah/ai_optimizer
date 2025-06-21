@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 class EndpointConfig:
     """Configuration for production jobs endpoints - ALL VALUES MUST BE IN .env - NO FALLBACKS."""
     
-    # Pagination limits
-    max_page_size: int
-    default_page_size: int
+    # Job limits
     max_jobs_limit: int
     
     # Time horizons
@@ -56,8 +54,6 @@ class EndpointConfig:
                 return None
         
         # ALL variables are REQUIRED - NO FALLBACKS
-        max_page_size = get_required_int_env('MAX_PAGE_SIZE')
-        default_page_size = get_required_int_env('DEFAULT_PAGE_SIZE')
         max_jobs_limit = get_required_int_env('MAX_JOBS_LIMIT')
         planning_horizon_days = get_required_int_env('PLANNING_HORIZON_DAYS')
         max_planning_horizon_days = get_required_int_env('MAX_PLANNING_HORIZON_DAYS')
@@ -74,16 +70,6 @@ class EndpointConfig:
             raise ValueError(error_msg)
         
         # Validate business logic - FAIL IF INVALID
-        if max_page_size > max_jobs_limit:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: MAX_PAGE_SIZE ({max_page_size}) cannot exceed MAX_JOBS_LIMIT ({max_jobs_limit})"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        if default_page_size > max_page_size:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: DEFAULT_PAGE_SIZE ({default_page_size}) cannot exceed MAX_PAGE_SIZE ({max_page_size})"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
         if planning_horizon_days > max_planning_horizon_days:
             error_msg = f"❌ CRITICAL CONFIG ERROR: PLANNING_HORIZON_DAYS ({planning_horizon_days}) cannot exceed MAX_PLANNING_HORIZON_DAYS ({max_planning_horizon_days})"
             logger.error(error_msg)
@@ -92,8 +78,6 @@ class EndpointConfig:
         logger.info(f"✅ Successfully loaded endpoint configuration from .env")
         
         return cls(
-            max_page_size=max_page_size,
-            default_page_size=default_page_size,
             max_jobs_limit=max_jobs_limit,
             planning_horizon_days=planning_horizon_days,
             max_planning_horizon_days=max_planning_horizon_days
@@ -131,8 +115,8 @@ class ProductionJobValidation:
         if page_size <= 0:
             raise ValueError("Page size must be positive")
         
-        if page_size > ENDPOINT_CONFIG.max_page_size:
-            raise ValueError(f"Page size cannot exceed {ENDPOINT_CONFIG.max_page_size}")
+        if page_size > 500:  # Hardcoded MAX_PAGE_SIZE
+            raise ValueError(f"Page size cannot exceed 500")
     
     @staticmethod
     def validate_time_parameters(planning_horizon_days: int) -> None:
@@ -257,7 +241,7 @@ async def get_production_jobs(
 @monitor_performance
 async def get_production_schedule(
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(ENDPOINT_CONFIG.default_page_size, ge=1, le=ENDPOINT_CONFIG.max_page_size, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=500, description="Items per page"),  # Hardcoded DEFAULT_PAGE_SIZE=50, MAX_PAGE_SIZE=500
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
     search: Optional[str] = Query(None, description="Search term"),
@@ -389,7 +373,7 @@ async def health_check():
         "config": {
             "max_jobs_limit": ENDPOINT_CONFIG.max_jobs_limit,
             "planning_horizon_days": ENDPOINT_CONFIG.planning_horizon_days,
-            "max_page_size": ENDPOINT_CONFIG.max_page_size
+            "max_page_size": 500  # Hardcoded MAX_PAGE_SIZE
         }
     }
     

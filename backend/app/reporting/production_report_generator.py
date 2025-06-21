@@ -74,7 +74,7 @@ class ReportConfig:
         normal_working_hours = get_required_float_env('NORMAL_WORKING_HOURS')
         ot_working_hours = get_required_float_env('OT_WORKING_HOURS')
         emergency_ot_hours = get_required_float_env('EMERGENCY_OT_HOURS')
-        grace_period_hours = get_required_float_env('GRACE_PERIOD_HOURS')
+        grace_period_hours = 48.0  # Hardcoded: Grace period for late jobs (hours)
         
         buffer_critical_hours = 8.0   # Hardcoded: Critical buffer threshold (hours)
         buffer_warning_hours = 24.0   # Hardcoded: Warning buffer threshold (hours)
@@ -84,16 +84,8 @@ class ReportConfig:
         high_util_threshold = HIGH_UTILIZATION_THRESHOLD
         low_util_threshold = LOW_UTILIZATION_THRESHOLD
         
-        start_tolerance = os.getenv('START_DATE_TOLERANCE_HOURS')
-        if start_tolerance is None:
-            logger.warning("START_DATE_TOLERANCE_HOURS not set in .env, using 1.0")
-            start_tolerance = 1.0
-        else:
-            try:
-                start_tolerance = float(start_tolerance)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"START_DATE_TOLERANCE_HOURS={start_tolerance}")
-                start_tolerance = 1.0
+        # Hardcoded START_DATE_TOLERANCE_HOURS value
+        start_tolerance = 2.0  # Tolerance for start date constraint violations (hours)
         
         timezone_str = 'Asia/Kuala_Lumpur'  # Hardcoded timezone
         

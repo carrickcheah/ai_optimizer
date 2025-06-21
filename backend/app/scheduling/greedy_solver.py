@@ -77,18 +77,38 @@ class GreedyConfigManager:
         config_values = {}
         missing_vars = []
         
-        # Check all required environment variables, except hardcoded buffer values
-        buffer_vars = {'BUFFER_CRITICAL_HOURS', 'BUFFER_WARNING_HOURS', 'BUFFER_CAUTION_HOURS'}
+        # Check all required environment variables, except hardcoded values
+        hardcoded_vars = {
+            'BUFFER_CRITICAL_HOURS', 'BUFFER_WARNING_HOURS', 'BUFFER_CAUTION_HOURS',
+            'SAME_MACHINE_SETUP_TIME', 'DIFFERENT_MACHINE_SETUP_TIME',
+            'EMERGENCY_MINIMUM_START_HOUR', 'GRACE_PERIOD_HOURS', 
+            'URGENT_BUFFER_THRESHOLD_HOURS', 'URGENT_REDUCTION_FACTOR',
+            'MINIMUM_TIME_SHIFT_SECONDS'
+        }
         
         for env_var, config_key in config_vars.items():
-            if env_var in buffer_vars:
-                # Use hardcoded values for buffer configuration
+            if env_var in hardcoded_vars:
+                # Use hardcoded values for buffer and setup time configuration
                 if env_var == 'BUFFER_CRITICAL_HOURS':
                     config_values[config_key] = '8'   # Critical buffer threshold (hours)
                 elif env_var == 'BUFFER_WARNING_HOURS':
                     config_values[config_key] = '24'  # Warning buffer threshold (hours)
                 elif env_var == 'BUFFER_CAUTION_HOURS':
                     config_values[config_key] = '72'  # Caution buffer threshold (hours)
+                elif env_var == 'SAME_MACHINE_SETUP_TIME':
+                    config_values[config_key] = '0.5'  # Same machine setup time (hours)
+                elif env_var == 'DIFFERENT_MACHINE_SETUP_TIME':
+                    config_values[config_key] = '0.1'  # Different machine setup time (hours)
+                elif env_var == 'EMERGENCY_MINIMUM_START_HOUR':
+                    config_values[config_key] = '-1'   # Emergency overtime disabled
+                elif env_var == 'GRACE_PERIOD_HOURS':
+                    config_values[config_key] = '48'   # Grace period for late jobs (hours)
+                elif env_var == 'URGENT_BUFFER_THRESHOLD_HOURS':
+                    config_values[config_key] = '24'   # Urgent buffer threshold (hours)
+                elif env_var == 'URGENT_REDUCTION_FACTOR':
+                    config_values[config_key] = '0.9'  # Urgent job reduction factor
+                elif env_var == 'MINIMUM_TIME_SHIFT_SECONDS':
+                    config_values[config_key] = '300'  # Minimum time shift (seconds)
             else:
                 value = os.getenv(env_var)
                 if value is None:

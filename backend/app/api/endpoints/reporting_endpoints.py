@@ -34,26 +34,9 @@ class ReportingConfig:
         missing_vars = []
         invalid_vars = []
         
-        # Optional but required for data quality analysis
-        max_buffer_threshold_days = os.getenv('MAX_BUFFER_THRESHOLD_DAYS')
-        if max_buffer_threshold_days is None:
-            missing_vars.append('MAX_BUFFER_THRESHOLD_DAYS')
-        else:
-            try:
-                max_buffer_threshold_days = int(max_buffer_threshold_days)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"MAX_BUFFER_THRESHOLD_DAYS={max_buffer_threshold_days}")
-                max_buffer_threshold_days = None
-        
-        data_quality_min_score = os.getenv('DATA_QUALITY_MIN_SCORE')
-        if data_quality_min_score is None:
-            missing_vars.append('DATA_QUALITY_MIN_SCORE')
-        else:
-            try:
-                data_quality_min_score = float(data_quality_min_score)
-            except (ValueError, TypeError):
-                invalid_vars.append(f"DATA_QUALITY_MIN_SCORE={data_quality_min_score}")
-                data_quality_min_score = None
+        # Hardcoded data quality configuration values
+        max_buffer_threshold_days = 30      # Maximum buffer threshold for data quality analysis (days)
+        data_quality_min_score = 75.0       # Minimum data quality score required (0-100)
         
         # Check for critical errors
         if missing_vars:
