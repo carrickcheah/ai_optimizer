@@ -268,66 +268,29 @@ const AIReport: React.FC = () => {
     }
   };
 
-  // Calculate comprehensive metrics for dashboard
+  // Calculate metrics directly from cached data
   const getComprehensiveMetrics = () => {
-    // Always calculate from cached data, even if reportData is not available
     const totalJobs = data.detailedSchedule.length;
-    const errorLogs = data.systemLogs.filter(log => log.level === 'ERROR').length;
-    const warningLogs = data.systemLogs.filter(log => log.level === 'WARNING').length;
-    // Check actual status values and calculate properly
-    const statusCounts = data.detailedSchedule.reduce((acc, job) => {
-      acc[job.status] = (acc[job.status] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
     
-    // Log status values for debugging
-    console.log('Job status counts:', statusCounts);
-    
-    // Check buffer status values
-    const bufferStatusCounts = data.detailedSchedule.reduce((acc, job) => {
-      acc[job.buffer_status || 'null'] = (acc[job.buffer_status || 'null'] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    console.log('Buffer status counts:', bufferStatusCounts);
-    
+    // Count buffer status directly
     const lateJobs = data.detailedSchedule.filter(job => job.buffer_status === 'Late').length;
     const criticalJobs = data.detailedSchedule.filter(job => job.buffer_status === 'Critical').length;
-    
-    // Calculate actual counts from your data
-    const lateCount = 192;
-    const criticalCount = 14;
-    const warningCount = 8;
-    const cautionCount = 35;
-    const okCount = 66;
-    const unscheduledCount = totalJobs - (lateCount + criticalCount + warningCount + cautionCount + okCount);
-    
-    const unknownJobs = unscheduledCount;
-    const scheduledJobs = totalJobs - unknownJobs;
-    
-    // Calculate completion rate as jobs that are OK (successfully scheduled on time)
+    const warningJobs = data.detailedSchedule.filter(job => job.buffer_status === 'Warning').length;
+    const cautionJobs = data.detailedSchedule.filter(job => job.buffer_status === 'Caution').length;
     const okJobs = data.detailedSchedule.filter(job => job.buffer_status === 'OK').length;
+    
+    // Calculate unscheduled as remaining jobs
+    const scheduledCount = lateJobs + criticalJobs + warningJobs + cautionJobs + okJobs;
+    const unscheduledJobs = totalJobs - scheduledCount;
+    
+    // Count system logs
+    const errorLogs = data.systemLogs.filter(log => log.level === 'ERROR').length;
+    const warningLogs = data.systemLogs.filter(log => log.level === 'WARNING').length;
+    
+    // Calculate rates
     const completionRate = totalJobs > 0 ? (okJobs / totalJobs * 100) : 0;
-    const schedulingRate = totalJobs > 0 ? (scheduledJobs / totalJobs * 100) : 0;
-    const unscheduledRate = totalJobs > 0 ? (unknownJobs / totalJobs * 100) : 0;
-    
-    // Buffer status breakdown using the correct counts
-    const bufferBreakdown = {
-      Late: lateCount,
-      Critical: criticalCount,
-      Warning: warningCount,
-      Caution: cautionCount,
-      OK: okCount,
-      Unscheduled: unscheduledCount
-    };
-    
-    // Get gantt data counts from reportData metadata if available, otherwise from cached data
-    let ganttPriorityItems = data.ganttPriorityView.length;
-    let ganttResourceItems = data.ganttResourceView.length;
-    
-    if (reportData?.metadata?.data_points_analyzed) {
-      ganttPriorityItems = reportData.metadata.data_points_analyzed.gantt_priority_items || ganttPriorityItems;
-      ganttResourceItems = reportData.metadata.data_points_analyzed.gantt_resource_items || ganttResourceItems;
-    }
+    const schedulingRate = totalJobs > 0 ? (scheduledCount / totalJobs * 100) : 0;
+    const unscheduledRate = totalJobs > 0 ? (unscheduledJobs / totalJobs * 100) : 0;
     
     return {
       totalJobs,
@@ -338,10 +301,17 @@ const AIReport: React.FC = () => {
       warningLogs,
       lateJobs,
       criticalJobs,
-      scheduledJobs,
-      unknownJobs,
-      bufferBreakdown,
-      totalGanttItems: ganttPriorityItems + ganttResourceItems
+      scheduledJobs: scheduledCount,
+      unknownJobs: unscheduledJobs,
+      bufferBreakdown: {
+        Late: lateJobs,
+        Critical: criticalJobs,
+        Warning: warningJobs,
+        Caution: cautionJobs,
+        OK: okJobs,
+        Unscheduled: unscheduledJobs
+      },
+      totalGanttItems: data.ganttPriorityView.length + data.ganttResourceView.length
     };
   };
 
@@ -701,21 +671,6 @@ const AIReport: React.FC = () => {
                 </ul>
               </div>
 
-              {/* Scheduling Algorithm Performance */}
-              <div className="analysis-group">
-                <h3>Scheduling Algorithm Performance</h3>
-                <p><strong>Greedy solver</strong> is fast but may not optimize for:</p>
-                <ul>
-                  <li>Job dependencies</li>
-                  <li>Machine load balancing</li>
-                  <li>Dynamic adjustments</li>
-                </ul>
-                <p><strong>Recommend testing:</strong></p>
-                <ul>
-                  <li><strong>Constraint Programming (CP)</strong> for complex rules</li>
-                  <li><strong>Genetic Algorithm (GA)</strong> for large-scale optimization</li>
-                </ul>
-              </div>
 
               {/* Final Verdict */}
               <div className="final-verdict">
