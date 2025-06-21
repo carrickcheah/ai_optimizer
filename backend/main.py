@@ -7,15 +7,25 @@ from dotenv import load_dotenv
 from typing import Dict, Any
 import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('app.log', mode='a')
-    ]
-)
+# Configure logging for container environments
+def setup_logging():
+    """Setup logging that works in both local and container environments."""
+    log_handlers = [logging.StreamHandler(sys.stdout)]
+    
+    # Only add file handler if running locally (not in container)
+    if not os.getenv('PYTHONUNBUFFERED'):  # Container environments set this
+        try:
+            log_handlers.append(logging.FileHandler('app.log', mode='a'))
+        except PermissionError:
+            pass  # Skip file logging if no write permissions
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=log_handlers
+    )
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 class AppConfig:
