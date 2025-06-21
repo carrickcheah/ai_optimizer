@@ -21,7 +21,11 @@ ai_optimizer/
 │   │   │   ├── GanttChartDisplay.tsx   # Gantt chart visualization
 │   │   │   ├── DetailedScheduleTable.tsx # Job schedule table
 │   │   │   ├── resource_chart.tsx      # Resource-grouped view
-│   │   │   └── form/dashboard.tsx      # Main dashboard with refresh
+│   │   │   └── form/                   # Form components
+│   │   │       ├── dashboard.tsx       # Main dashboard with refresh
+│   │   │       ├── ai_report.tsx       # AI Production Analysis Report
+│   │   │       ├── ai_report.css       # Basic AI report styles
+│   │   │       └── ai_report_comprehensive.css # Professional report styling
 │   │   ├── contexts/                   # React contexts
 │   │   │   └── DataCacheContext.tsx    # API data caching
 │   │   ├── hooks/                      # Custom React hooks
