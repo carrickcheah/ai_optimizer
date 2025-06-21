@@ -11,6 +11,7 @@ interface AIReportData {
     recommendations: string;
     detailed_analysis: string;
     generated_at: string;
+    raw_content?: string;
   };
   metadata?: {
     generated_at: string;
@@ -91,29 +92,34 @@ const AIReport: React.FC = () => {
                   // Add streaming content
                   completeContent += data.content;
                   setStreamingContent(completeContent);
-                } else if (data.status === 'completed') {
-                  // Streaming completed - convert to final report format
+                } else if (data.status === 'completed' || data.status === 'success') {
+                  // Streaming completed - use the structured report if available
                   setIsStreaming(false);
                   setIsLoading(false);
                   
-                  // Create a structured report from the complete streaming content
-                  const finalReport: AIReportData = {
-                    status: 'success',
-                    report: {
-                      executive_summary: completeContent,
-                      performance_metrics: '',
-                      issues_bottlenecks: '',
-                      recommendations: '',
-                      detailed_analysis: '',
-                      generated_at: new Date().toISOString()
-                    },
-                    metadata: {
-                      generated_at: new Date().toISOString()
-                    }
-                  };
-                  
-                  setReportData(finalReport);
-                  return; // Exit the function
+                  if (data.report) {
+                    // Use the structured report from backend
+                    setReportData(data);
+                  } else {
+                    // Fallback to complete content
+                    const finalReport: AIReportData = {
+                      status: 'success',
+                      report: {
+                        executive_summary: completeContent,
+                        performance_metrics: '',
+                        issues_bottlenecks: '',
+                        recommendations: '',
+                        detailed_analysis: '',
+                        generated_at: new Date().toISOString(),
+                        raw_content: completeContent
+                      },
+                      metadata: {
+                        generated_at: new Date().toISOString()
+                      }
+                    };
+                    setReportData(finalReport);
+                  }
+                  return;
                 } else if (data.error) {
                   throw new Error(data.error);
                 }
@@ -137,7 +143,8 @@ const AIReport: React.FC = () => {
               issues_bottlenecks: '',
               recommendations: '',
               detailed_analysis: '',
-              generated_at: new Date().toISOString()
+              generated_at: new Date().toISOString(),
+              raw_content: completeContent
             },
             metadata: {
               generated_at: new Date().toISOString()
@@ -165,87 +172,163 @@ const AIReport: React.FC = () => {
     }
   }, [data.lastRefresh]);
 
-  // Format report section content
+  // Format report section content with enhanced styling
   const formatReportSection = (content: string) => {
     if (!content) return null;
     
-    return content.split('\n').map((line, index) => {
+    const lines = content.split('\n');
+    const elements: JSX.Element[] = [];
+    let listItems: string[] = [];
+    let listType: 'bullet' | 'numbered' | null = null;
+    
+    const flushList = () => {
+      if (listItems.length > 0) {
+        if (listType === 'numbered') {
+          elements.push(
+            <ol key={`list-${elements.length}`} className="report-list">
+              {listItems.map((item, idx) => (
+                <li key={idx} className="report-list-item">{item}</li>
+              ))}
+            </ol>
+          );
+        } else {
+          elements.push(
+            <ul key={`list-${elements.length}`} className="report-list">
+              {listItems.map((item, idx) => (
+                <li key={idx} className="report-list-item">{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        listItems = [];
+        listType = null;
+      }
+    };
+    
+    lines.forEach((line, index) => {
       const trimmedLine = line.trim();
-      if (!trimmedLine) return <br key={index} />;
+      if (!trimmedLine) {
+        flushList();
+        return;
+      }
+      
+      // Handle headers
+      if (trimmedLine.startsWith('###') || trimmedLine.includes('**') && trimmedLine.length < 100) {
+        flushList();
+        const headerText = trimmedLine.replace(/[#*]/g, '').trim();
+        elements.push(
+          <h4 key={index} className="report-subheader">{headerText}</h4>
+        );
+        return;
+      }
       
       // Handle bullet points
-      if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('" ')) {
-        return (
-          <li key={index} className="report-bullet">
-            {trimmedLine.substring(2)}
-          </li>
-        );
+      if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('• ')) {
+        if (listType !== 'bullet') {
+          flushList();
+          listType = 'bullet';
+        }
+        listItems.push(trimmedLine.substring(2));
+        return;
       }
       
       // Handle numbered lists
       if (/^\d+\./.test(trimmedLine)) {
-        return (
-          <li key={index} className="report-numbered">
-            {trimmedLine.substring(trimmedLine.indexOf('.') + 1).trim()}
-          </li>
-        );
+        if (listType !== 'numbered') {
+          flushList();
+          listType = 'numbered';
+        }
+        listItems.push(trimmedLine.substring(trimmedLine.indexOf('.') + 1).trim());
+        return;
       }
       
-      return <p key={index} className="report-paragraph">{trimmedLine}</p>;
+      // Handle paragraphs
+      flushList();
+      elements.push(
+        <p key={index} className="report-paragraph">{trimmedLine}</p>
+      );
     });
+    
+    flushList();
+    return elements;
   };
 
   // Get status badge
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'success':
-        return <span className="status-badge status-success">AI Generated</span>;
+        return <span className="status-badge status-success">🤖 AI Generated</span>;
       case 'fallback':
-        return <span className="status-badge status-fallback">Basic Analysis</span>;
+        return <span className="status-badge status-fallback">📊 Basic Analysis</span>;
       case 'error':
-        return <span className="status-badge status-error">Error</span>;
+        return <span className="status-badge status-error">❌ Error</span>;
       default:
-        return <span className="status-badge status-unknown">Unknown</span>;
+        return <span className="status-badge status-unknown">❓ Unknown</span>;
     }
   };
 
+  // Calculate metrics for dashboard
+  const getMetrics = () => {
+    if (!reportData?.metadata?.data_points_analyzed) return null;
+    
+    const { logs, jobs, gantt_priority_items, gantt_resource_items } = reportData.metadata.data_points_analyzed;
+    const errorLogs = data.systemLogs.filter(log => log.level === 'ERROR').length;
+    const warningLogs = data.systemLogs.filter(log => log.level === 'WARNING').length;
+    const completedJobs = data.detailedSchedule.filter(job => job.status === 'completed').length;
+    const completionRate = jobs > 0 ? (completedJobs / jobs * 100) : 0;
+    
+    return {
+      totalJobs: jobs,
+      completionRate,
+      errorLogs,
+      warningLogs,
+      totalGanttItems: gantt_priority_items + gantt_resource_items
+    };
+  };
+
+  const metrics = getMetrics();
+
   return (
     <div className="ai-report-container">
+      {/* Header */}
       <div className="ai-report-header">
-        <button 
-          className="back-button" 
-          onClick={() => window.history.back()}
-        >
-          <i className="fas fa-arrow-left"></i> Back
-        </button>
-        <h1>AI Production Report</h1>
-        <button 
-          className="generate-button" 
-          onClick={generateReport}
-          disabled={isLoading}
-        >
-          <i className={`fas fa-${isLoading ? 'spinner fa-spin' : 'brain'}`}></i>
-          {isLoading ? 'Generating...' : 'Generate New Report'}
-        </button>
+        <h1>🤖 AI Production Report</h1>
+        <div className="header-actions">
+          <button 
+            className="back-button" 
+            onClick={() => window.history.back()}
+          >
+            <i className="fas fa-arrow-left"></i> Back
+          </button>
+          <button 
+            className="generate-button" 
+            onClick={generateReport}
+            disabled={isLoading}
+          >
+            <i className={`fas fa-${isLoading ? 'spinner fa-spin' : 'brain'}`}></i>
+            {isLoading ? 'Generating...' : 'Generate New Report'}
+          </button>
+        </div>
       </div>
 
       <div className="ai-report-content">
+        {/* Error Message */}
         {error && (
-          <div className="error-message">
-            <i className="fas fa-exclamation-triangle"></i>
-            <span>Error: {error}</span>
+          <div className="alert-box error-alert">
+            <h3><span className="alert-icon">🚨</span>Error</h3>
+            <p>{error}</p>
           </div>
         )}
 
-        {isLoading && (
+        {/* Loading State */}
+        {isLoading && !isStreaming && (
           <div className="loading-container">
-            <div className="spinner-border text-primary" role="status">
-              <span className="visually-hidden">Loading...</span>
-            </div>
-            <p>Analyzing data and generating AI report...</p>
+            <div className="loading-spinner"></div>
+            <p>🔍 Analyzing data and generating AI report...</p>
           </div>
         )}
 
+        {/* Streaming State */}
         {isStreaming && streamingContent && (
           <div className="streaming-container">
             <div className="streaming-header">
@@ -257,15 +340,16 @@ const AIReport: React.FC = () => {
               </div>
             </div>
             <div className="streaming-content">
-              <pre className="streaming-text">{streamingContent}</pre>
+              <div className="streaming-text">{streamingContent}</div>
             </div>
           </div>
         )}
 
+        {/* Report Content */}
         {reportData && !isLoading && (
-          <div className="report-sections">
-            {/* Report Header */}
-            <div className="report-meta">
+          <div className="report-container">
+            {/* Report Header with Metrics */}
+            <div className="report-header">
               <div className="report-status">
                 {getStatusBadge(reportData.status)}
                 <span className="generated-time">
@@ -273,81 +357,132 @@ const AIReport: React.FC = () => {
                 </span>
               </div>
               
-              {reportData.metadata?.data_points_analyzed && (
-                <div className="data-points">
-                  <span>Data Points: </span>
-                  <span>{reportData.metadata.data_points_analyzed.logs} logs, </span>
-                  <span>{reportData.metadata.data_points_analyzed.jobs} jobs, </span>
-                  <span>{reportData.metadata.data_points_analyzed.gantt_priority_items + reportData.metadata.data_points_analyzed.gantt_resource_items} gantt items</span>
+              {/* Key Metrics Dashboard */}
+              {metrics && (
+                <div className="metrics-dashboard">
+                  <div className="metric-card">
+                    <div className={`metric-value ${metrics.completionRate === 0 ? 'critical' : metrics.completionRate < 50 ? 'warning' : 'ok'}`}>
+                      {metrics.completionRate.toFixed(1)}%
+                    </div>
+                    <div className="metric-label">Completion Rate</div>
+                    <small>{metrics.totalJobs} total jobs</small>
+                  </div>
+                  <div className="metric-card">
+                    <div className={`metric-value ${metrics.errorLogs > 10 ? 'critical' : metrics.errorLogs > 0 ? 'warning' : 'ok'}`}>
+                      {metrics.errorLogs}
+                    </div>
+                    <div className="metric-label">System Errors</div>
+                  </div>
+                  <div className="metric-card">
+                    <div className={`metric-value ${metrics.warningLogs > 20 ? 'warning' : 'ok'}`}>
+                      {metrics.warningLogs}
+                    </div>
+                    <div className="metric-label">Warnings</div>
+                  </div>
+                  <div className="metric-card">
+                    <div className="metric-value ok">
+                      {reportData.metadata?.data_points_analyzed?.logs || 0}
+                    </div>
+                    <div className="metric-label">Log Entries</div>
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Executive Summary */}
-            <section className="report-section">
-              <h2 className="section-title">
-                <i className="fas fa-chart-line"></i>
-                Executive Summary
-              </h2>
-              <div className="section-content">
-                {formatReportSection(reportData.report.executive_summary)}
-              </div>
-            </section>
+            {/* Report Sections */}
+            <div className="report-sections">
+              {/* Executive Summary */}
+              {reportData.report.executive_summary && (
+                <section className="report-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-chart-line"></i>
+                    📊 Executive Summary
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.executive_summary)}
+                  </div>
+                </section>
+              )}
 
-            {/* Performance Metrics */}
-            <section className="report-section">
-              <h2 className="section-title">
-                <i className="fas fa-tachometer-alt"></i>
-                Performance Metrics
-              </h2>
-              <div className="section-content">
-                {formatReportSection(reportData.report.performance_metrics)}
-              </div>
-            </section>
+              {/* Performance Metrics */}
+              {reportData.report.performance_metrics && (
+                <section className="report-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-tachometer-alt"></i>
+                    📈 Performance Metrics
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.performance_metrics)}
+                  </div>
+                </section>
+              )}
 
-            {/* Issues & Bottlenecks */}
-            <section className="report-section">
-              <h2 className="section-title">
-                <i className="fas fa-exclamation-circle"></i>
-                Issues & Bottlenecks
-              </h2>
-              <div className="section-content">
-                {formatReportSection(reportData.report.issues_bottlenecks)}
-              </div>
-            </section>
+              {/* Issues & Bottlenecks */}
+              {reportData.report.issues_bottlenecks && (
+                <section className="report-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-exclamation-triangle"></i>
+                    ⚠️ Issues & Bottlenecks
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.issues_bottlenecks)}
+                  </div>
+                </section>
+              )}
 
-            {/* Recommendations */}
-            <section className="report-section">
-              <h2 className="section-title">
-                <i className="fas fa-lightbulb"></i>
-                Recommendations
-              </h2>
-              <div className="section-content">
-                {formatReportSection(reportData.report.recommendations)}
-              </div>
-            </section>
+              {/* Recommendations */}
+              {reportData.report.recommendations && (
+                <section className="report-section recommendations-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-lightbulb"></i>
+                    💡 Recommendations
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.recommendations)}
+                  </div>
+                </section>
+              )}
 
-            {/* Detailed Analysis */}
-            <section className="report-section">
-              <h2 className="section-title">
-                <i className="fas fa-microscope"></i>
-                Detailed Analysis
-              </h2>
-              <div className="section-content">
-                {formatReportSection(reportData.report.detailed_analysis)}
-              </div>
-            </section>
+              {/* Detailed Analysis */}
+              {reportData.report.detailed_analysis && (
+                <section className="report-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-microscope"></i>
+                    🔍 Detailed Analysis
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.detailed_analysis)}
+                  </div>
+                </section>
+              )}
+
+              {/* Raw Content (if no structured sections) */}
+              {reportData.report.raw_content && 
+               !reportData.report.performance_metrics && 
+               !reportData.report.issues_bottlenecks && (
+                <section className="report-section">
+                  <h2 className="section-title">
+                    <i className="fas fa-file-alt"></i>
+                    📄 Complete Analysis
+                  </h2>
+                  <div className="section-content">
+                    {formatReportSection(reportData.report.raw_content)}
+                  </div>
+                </section>
+              )}
+            </div>
           </div>
         )}
 
+        {/* No Report State */}
         {!reportData && !isLoading && !error && (
           <div className="no-report">
-            <i className="fas fa-robot"></i>
+            <i className="fas fa-robot report-icon"></i>
             <h3>No AI Report Available</h3>
             {data.systemLogs.length === 0 && data.detailedSchedule.length === 0 ? (
               <p>No cached data available. Please go to the dashboard and click "Refresh All Data" first, then return here to generate an AI report.</p>
             ) : (
-              <p>Click "Generate New Report" to create an AI-powered analysis of your production scheduling data.</p>
+              <p>Click "Generate New Report" to create an AI-powered analysis of your production scheduling data using DeepSeek AI.</p>
             )}
             <button 
               className="generate-button-large" 

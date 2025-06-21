@@ -42,31 +42,14 @@ class TimeAvailabilityConfigManager:
     
     @staticmethod
     def load_config() -> TimeConfig:
-        """Load configuration from .env variables with validation - NO DEFAULTS."""
-        config_vars = {
-            'GRACE_PERIOD_HOURS': 'grace_period_hours'
-        }
-        
-        config_values = {}
-        missing_vars = []
-        
-        # Check all required environment variables
-        for env_var, config_key in config_vars.items():
-            value = os.getenv(env_var)
-            if value is None:
-                missing_vars.append(env_var)
-            else:
-                config_values[config_key] = value
-        
-        if missing_vars:
-            raise TimeAvailabilityConfigurationError(
-                f"❌ MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
-            )
+        """Load configuration with hardcoded values - NO ENVIRONMENT VARIABLES NEEDED."""
+        # Hardcoded GRACE_PERIOD_HOURS value
+        grace_period_hours = 48  # Grace period for late jobs (hours)
         
         # Convert and validate values
         try:
             config = TimeConfig(
-                grace_period_hours=int(config_values['grace_period_hours'])
+                grace_period_hours=grace_period_hours
             )
             
             # Validate configuration values
