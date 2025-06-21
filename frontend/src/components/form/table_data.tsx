@@ -40,6 +40,9 @@ interface Pagination {
 }
 
 const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/production-jobs/production-schedule` }) => {
+  // Use the provided endpoint or the default one
+  const apiEndpoint = endpoint;
+  
   // State hooks
   const [jobs, setJobs] = useState<ProductionSchedule[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -160,7 +163,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
 
     try {
       const startTime = performance.now(); // Track loading time
-      const response = await fetch(`${endpoint}?${queryParams.toString()}`);
+      const response = await fetch(`${apiEndpoint}?${queryParams.toString()}`);
       
       if (!response.ok) {
         throw new Error(`Server responded with status ${response.status}`);

@@ -116,13 +116,6 @@ const Dashboard: React.FC = () => {
       linkText: 'View Machine Allocation'
     },
     { 
-      title: 'Logs Report', 
-      iconClass: 'fas fa-file-alt', 
-      description: 'View system logs, audit trails, and activity reports for production scheduling and optimization.',
-      linkTo: '/logs',
-      linkText: 'View Logs'
-    },
-    { 
       title: 'AI Report', 
       iconClass: 'fas fa-brain', 
       description: 'Generate AI-powered insights and reporting on production efficiency, bottlenecks, and optimization opportunities.',
