@@ -50,6 +50,8 @@ ai_optimizer/
 │   │   ├── reporting/                  # Chart generation & analytics
 │   │   │   ├── chart_generator.py      # Gantt chart data
 │   │   │   └── production_report_generator.py # Analytics
+│   │   ├── llm_integration/            # AI Analysis & Reports
+│   │   │   └── llm.py                  # DeepSeek AI integration
 │   │   └── config/                     # Configuration management
 │   ├── testing/                        # Test scripts
 │   ├── main.py                         # FastAPI application entry
@@ -94,6 +96,8 @@ ai_optimizer/
 - **Holiday Support**: No scheduling on configured holidays
 
 ### ✅ Advanced Analytics & Visualization
+- **AI Production Analysis Report**: Professional single-page comprehensive report with DeepSeek AI
+- **Real-time Metrics Dashboard**: Live buffer status, completion rates, scheduling efficiency
 - **Buffer Status Analysis**: Real-time tracking of Late/Warning/Caution/OK/Unscheduled jobs
 - **Machine Bottleneck Detection**: Identifies overloaded machines and failure rates
 - **Chain Priority Visualization**: Shows 100x boost applications and critical paths
@@ -129,6 +133,10 @@ DEFAULT_SOLVER_TYPE=greedy
 NORMAL_WORKING_HOURS=17.5
 OT_WORKING_HOURS=19.5
 EMERGENCY_OT_HOURS=22.0
+
+# AI Integration
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_MODEL=deepseek-chat
 
 # Server Configuration
 PORT=8000
