@@ -87,7 +87,7 @@ class ReportingConfig:
 # Initialize configuration at module level - FAIL IF MISSING
 try:
     REPORTING_CONFIG = ReportingConfig.from_env()
-    logger.info(f"✅ Reporting endpoints initialized with {ORCHESTRATOR_CONFIG.default_solver_type} solver")
+    logger.info(f"✅ Reporting endpoints initialized with greedy solver")
 except Exception as e:
     logger.error(f"❌ FAILED to initialize reporting configuration: {e}")
     raise
@@ -111,12 +111,12 @@ class ParameterValidator:
 
 @router.get("/gantt/priority-view", response_model=List[Dict[str, Any]])
 async def get_gantt_priority_data(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data colored by priority with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
@@ -138,12 +138,12 @@ async def get_gantt_priority_data(
 
 @router.get("/gantt/resource-view", response_model=List[Dict[str, Any]])
 async def get_gantt_resource_data(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get Gantt chart data grouped by resource with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
@@ -165,12 +165,12 @@ async def get_gantt_resource_data(
 
 @router.get("/detailed-schedule", response_model=List[Dict[str, Any]])
 async def get_detailed_schedule_table(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get detailed schedule table data with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
@@ -192,12 +192,12 @@ async def get_detailed_schedule_table(
 
 @router.get("/schedule-overview", response_model=Dict[str, Any])
 async def get_schedule_overview(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Get schedule overview with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
@@ -292,14 +292,14 @@ async def get_schedule_overview(
 
 @router.get("/data-quality-analysis", response_model=Dict[str, Any])
 async def get_data_quality_analysis(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Analyze data quality with STRICT validation - NO FALLBACKS."""
     try:
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
-        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, force_refresh, max_jobs)
+        schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
         
         logger.info("🔄 Performing data quality analysis")
         table_data = prepare_detailed_schedule_table_data(schedule_output, jobs_input_data)
@@ -407,14 +407,14 @@ async def get_data_quality_analysis(
 
 @router.get("/late-jobs-analysis", response_model=Dict[str, Any])
 async def get_late_jobs_analysis(
-    solver: Optional[str] = Query(ORCHESTRATOR_CONFIG.default_solver_type, description="Solver type (greedy)"),
+    solver: Optional[str] = Query('greedy', description="Solver type (greedy)"),
     max_jobs: Optional[int] = Query(None, description="Maximum number of jobs to schedule (for testing)")
 ):
     """Analyze jobs scheduled past their plan dates."""
     try:
         from app.reporting.late_job_analyzer import LateJobAnalyzer
         
-        solver_type = ParameterValidator.validate_solver_type(solver or ORCHESTRATOR_CONFIG.default_solver_type)
+        solver_type = ParameterValidator.validate_solver_type(solver or 'greedy')
         
         # Get schedule and job data
         schedule_output, jobs_input_data = await get_schedule_and_job_data(solver_type, max_jobs)
@@ -452,7 +452,7 @@ async def reporting_health_check():
         "config": {
             "max_jobs_limit": ORCHESTRATOR_CONFIG.max_jobs_limit,
             "planning_horizon_days": ORCHESTRATOR_CONFIG.planning_horizon_days,
-            "default_solver_type": ORCHESTRATOR_CONFIG.default_solver_type
+            "default_solver_type": 'greedy'
         }
     }
     

@@ -20,8 +20,7 @@ class ScheduleOrchestratorConfig:
     
     max_jobs_limit: int
     planning_horizon_days: int
-    default_solver_type: str
-    solver_timeout_seconds: int
+    default_solver_type: str = 'greedy'  # Hardcoded - only greedy solver available
     
     @classmethod
     def from_env(cls) -> 'ScheduleOrchestratorConfig':
@@ -53,12 +52,9 @@ class ScheduleOrchestratorConfig:
         # Load required variables
         max_jobs_limit = get_required_int_env('MAX_JOBS_LIMIT')
         planning_horizon_days = get_required_int_env('PLANNING_HORIZON_DAYS')
-        solver_timeout_seconds = get_required_int_env('SOLVER_TIME_LIMIT_SECONDS')
         
-        default_solver_type = get_required_str_env('DEFAULT_SOLVER_TYPE')
-        if default_solver_type and default_solver_type.lower() not in ['greedy']:
-            invalid_vars.append(f"DEFAULT_SOLVER_TYPE={default_solver_type} (only 'greedy' solver available)")
-            default_solver_type = None
+        # DEFAULT_SOLVER_TYPE is now hardcoded as 'greedy'
+        default_solver_type = 'greedy'
         
         # Check for errors
         if missing_vars:
@@ -76,8 +72,7 @@ class ScheduleOrchestratorConfig:
         return cls(
             max_jobs_limit=max_jobs_limit,
             planning_horizon_days=planning_horizon_days,
-            default_solver_type=default_solver_type,
-            solver_timeout_seconds=solver_timeout_seconds
+            default_solver_type=default_solver_type
         )
 
 # Initialize configuration at module level

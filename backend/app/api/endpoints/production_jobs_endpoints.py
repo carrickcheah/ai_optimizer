@@ -34,12 +34,7 @@ class EndpointConfig:
     
     # Time horizons
     planning_horizon_days: int
-    default_buffer_days: int
-    max_buffer_days: int
     max_planning_horizon_days: int
-    
-    # Performance limits
-    query_timeout_seconds: int
     
     @classmethod
     def from_env(cls) -> 'EndpointConfig':
@@ -65,10 +60,7 @@ class EndpointConfig:
         default_page_size = get_required_int_env('DEFAULT_PAGE_SIZE')
         max_jobs_limit = get_required_int_env('MAX_JOBS_LIMIT')
         planning_horizon_days = get_required_int_env('PLANNING_HORIZON_DAYS')
-        default_buffer_days = get_required_int_env('DEFAULT_BUFFER_DAYS')
-        max_buffer_days = get_required_int_env('MAX_BUFFER_DAYS')
         max_planning_horizon_days = get_required_int_env('MAX_PLANNING_HORIZON_DAYS')
-        query_timeout_seconds = get_required_int_env('QUERY_TIMEOUT_SECONDS')
         
         # Check for critical errors - FAIL IMMEDIATELY
         if missing_vars:
@@ -92,11 +84,6 @@ class EndpointConfig:
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        if default_buffer_days > max_buffer_days:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: DEFAULT_BUFFER_DAYS ({default_buffer_days}) cannot exceed MAX_BUFFER_DAYS ({max_buffer_days})"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
         if planning_horizon_days > max_planning_horizon_days:
             error_msg = f"❌ CRITICAL CONFIG ERROR: PLANNING_HORIZON_DAYS ({planning_horizon_days}) cannot exceed MAX_PLANNING_HORIZON_DAYS ({max_planning_horizon_days})"
             logger.error(error_msg)
@@ -109,10 +96,7 @@ class EndpointConfig:
             default_page_size=default_page_size,
             max_jobs_limit=max_jobs_limit,
             planning_horizon_days=planning_horizon_days,
-            default_buffer_days=default_buffer_days,
-            max_buffer_days=max_buffer_days,
-            max_planning_horizon_days=max_planning_horizon_days,
-            query_timeout_seconds=query_timeout_seconds
+            max_planning_horizon_days=max_planning_horizon_days
         )
 
 # Initialize configuration at module level - FAIL IF MISSING
@@ -151,14 +135,8 @@ class ProductionJobValidation:
             raise ValueError(f"Page size cannot exceed {ENDPOINT_CONFIG.max_page_size}")
     
     @staticmethod
-    def validate_time_parameters(buffer_days: int, planning_horizon_days: int) -> None:
+    def validate_time_parameters(planning_horizon_days: int) -> None:
         """Validate time parameters with strict limits - NO FALLBACKS."""
-        if buffer_days <= 0:
-            raise ValueError("Buffer days must be positive")
-        
-        if buffer_days > ENDPOINT_CONFIG.max_buffer_days:
-            raise ValueError(f"Buffer days cannot exceed {ENDPOINT_CONFIG.max_buffer_days}")
-        
         if planning_horizon_days <= 0:
             raise ValueError("Planning horizon days must be positive")
         
@@ -283,14 +261,13 @@ async def get_production_schedule(
     sort_field: Optional[str] = Query("LCD_DATE", description="Field to sort by"),
     sort_order: Optional[str] = Query("asc", description="Sort order: 'asc' or 'desc'"),
     search: Optional[str] = Query(None, description="Search term"),
-    buffer_days: int = Query(ENDPOINT_CONFIG.default_buffer_days, ge=1, le=ENDPOINT_CONFIG.max_buffer_days, description="Buffer days"),
     planning_horizon_days: int = Query(ENDPOINT_CONFIG.planning_horizon_days, ge=7, le=ENDPOINT_CONFIG.max_planning_horizon_days, description="Planning horizon days")
 ):
     """Get production schedule using mariadb_parser as single data source."""
     try:
         # STRICT parameter validation - FAIL IF INVALID
         ProductionJobValidation.validate_pagination_parameters(page, page_size)
-        ProductionJobValidation.validate_time_parameters(buffer_days, planning_horizon_days)
+        ProductionJobValidation.validate_time_parameters(planning_horizon_days)
         
         # Validate sort parameters - NO FALLBACKS
         allowed_sort_fields = {
@@ -325,7 +302,6 @@ async def get_production_schedule(
                 "page_size": page_size,
                 "total_pages": 0,
                 "config_used": {
-                    "buffer_days": buffer_days,
                     "planning_horizon_days": planning_horizon_days,
                     "sort_field": sort_field,
                     "sort_order": sort_order
@@ -387,7 +363,6 @@ async def get_production_schedule(
             "page_size": page_size,
             "total_pages": total_pages,
             "config_used": {
-                "buffer_days": buffer_days,
                 "planning_horizon_days": planning_horizon_days,
                 "sort_field": sort_field,
                 "sort_order": sort_order

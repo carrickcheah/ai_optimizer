@@ -66,7 +66,7 @@ except ValueError:
 
 def validate_environment_config() -> Dict[str, Union[int, float]]:
     """
-    Validate and parse environment configuration values.
+    Return hardcoded configuration values (previously from environment variables).
     
     Returns:
         Dict containing validated configuration values
@@ -76,20 +76,16 @@ def validate_environment_config() -> Dict[str, Union[int, float]]:
     """
     config = {}
     
-    try:
-        config['break_hours'] = float(os.getenv('DEFAULT_BREAK_HOURS', '0'))
-        config['no_prod_hours'] = float(os.getenv('DEFAULT_NO_PROD_HOURS', '0'))
-        config['job_priority'] = int(os.getenv('DEFAULT_JOB_PRIORITY', '-1'))
-        
-        # Validate ranges
-        if config['break_hours'] < 0:
-            raise ValueError("DEFAULT_BREAK_HOURS cannot be negative")
-        if config['no_prod_hours'] < 0:
-            raise ValueError("DEFAULT_NO_PROD_HOURS cannot be negative")
-            
-    except ValueError as e:
-        logger.error(f"Invalid environment variable format: {e}")
-        raise
+    # Hardcoded values (previously from environment variables)
+    config['break_hours'] = 0.0      # DEFAULT_BREAK_HOURS - not used in code
+    config['no_prod_hours'] = 0.0    # DEFAULT_NO_PROD_HOURS - not used in code  
+    config['job_priority'] = 3       # DEFAULT_JOB_PRIORITY - used in SQL query
+    
+    # Validate ranges
+    if config['break_hours'] < 0:
+        raise ValueError("break_hours cannot be negative")
+    if config['no_prod_hours'] < 0:
+        raise ValueError("no_prod_hours cannot be negative")
     
     return config
 
