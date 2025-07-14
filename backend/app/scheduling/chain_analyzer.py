@@ -10,6 +10,14 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+# Import dependency manager for complex dependencies
+try:
+    from .dependency_manager import get_dependency_manager
+    COMPLEX_DEPENDENCIES_ENABLED = True
+except ImportError:
+    COMPLEX_DEPENDENCIES_ENABLED = False
+    logger.warning("Complex dependency support not available - using sequential chain analysis")
+
 
 class ChainAnalyzer:
     """Analyzer for dependency chains and critical path optimization."""
@@ -34,13 +42,59 @@ class ChainAnalyzer:
             
             # Add individual job analysis with chain completion requirements
             for process_num, job_id, job_item in family_jobs:
-                remaining_processes = len([j for j in family_jobs if j[0] >= process_num])
+                # Calculate remaining processes based on sequence position
+                if COMPLEX_DEPENDENCIES_ENABLED:
+                    dep_manager = get_dependency_manager()
+                    _, process_code, _ = dep_manager.extract_process_info(job_id)
+                    
+                    # Get sequence position
+                    seq_info = dep_manager.get_family_sequence_info(family)
+                    if seq_info['exists']:
+                        total_steps = seq_info['total_steps']
+                        
+                        # Count process occurrences to get current position
+                        process_count = 0
+                        for _, j_id, _ in family_jobs:
+                            if j_id == job_id:
+                                break
+                            _, pc, _ = dep_manager.extract_process_info(j_id)
+                            if pc == process_code:
+                                process_count += 1
+                        
+                        occurrence = process_count + 1
+                        current_position = dep_manager.get_sequence_position(family, process_code, occurrence)
+                        remaining_processes = total_steps - current_position + 1 if current_position else 1
+                    else:
+                        # No sequence defined, use process number
+                        remaining_processes = len([j for j in family_jobs if j[0] >= process_num])
+                else:
+                    remaining_processes = len([j for j in family_jobs if j[0] >= process_num])
                 
                 # Calculate remaining chain duration from this process
                 remaining_duration = 0
-                for p_num, _, job in family_jobs:
-                    if p_num >= process_num:
-                        remaining_duration += job.get('processing_time', 3600) / 3600  # Convert to hours
+                if COMPLEX_DEPENDENCIES_ENABLED and dep_manager:
+                    # Calculate based on actual sequence
+                    seq_info = dep_manager.get_family_sequence_info(family)
+                    if seq_info['exists']:
+                        # Find all jobs that come after this one in the sequence
+                        _, process_code, _ = dep_manager.extract_process_info(job_id)
+                        current_position = dep_manager.get_sequence_position(family, process_code, 1)  # Simplified for now
+                        
+                        if current_position:
+                            for _, j_id, job in family_jobs:
+                                _, pc, _ = dep_manager.extract_process_info(j_id)
+                                job_position = dep_manager.get_sequence_position(family, pc, 1)
+                                if job_position and job_position >= current_position:
+                                    remaining_duration += job.get('processing_time', 3600) / 3600
+                    else:
+                        # Fallback to sequential
+                        for p_num, _, job in family_jobs:
+                            if p_num >= process_num:
+                                remaining_duration += job.get('processing_time', 3600) / 3600
+                else:
+                    for p_num, _, job in family_jobs:
+                        if p_num >= process_num:
+                            remaining_duration += job.get('processing_time', 3600) / 3600  # Convert to hours
                 
                 # Calculate required start time for chain completion by LCD
                 earliest_lcd = analysis['earliest_lcd']

@@ -19,6 +19,14 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Import dependency manager for complex dependencies
+try:
+    from .dependency_manager import get_dependency_manager
+    COMPLEX_DEPENDENCIES_ENABLED = True
+except ImportError:
+    COMPLEX_DEPENDENCIES_ENABLED = False
+    logger.warning("Complex dependency support not available - using sequential dependencies only")
+
 
 class GreedySchedulingError(Exception):
     """Base exception for greedy scheduling errors."""
@@ -339,6 +347,12 @@ class JobCategorizer:
                 else:
                     categories['independent'].append(job)
             return categories
+        
+        # Group jobs by family first if using complex dependencies
+        if COMPLEX_DEPENDENCIES_ENABLED:
+            dep_manager = get_dependency_manager()
+            # Let dependency manager derive sequences from job data
+            dep_manager.derive_sequence_from_jobs(jobs)
         
         for job in jobs:
             machine_name = job.get('MachineName_v')
@@ -874,17 +888,47 @@ class GreedyScheduler:
                         must_start_str = datetime.fromtimestamp(must_start_by).strftime('%Y-%m-%d %H:%M')
                         logger.info(f"🚨 CHAIN CRITICAL: {job_id} needs {boost}x priority boost - must start by {must_start_str}")
                 
-                # Check dependency
-                if process_num > 1:
-                    prev_process_key = (family, process_num - 1)
-                    if prev_process_key not in schedule_state['process_end_times']:
-                        logger.warning(f"Job {job_id} cannot be scheduled due to unmet dependencies")
-                        schedule_state['unscheduled_jobs'].append(job_item)
-                        continue
+                # Check dependency using dependency manager
+                earliest_start = schedule_state['current_time']
+                
+                if COMPLEX_DEPENDENCIES_ENABLED:
+                    # Use dependency manager for complex sequences
+                    dep_manager = get_dependency_manager()
                     
-                    earliest_start = schedule_state['process_end_times'][prev_process_key]
+                    # Get all jobs in this family for dependency resolution
+                    all_family_jobs = []
+                    for p_num, j_id, j_item in sorted_family_jobs:
+                        all_family_jobs.append({'job_id': j_id, **j_item})
+                    
+                    # Find dependency
+                    dep_job_id = dep_manager.find_job_dependency(job_id, all_family_jobs)
+                    
+                    if dep_job_id:
+                        # Check if dependency is scheduled
+                        dep_scheduled = False
+                        for machine_tasks in schedule_state['schedule'].values():
+                            for task in machine_tasks:
+                                if task[0] == dep_job_id:
+                                    earliest_start = max(earliest_start, task[2])  # Use end time of dependency
+                                    dep_scheduled = True
+                                    break
+                            if dep_scheduled:
+                                break
+                        
+                        if not dep_scheduled:
+                            logger.warning(f"Job {job_id} cannot be scheduled - dependency {dep_job_id} not yet scheduled")
+                            schedule_state['unscheduled_jobs'].append(job_item)
+                            continue
                 else:
-                    earliest_start = schedule_state['current_time']
+                    # Fallback to sequential logic
+                    if process_num > 1:
+                        prev_process_key = (family, process_num - 1)
+                        if prev_process_key not in schedule_state['process_end_times']:
+                            logger.warning(f"Job {job_id} cannot be scheduled due to unmet dependencies")
+                            schedule_state['unscheduled_jobs'].append(job_item)
+                            continue
+                        
+                        earliest_start = schedule_state['process_end_times'][prev_process_key]
                 
                 # Handle subcontractor vs machine jobs differently
                 machine_name = job_item.get('MachineName_v')

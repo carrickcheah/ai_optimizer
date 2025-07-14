@@ -11,6 +11,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
+# Import dependency manager for complex dependencies
+try:
+    from .dependency_manager import get_dependency_manager
+    COMPLEX_DEPENDENCIES_ENABLED = True
+except ImportError:
+    COMPLEX_DEPENDENCIES_ENABLED = False
+    logger.warning("Complex dependency support not available - using sequential dependencies only")
+
 # Compiled regex patterns for performance
 PROCESS_PATTERN = re.compile(r'(\d+)/\d+$')
 FAMILY_PATTERN = re.compile(r'(.*?)-\d+/\d+$')
@@ -474,6 +482,13 @@ class JobGrouper:
         """
         job_families = defaultdict(list)
         
+        # Use dependency manager if available
+        dep_manager = None
+        if COMPLEX_DEPENDENCIES_ENABLED:
+            dep_manager = get_dependency_manager()
+            # Let dependency manager learn from job data
+            dep_manager.derive_sequence_from_jobs(jobs)
+        
         for job in jobs:
             if not JobValidator.validate_job_data(job):
                 continue
@@ -484,9 +499,34 @@ class JobGrouper:
             
             job_families[family].append((process_num, job_id, job))
         
-        # Sort by process number efficiently
-        for family_jobs in job_families.values():
-            family_jobs.sort(key=lambda x: x[0])
+        # Sort by sequence position if using dependency manager
+        if dep_manager:
+            for family, family_jobs in job_families.items():
+                # Create a mapping of job_id to sequence position
+                position_map = {}
+                
+                for process_num, job_id, job_item in family_jobs:
+                    _, process_code, _ = dep_manager.extract_process_info(job_id)
+                    
+                    # Count occurrences of this process
+                    process_count = 0
+                    for pn, jid, _ in family_jobs:
+                        if jid == job_id:
+                            break
+                        _, pc, _ = dep_manager.extract_process_info(jid)
+                        if pc == process_code:
+                            process_count += 1
+                    
+                    occurrence = process_count + 1
+                    seq_position = dep_manager.get_sequence_position(family, process_code, occurrence)
+                    position_map[job_id] = seq_position if seq_position else 999
+                
+                # Sort by sequence position
+                family_jobs.sort(key=lambda x: (position_map.get(x[1], 999), x[0]))
+        else:
+            # Fallback: Sort by process number efficiently
+            for family_jobs in job_families.values():
+                family_jobs.sort(key=lambda x: x[0])
         
         return dict(job_families)
 
