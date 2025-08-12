@@ -1,5 +1,5 @@
 # Quick development start (equivalent to dev-start.sh)
-dev:
+run:
 	@echo "🚀 Starting AI Optimizer Development Environment"
 	@echo "📁 Project structure:"
 	@echo "├── backend/    - FastAPI backend (Python)"
@@ -19,6 +19,10 @@ dev:
 	@echo ""
 	@echo "Press Ctrl+C to stop both services"
 
+# Legacy alias for run
+dev:
+	@make run
+
 # Backend development server
 backend-dev:
 	@cd backend && \
@@ -31,10 +35,14 @@ frontend-dev:
 	npm run dev
 
 # Stop all services
-stop:
+down:
 	@echo "🛑 Stopping all services..."
 	@pkill -f "uvicorn main:app" || true
 	@pkill -f "vite" || true
 	@pkill -f "node.*vite" || true
 
-.PHONY: dev backend-dev frontend-dev stop
+# Legacy alias for down
+stop:
+	@make down
+
+.PHONY: run dev backend-dev frontend-dev down stop
