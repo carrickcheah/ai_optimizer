@@ -53,8 +53,8 @@ const Dashboard: React.FC = () => {
     
     try {
       // Clear cache first
-      addLog('🗑️ Clearing cache...');
-      clearCache();
+      addLog('🗑️ Clearing frontend and backend caches...');
+      await clearCache();
       await new Promise(resolve => setTimeout(resolve, 300));
       
       // Fetching schedule data with animated dots

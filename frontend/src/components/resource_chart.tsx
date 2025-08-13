@@ -24,7 +24,7 @@ interface ResourceChartProps {
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const { data } = useDataCache();
-  const [timeRange, setTimeRange] = useState<string>('7d');
+  const [timeRange, setTimeRange] = useState<string>('21d');
 
   // Use cached data instead of local state
   const tasks: TaskData[] = data.ganttResourceView;
@@ -416,7 +416,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // console.log('[ResourceChart] First series base values (start times):', (plotData[0] as any).base);
   }
 
-  const chartTitle = title || 'Production Planning System (by Resource)';
+  // Chart title removed to eliminate blank space at top
+  // const chartTitle = title || 'Production Planning System (by Resource)';
   
   const handleTimeRangeChange = (range: string) => {
     // console.log('[ResourceChart] Time range changing from', timeRange, 'to', range);
@@ -533,6 +534,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       endDate.setDate(now.getDate() + 7);
     } else if (timeRange === '14d') {
       endDate.setDate(now.getDate() + 14);
+    } else if (timeRange === '21d') {
+      endDate.setDate(now.getDate() + 21);
     }
     
     // console.log('[ResourceChart] Filter date range:', {
@@ -646,8 +649,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   };
 
   const layout = {
-    title: chartTitle,
-    height: Math.max(700, resourceGroups.length * 50 + 200), // Adjusted height for resource groups
+    title: '', // Remove title to eliminate blank space at top
+    height: Math.max(700, resourceGroups.length * 50 + 150), // Reduced height calculation
     width: window.innerWidth * 0.95,
     xaxis: {
       type: 'date' as const,
@@ -672,7 +675,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
       autorange: 'reversed' as const,
     },
     autosize: true,
-    margin: { l: 180, r: 50, t: 50, b: 100 },
+    margin: { l: 180, r: 50, t: 0, b: 100 }, // Zero top margin to eliminate blank space
     plot_bgcolor: 'rgb(255, 255, 255)',
     paper_bgcolor: 'rgb(255, 255, 255)',
     showlegend: false,
@@ -960,6 +963,11 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             onClick={() => handleTimeRangeChange('14d')}
             style={{width: '55px'}}
           >14d</button>
+          <button 
+            className={timeRange === '21d' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('21d')}
+            style={{width: '55px'}}
+          >21d</button>
           <button 
             className={timeRange === 'all' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('all')}

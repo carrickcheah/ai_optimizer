@@ -168,9 +168,10 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     setData(prev => ({ ...prev, error: null }));
   };
 
-  const clearCache = () => {
-    console.log('🗑️ DataCacheContext: Clearing localStorage cache...');
+  const clearCache = async () => {
+    console.log('🗑️ DataCacheContext: Clearing localStorage and backend caches...');
     try {
+      // Clear frontend localStorage cache
       localStorage.removeItem('aiOptimizerCache');
       setData({
         ganttPriorityView: [],
@@ -182,9 +183,33 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
         lastRefresh: new Date(),
       });
       setHasValidCache(false);
-      console.log('✅ DataCacheContext: Cache cleared successfully');
+      console.log('✅ DataCacheContext: Frontend cache cleared');
+      
+      // Clear backend caches
+      try {
+        const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/api$/, '');
+        const response = await fetch(`${API_BASE_URL}/api/reports/clear-cache`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log('✅ DataCacheContext: Backend caches cleared:', result.message);
+        } else {
+          console.warn('⚠️ DataCacheContext: Backend cache clearing failed:', response.statusText);
+        }
+      } catch (backendError) {
+        console.warn('⚠️ DataCacheContext: Could not clear backend caches:', backendError);
+        // Don't throw - frontend cache clearing still succeeded
+      }
+      
+      console.log('✅ DataCacheContext: All caches cleared successfully');
     } catch (error) {
       console.warn('Failed to clear cache:', error);
+      throw error; // Re-throw so calling code knows it failed
     }
   };
 

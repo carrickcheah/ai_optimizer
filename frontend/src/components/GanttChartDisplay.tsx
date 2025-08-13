@@ -194,7 +194,7 @@ const formatDateTime = (dateTimeString: string): string => {
 const GanttChartDisplay: React.FC = () => {
   const { data, refreshData } = useDataCache();
   const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
-  const [timeRange, setTimeRange] = useState<string>('7d');
+  const [timeRange, setTimeRange] = useState<string>('21d');
   const [chartTitle] = useState<string>('Production Planning System');
   
   // DEBUG: Check working hours config (only log once when config loads)
@@ -630,6 +630,8 @@ const GanttChartDisplay: React.FC = () => {
       endDate.setDate(now.getDate() + 7);
     } else if (timeRange === '14d') {
       endDate.setDate(now.getDate() + 14);
+    } else if (timeRange === '21d') {
+      endDate.setDate(now.getDate() + 21);
     }
     
     // console.log('Filter date range:', {
@@ -1021,6 +1023,11 @@ const GanttChartDisplay: React.FC = () => {
             onClick={() => handleTimeRangeChange('14d')}
             style={{width: '55px'}}
           >14d</button>
+          <button 
+            className={timeRange === '21d' ? 'flat-active' : 'flat-inactive'} 
+            onClick={() => handleTimeRangeChange('21d')}
+            style={{width: '55px'}}
+          >21d</button>
           <button 
             className={timeRange === 'all' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('all')}

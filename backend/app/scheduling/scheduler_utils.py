@@ -88,8 +88,8 @@ class ProcessExtractor:
             return 999
         
         # Try common patterns in order of specificity
-        # 1) Explicit P## marker (e.g., CD02-P01)
-        p_marker = re.search(r'P(\d+)', process_code, re.IGNORECASE)
+        # 1) Explicit -P## marker (e.g., CD02-P01) - must be after hyphen to avoid matching CP08
+        p_marker = re.search(r'-P(\d+)', process_code, re.IGNORECASE)
         if p_marker:
             seq = int(p_marker.group(1))
             cls._cache[job_id] = seq

@@ -586,3 +586,47 @@ async def get_working_hours_configuration():
     except Exception as e:
         logger.error(f"❌ WORKING HOURS CONFIGURATION FAILED: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve working hours configuration: {str(e)}")
+
+
+@router.post("/clear-cache")
+async def clear_backend_cache():
+    """Clear all backend caches for fresh scheduling."""
+    try:
+        logger.info("🗑️ Clearing all backend caches...")
+        
+        # Clear scheduler utility caches
+        from app.scheduling.scheduler_utils import clear_all_caches
+        clear_all_caches()
+        
+        # Clear dependency manager cache if available
+        try:
+            from app.scheduling.dependency_manager import get_dependency_manager
+            dep_manager = get_dependency_manager()
+            if hasattr(dep_manager, 'clear_cache'):
+                dep_manager.clear_cache()
+                logger.info("Cleared dependency manager cache")
+        except Exception as e:
+            logger.warning(f"Could not clear dependency manager cache: {e}")
+        
+        # Clear time availability cache
+        try:
+            from app.scheduling.time_availability import TimeAvailabilityManager
+            time_checker = TimeAvailabilityManager.get_instance()
+            if time_checker and hasattr(time_checker.cache, '_cache_expiry'):
+                # Force cache expiry
+                time_checker.cache._cache_expiry = None
+                logger.info("Cleared time availability cache")
+        except Exception as e:
+            logger.warning(f"Could not clear time availability cache: {e}")
+        
+        logger.info("✅ All backend caches cleared successfully")
+        
+        return {
+            "status": "success", 
+            "message": "All backend caches cleared successfully",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to clear backend caches: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache clearing error: {str(e)}")

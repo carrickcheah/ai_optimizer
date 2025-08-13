@@ -541,8 +541,9 @@ class GreedyScheduler:
     def __init__(self, config: GreedyConfig):
         self.config = config
         self.constraints = SchedulingConstraints(config)
-        # Allow runtime toggle: STRICT_SEQUENCE=1 forces hard predecessor enforcement (no gaps)
-        self.strict_sequence = os.getenv('STRICT_SEQUENCE', '0') in ('1','true','True','yes','on')
+        # SEQUENTIAL mode: always enforce immediate predecessor completion before starting next step
+        # This means gaps are allowed, but P(n) must wait for P(n-1) to finish first
+        self.strict_sequence = False
     
     @staticmethod
     def _sort_jobs_by_lcd_priority(jobs: List[Dict[str, Any]], include_processing_time: bool = True) -> List[Dict[str, Any]]:
@@ -846,7 +847,7 @@ class GreedyScheduler:
                     families_with_gaps[family_name] = missing_processes
                     logger.warning(f"🚫 INCOMPLETE SEQUENCE: Family '{family_name}' missing processes: {missing_processes}")
                     logger.warning(f"🚫 Present: {sorted(processes_in_family)}, Expected: {expected_sequence}")
-                    logger.warning(f"🚫 ENFORCEMENT: Jobs beyond gaps will be blocked!")
+                    logger.warning(f"🔧 SEQUENTIAL MODE: Jobs will wait for immediate predecessors to finish (gaps allowed)")
                 else:
                     logger.info(f"✅ COMPLETE SEQUENCE: Family '{family_name}' has all processes P1-P{max(processes_in_family)}")
             
@@ -907,25 +908,15 @@ class GreedyScheduler:
             # Track which process numbers exist in this family (present in input)
             family_present_processes = sorted({p for p, _, _ in sorted_family_jobs})
 
-            # PHASED SCHEDULING: finish all jobs of process k before any process > k starts
-            jobs_by_process: Dict[int, List[Tuple[int, str, Dict[str, Any]]]] = {}
-            for pnum, jid, jitem in sorted_family_jobs:
-                jobs_by_process.setdefault(pnum, []).append((pnum, jid, jitem))
+            pending_jobs = list(sorted_family_jobs)
+            made_progress = True
+            while pending_jobs and made_progress:
+                made_progress = False
+                next_round: List[Tuple[int, str, Dict[str, Any]]] = []
 
-            for phase in family_present_processes:
-                phase_jobs = list(jobs_by_process.get(phase, []))
-                if not phase_jobs:
-                    continue
-
-                pending_jobs = phase_jobs
-                made_progress = True
-                while pending_jobs and made_progress:
-                    made_progress = False
-                    next_round: List[Tuple[int, str, Dict[str, Any]]] = []
-
-                    for process_num, job_id, job_item in pending_jobs:
-                        if job_id in schedule_state['scheduled_jobs']:
-                            continue
+                for process_num, job_id, job_item in pending_jobs:
+                    if job_id in schedule_state['scheduled_jobs']:
+                        continue
 
                     # Log chain completion analysis if available
                     chain_info = chain_analysis.get(job_id, {})
@@ -963,52 +954,53 @@ class GreedyScheduler:
                             # Defer to next round
                             next_round.append((process_num, job_id, job_item))
                             continue
-
-                    # Regardless of complex dep resolution, enforce family serialization among present steps
-                    if self.strict_sequence:
-                        # HARD mode: require all P < current to exist and be scheduled
-                        required = [p for p in range(1, process_num)]
-                        missing_required = [p for p in required if p not in family_present_processes]
-                        if missing_required:
-                            logger.warning(f"⛔ STRICT: Blocking {job_id} due to missing predecessors {missing_required}")
-                            schedule_state['unscheduled_jobs'].append(job_item)
-                            made_progress = True
-                            continue
-                        latest_predecessor_end = schedule_state['current_time']
-                        waiting = False
-                        for p in required:
-                            key = (family, p)
-                            if key in schedule_state['process_end_times']:
-                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][key])
-                            else:
-                                waiting = True
-                                break
-                        if waiting:
-                            next_round.append((process_num, job_id, job_item))
-                            continue
-                        earliest_start = max(earliest_start, latest_predecessor_end)
                     else:
-                        # SOFT mode: only require earlier steps that are present in this family
-                        earlier_present = [p for p in family_present_processes if p < process_num]
-                        latest_predecessor_end = schedule_state['current_time']
-                        unmet_present_predecessor = False
-                        for p in earlier_present:
-                            key = (family, p)
-                            if key in schedule_state['process_end_times']:
-                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][key])
-                            else:
-                                unmet_present_predecessor = True
-                                break
-                        if unmet_present_predecessor:
-                            next_round.append((process_num, job_id, job_item))
-                            continue
-                        earliest_start = max(earliest_start, latest_predecessor_end)
-
-                    # NEW RULE: serialize same-process occurrences within a family
-                    # If a previous occurrence of the same process has finished, wait until its end
-                    same_proc_key = (family, process_num)
-                    if same_proc_key in schedule_state['process_end_times']:
-                        earliest_start = max(earliest_start, schedule_state['process_end_times'][same_proc_key])
+                        # Enforce predecessors
+                        if self.strict_sequence:
+                            # HARD mode: require all P < current to exist and be scheduled
+                            required = [p for p in range(1, process_num)]
+                            # If any required step missing from input, block entirely
+                            missing_required = [p for p in required if p not in family_present_processes]
+                            if missing_required:
+                                logger.warning(f"⛔ STRICT: Blocking {job_id} due to missing predecessors {missing_required}")
+                                schedule_state['unscheduled_jobs'].append(job_item)
+                                made_progress = True
+                                continue
+                            # If not yet scheduled, defer until predecessors complete
+                            latest_predecessor_end = schedule_state['current_time']
+                            waiting = False
+                            for p in required:
+                                key = (family, p)
+                                if key in schedule_state['process_end_times']:
+                                    latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][key])
+                                else:
+                                    waiting = True
+                                    break
+                            if waiting:
+                                next_round.append((process_num, job_id, job_item))
+                                continue
+                            earliest_start = max(earliest_start, latest_predecessor_end)
+                        else:
+                            # SEQUENTIAL mode: require immediate predecessor (highest P < current) to finish first
+                            # Find the immediate predecessor that exists in this family
+                            immediate_predecessor = None
+                            for p in reversed(range(1, process_num)):
+                                if p in family_present_processes:
+                                    immediate_predecessor = p
+                                    break
+                            
+                            if immediate_predecessor is not None:
+                                # Check if immediate predecessor is scheduled and finished
+                                key = (family, immediate_predecessor)
+                                if key in schedule_state['process_end_times']:
+                                    # Predecessor finished, use its end time as earliest start
+                                    latest_predecessor_end = schedule_state['process_end_times'][key]
+                                    earliest_start = max(earliest_start, latest_predecessor_end)
+                                    logger.info(f"⏰ SEQUENCE: {job_id} (P{process_num}) starts after P{immediate_predecessor} finishes at {datetime.fromtimestamp(latest_predecessor_end).strftime('%Y-%m-%d %H:%M')}")
+                                else:
+                                    # Immediate predecessor not yet scheduled; defer this job
+                                    next_round.append((process_num, job_id, job_item))
+                                    continue
 
                     # Schedule now
                     machine_name = job_item.get('MachineName_v')
@@ -1048,28 +1040,11 @@ class GreedyScheduler:
                         # Already marked unscheduled by helper; continue
                         made_progress = True
 
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
                 pending_jobs = next_round
-                # Any jobs still pending in this phase could not meet constraints; mark unscheduled
-                for _, _, leftover_job in pending_jobs:
-                    schedule_state['unscheduled_jobs'].append(leftover_job)
+
+            # Any jobs still pending could not meet present-only predecessors; mark unscheduled
+            for _, _, leftover_job in pending_jobs:
+                schedule_state['unscheduled_jobs'].append(leftover_job)
     
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,
