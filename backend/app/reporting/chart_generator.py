@@ -409,16 +409,19 @@ def calculate_buffer_hours(end_time: Union[int, float], due_date: Union[int, flo
         return None
 
 def determine_buffer_status(buffer_hours: Optional[float]) -> str:
-    """Determine buffer status using configured thresholds with strict validation."""
+    """Determine buffer status using configured thresholds with strict validation.
+
+    Note: As per new policy, the former 'Critical' bucket is merged into 'Warning'.
+    Any non-negative buffer below warning threshold is classified as 'Warning'.
+    """
     if buffer_hours is None:
         logger.warning("❌ BUFFER STATUS CALCULATION: buffer_hours is None")
-        return "Unknown"
+        return "Unscheduled"
     
     try:
         if buffer_hours < 0:
             return "Late"
-        elif buffer_hours < CHART_CONFIG.buffer_critical_hours:
-            return "Critical"
+        # Merge 'Critical' into 'Warning' (0 <= buffer < warning threshold)
         elif buffer_hours < CHART_CONFIG.buffer_warning_hours:
             return "Warning"
         elif buffer_hours < CHART_CONFIG.buffer_caution_hours:
@@ -482,7 +485,7 @@ def prepare_gantt_data_priority_view(schedule: Dict[str, Any], jobs_input_data: 
             
             # Calculate buffer status
             buffer_hours = None
-            buffer_status = "Unknown"
+            buffer_status = "Unscheduled"
             
             if job_details.get('lcd_date_epoch'):
                 buffer_hours = calculate_buffer_hours(end_epoch, job_details['lcd_date_epoch'])
@@ -588,7 +591,7 @@ def prepare_gantt_data_resource_view(schedule: Dict[str, Any], jobs_input_data: 
             
             # Calculate buffer status
             buffer_hours = None
-            buffer_status = "Unknown"
+            buffer_status = "Unscheduled"
             
             if job_details.get('lcd_date_epoch'):
                 buffer_hours = calculate_buffer_hours(end_epoch, job_details['lcd_date_epoch'])
@@ -733,12 +736,14 @@ def prepare_detailed_schedule_table_data(schedule: Dict[str, Any], jobs_input_da
         
         # Calculate buffer with strict validation - NO DEFAULTS OR FALLBACKS
         buffer_hours = None
-        buffer_status = "N/A"
+        buffer_status = "Unscheduled"
         
         if scheduled.get('end') and job.get('lcd_date_epoch'):
             buffer_hours = calculate_buffer_hours(scheduled['end'], job['lcd_date_epoch'])
             if buffer_hours is not None:
                 buffer_status = determine_buffer_status(buffer_hours)
+            else:
+                buffer_status = "Unscheduled"
         
         # Format balance hours for display
         bal_hr_display = round(buffer_hours, 1) if buffer_hours is not None else None

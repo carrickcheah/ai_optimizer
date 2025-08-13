@@ -254,15 +254,24 @@ async def get_production_schedule(
         ProductionJobValidation.validate_time_parameters(planning_horizon_days)
         
         # Validate sort parameters - NO FALLBACKS
+        # Map requested sort fields to keys in schedule_items below
         allowed_sort_fields = {
             "PLAN_DATE": "plan_date",
-            "LCD_DATE": "lcd_date_str", 
-            "JOB": "job",
-            "PROCESS_CODE": "process_code",
-            "RSC_CODE": "rsc_location",
-            "MACHINE": "MachineName_v",
-            "NUMBER_OPERATOR": "number_operator",
-            "JOB_QUANTITY": "job_quantity"
+            "LCD_DATE": "LCD_DATE",
+            "JOB": "JOB",
+            "PROCESS_CODE": "PROCESS_CODE",
+            "RSC_CODE": "RSC_CODE",
+            "MACHINE": "MACHINE",
+            "NUMBER_OPERATOR": "NUMBER_OPERATOR",
+            "JOB_QUANTITY": "JOB_QUANTITY",
+            "TxnId_i": "TxnId_i",
+            "MATERIAL_ARRIVAL": "MATERIAL_ARRIVAL",
+            # Additional fields used by frontend table
+            "START_DATE": "START_DATE",
+            "JOB_DEPENDENCY": "JOB_DEPENDENCY",
+            "ACCUMULATED_DAILY_OUTPUT": "ACCUMULATED_DAILY_OUTPUT",
+            "BALANCE_QUANTITY": "BALANCE_QUANTITY",
+            "REDUCE_OPERATION_HOURS": "REDUCE_OPERATION_HOURS"
         }
         
         if sort_field not in allowed_sort_fields:
@@ -316,7 +325,13 @@ async def get_production_schedule(
                 "NUMBER_OPERATOR": job.get('number_operator', 1),
                 "JOB_QUANTITY": job.get('job_quantity', 0),
                 "TxnId_i": job.get('op_id', 0),
-                "MATERIAL_ARRIVAL": job.get('material_arrival_str', '').split(' ')[0] if job.get('material_arrival_str') else ''
+                "MATERIAL_ARRIVAL": job.get('material_arrival_str', '').split(' ')[0] if job.get('material_arrival_str') else '',
+                # Extra fields required by frontend
+                "START_DATE": job.get('start_date_str', ''),
+                "JOB_DEPENDENCY": job.get('job_dependency', True),
+                "ACCUMULATED_DAILY_OUTPUT": job.get('accumulated_daily_output', 0),
+                "BALANCE_QUANTITY": job.get('balance_quantity', 0),
+                "REDUCE_OPERATION_HOURS": job.get('reduce_operation_hours', 0)
             }
             schedule_items.append(schedule_item)
         

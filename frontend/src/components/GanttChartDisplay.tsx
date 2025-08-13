@@ -82,15 +82,25 @@ const createMergedJobBarsWithGaps = (tasks: any[]): MergedJobData[] => {
       new Date(a.Start).getTime() - new Date(b.Start).getTime()
     );
     
-    const segments = sortedTasks.map(task => ({
-      start: new Date(task.Start).getTime(),
-      end: new Date(task.Finish).getTime(),
-      startIso: task.Start,
-      endIso: task.Finish
-    }));
+    // Build segments and drop invalid date rows
+    const segments = sortedTasks
+      .map(task => ({
+        start: new Date(task.Start).getTime(),
+        end: new Date(task.Finish).getTime(),
+        startIso: task.Start,
+        endIso: task.Finish
+      }))
+      .filter(seg => !isNaN(seg.start) && !isNaN(seg.end));
+
+    if (segments.length === 0) {
+      return; // skip this job group entirely if all dates are invalid
+    }
     
     const overallStartTime = Math.min(...segments.map(s => s.start));
     const overallEndTime = Math.max(...segments.map(s => s.end));
+    if (!isFinite(overallStartTime) || !isFinite(overallEndTime)) {
+      return; // guard invalid dates
+    }
     const totalDuration = overallEndTime - overallStartTime;
     
     // Calculate gap periods between segments
@@ -238,8 +248,8 @@ const GanttChartDisplay: React.FC = () => {
       console.log('[GanttChart] Sample task from cache:', tasks[0]);
       
       // Check date ranges in the data
-      const dates = tasks.map(task => [new Date(task.Start).getTime(), new Date(task.Finish).getTime()]);
-      const validDates = dates.filter(([start, end]) => !isNaN(start) && !isNaN(end));
+    const dates = tasks.map(task => [new Date(task.Start).getTime(), new Date(task.Finish).getTime()]);
+    const validDates = dates.filter(([start, end]) => isFinite(start) && isFinite(end) && !isNaN(start) && !isNaN(end));
       
       if (validDates.length > 0) {
         const earliestDate = new Date(Math.min(...validDates.map(d => d[0])));
@@ -463,6 +473,7 @@ const GanttChartDisplay: React.FC = () => {
       const reversedJobsForAll = [...sortedMergedJobs].reverse();
       
       reversedJobsForAll.forEach((job, jobIndex) => {
+        if (!job || !job.overallStartTime || !job.overallEndTime) return;
         const task = job.originalTask;
         const yPosition = jobIndex;
         
@@ -586,7 +597,7 @@ const GanttChartDisplay: React.FC = () => {
     // Find earliest and latest dates in the merged jobs dataset
     const validDates = sortedMergedJobs
       .map(job => [new Date(job.overallStartTime), new Date(job.overallEndTime)])
-      .filter(([start, end]) => !isNaN(start.getTime()) && !isNaN(end.getTime()));
+      .filter(([start, end]) => isFinite(start.getTime()) && isFinite(end.getTime()) && !isNaN(start.getTime()) && !isNaN(end.getTime()));
     
     if (validDates.length === 0) {
       console.error('No valid dates found in merged job data');
@@ -655,15 +666,16 @@ const GanttChartDisplay: React.FC = () => {
       return [];
     }
     
-    // CRITICAL FIX: Reverse the order for Plotly display
-    // Plotly displays horizontal bars from bottom to top, so we need to reverse
-    // to get the correct sequence order (1/7 at top, higher numbers below)
+    // Reverse so first is at top (consistent with categoryarray order we set)
     const reversedJobs = [...filteredJobs].reverse();
     
+    // Build y-axis categories to prevent extra empty space
+    const yCategories = reversedJobs.map(job => job.baseJobId);
+
     return [{
       type: 'bar',
       x: reversedJobs.map(job => job.totalDuration), // Total duration including gaps
-      y: reversedJobs.map(job => job.baseJobId),
+      y: yCategories,
       base: reversedJobs.map(job => {
         // Convert timestamp to local time format for Plotly
         // When timezone is set to Asia/Kuala_Lumpur, Plotly expects local time without Z suffix
@@ -736,7 +748,7 @@ const GanttChartDisplay: React.FC = () => {
 
   const layout = {
     title: { text: chartTitle },
-    height: Math.max(700, sortedMergedJobs.length * 30 + 150), // Dynamic height based on number of merged jobs
+    height: Math.max(500, sortedMergedJobs.length * 26 + 140), // Tighter dynamic height
     width: window.innerWidth * 0.95, // Responsive width
     xaxis: {
       type: 'date' as const,
@@ -757,7 +769,7 @@ const GanttChartDisplay: React.FC = () => {
       gridwidth: 1,
     },
     autosize: true,
-    margin: { l: 180, r: 50, t: 50, b: 100 }, // Increase left margin for job IDs
+    margin: { l: 180, r: 30, t: 40, b: 80 }, // Slightly reduced margins
     plot_bgcolor: 'rgb(255, 255, 255)',
     paper_bgcolor: 'rgb(255, 255, 255)',
     showlegend: false,
@@ -813,12 +825,19 @@ const GanttChartDisplay: React.FC = () => {
       
       // Generate gap shapes for all merged jobs (use reversed order for consistency)
       const reversedJobsForLayout = [...sortedMergedJobs].reverse();
-      const gapShapes = generateJobGapShapes(reversedJobsForLayout, reversedJobsForLayout.map(job => job.baseJobId));
+      const yCategories = reversedJobsForLayout.map(job => job.baseJobId);
+      const gapShapes = generateJobGapShapes(reversedJobsForLayout, yCategories);
       
       return {
         ...layout,
         height: Math.max(700, reversedJobsForLayout.length * 30 + 150),
         xaxis: xAxisConfig,
+        yaxis: {
+          ...layout.yaxis,
+          type: 'category' as const,
+          categoryorder: 'array' as const,
+          categoryarray: yCategories,
+        },
         shapes: [
           ...gapShapes,
           {
@@ -842,7 +861,7 @@ const GanttChartDisplay: React.FC = () => {
     // Find earliest and latest dates in the merged jobs dataset
     const validDates = sortedMergedJobs
       .map(job => [new Date(job.overallStartTime), new Date(job.overallEndTime)])
-      .filter(([start, end]) => !isNaN(start.getTime()) && !isNaN(end.getTime()));
+      .filter(([start, end]) => isFinite(start.getTime()) && isFinite(end.getTime()) && !isNaN(start.getTime()) && !isNaN(end.getTime()));
       
     if (validDates.length === 0) {
       return {

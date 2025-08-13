@@ -1,5 +1,5 @@
 import React, { useState, useEffect, ReactElement, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+// import { Link } from 'react-router-dom';
 import './table_data.css';
 import { API_BASE_URL } from '../../config';
 
@@ -462,13 +462,13 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           onClick={() => handleSort('REDUCE_OPERATION_HOURS')}>
                         REDUCE<br/>HRS
                       </th>
-                      <th className="text-center">ACTIONS</th>
+                      
                     </tr>
                   </thead>
                   <tbody id="jobsTableBody">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={14} className="text-center py-4">
+                        <td colSpan={13} className="text-center py-4">
                           <div className="spinner-border text-primary" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
@@ -477,7 +477,7 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                       </tr>
                     ) : displayedJobs.length === 0 ? (
                       <tr>
-                                                  <td colSpan={14} className="text-center">No production schedule found</td>
+                                                  <td colSpan={13} className="text-center">No production schedule found</td>
                       </tr>
                     ) : (
                       displayedJobs.map((job, index) => (
@@ -495,21 +495,6 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
                           <td className="text-center">{job.ACCUMULATED_DAILY_OUTPUT}</td>
                           <td className="text-center">{job.BALANCE_QUANTITY}</td>
                           <td className="text-center">{job.REDUCE_OPERATION_HOURS ? formatReduceHours(job.REDUCE_OPERATION_HOURS) : 'NO'}</td>
-                          <td className="text-center">
-                            <Link to={`/job/view/${job.TxnId_i}`} className="action-btn action-btn-view" title="View">
-                              <i className="fas fa-eye"></i>
-                            </Link>
-                            <Link to={`/job/edit/${job.TxnId_i}`} className="action-btn action-btn-edit" title="Edit">
-                              <i className="fas fa-edit"></i>
-                            </Link>
-                            <button 
-                              className="action-btn action-btn-delete" 
-                              title="Delete"
-                              onClick={() => handleDelete(job.TxnId_i)}
-                            >
-                              <i className="fas fa-trash"></i>
-                            </button>
-                          </td>
                         </tr>
                       ))
                     )}

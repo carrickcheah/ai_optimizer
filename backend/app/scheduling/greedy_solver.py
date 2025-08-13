@@ -541,6 +541,8 @@ class GreedyScheduler:
     def __init__(self, config: GreedyConfig):
         self.config = config
         self.constraints = SchedulingConstraints(config)
+        # Allow runtime toggle: STRICT_SEQUENCE=1 forces hard predecessor enforcement (no gaps)
+        self.strict_sequence = os.getenv('STRICT_SEQUENCE', '0') in ('1','true','True','yes','on')
     
     @staticmethod
     def _sort_jobs_by_lcd_priority(jobs: List[Dict[str, Any]], include_processing_time: bool = True) -> List[Dict[str, Any]]:
@@ -902,172 +904,172 @@ class GreedyScheduler:
                 logger.warning("Priority calculator not available, using original order")
                 sorted_family_jobs = family_jobs
             
-            for process_num, job_id, job_item in sorted_family_jobs:
-                if job_id in schedule_state['scheduled_jobs']:
+            # Track which process numbers exist in this family (present in input)
+            family_present_processes = sorted({p for p, _, _ in sorted_family_jobs})
+
+            # PHASED SCHEDULING: finish all jobs of process k before any process > k starts
+            jobs_by_process: Dict[int, List[Tuple[int, str, Dict[str, Any]]]] = {}
+            for pnum, jid, jitem in sorted_family_jobs:
+                jobs_by_process.setdefault(pnum, []).append((pnum, jid, jitem))
+
+            for phase in family_present_processes:
+                phase_jobs = list(jobs_by_process.get(phase, []))
+                if not phase_jobs:
                     continue
-                
-                # Log chain completion analysis if available
-                chain_info = chain_analysis.get(job_id, {})
-                if chain_info.get('chain_completion_critical', False):
-                    boost = chain_info.get('critical_urgency_boost', 1.0)
-                    must_start_by = chain_info.get('must_start_by')
-                    if must_start_by:
-                        must_start_str = datetime.fromtimestamp(must_start_by).strftime('%Y-%m-%d %H:%M')
-                        logger.info(f"🚨 CHAIN CRITICAL: {job_id} needs {boost}x priority boost - must start by {must_start_str}")
-                
-                # Check dependency using dependency manager
-                earliest_start = schedule_state['current_time']
-                
-                if COMPLEX_DEPENDENCIES_ENABLED:
-                    # STRICT SEQUENCE GAP ENFORCEMENT - Check gaps before complex dependencies
-                    if process_num > 1:
-                        families_with_gaps = schedule_state.get('families_with_gaps', {})
-                        if family in families_with_gaps:
-                            missing_processes = families_with_gaps[family]
-                            # Check if any missing process is before this process
-                            blocking_gaps = [p for p in missing_processes if p < process_num]
-                            if blocking_gaps:
-                                logger.warning(f"🚫 SEQUENCE GAP BLOCKED: Job {job_id} (P{process_num}) cannot start due to gaps")
-                                logger.warning(f"🚫 Missing processes before P{process_num}: {blocking_gaps}")
-                                logger.warning(f"🚫 Family '{family}' has gaps: {missing_processes}")
-                                logger.warning(f"🚫 STRICT ENFORCEMENT: Cannot skip missing processes in sequence!")
-                                schedule_state['unscheduled_jobs'].append(job_item)
-                                continue
-                    
-                    # Use dependency manager for complex sequences
-                    dep_manager = get_dependency_manager()
-                    
-                    # Get all jobs in this family for dependency resolution
-                    all_family_jobs = []
-                    for p_num, j_id, j_item in sorted_family_jobs:
-                        all_family_jobs.append({'job_id': j_id, **j_item})
-                    
-                    # Find dependency
-                    dep_job_id = dep_manager.find_job_dependency(job_id, all_family_jobs)
-                    
+
+                pending_jobs = phase_jobs
+                made_progress = True
+                while pending_jobs and made_progress:
+                    made_progress = False
+                    next_round: List[Tuple[int, str, Dict[str, Any]]] = []
+
+                    for process_num, job_id, job_item in pending_jobs:
+                        if job_id in schedule_state['scheduled_jobs']:
+                            continue
+
+                    # Log chain completion analysis if available
+                    chain_info = chain_analysis.get(job_id, {})
+                    if chain_info.get('chain_completion_critical', False):
+                        boost = chain_info.get('critical_urgency_boost', 1.0)
+                        must_start_by = chain_info.get('must_start_by')
+                        if must_start_by:
+                            must_start_str = datetime.fromtimestamp(must_start_by).strftime('%Y-%m-%d %H:%M')
+                            logger.info(f"🚨 CHAIN CRITICAL: {job_id} needs {boost}x priority boost - must start by {must_start_str}")
+
+                    earliest_start = schedule_state['current_time']
+
+                    # If complex deps exist, link to specific predecessor; otherwise enforce among present steps only
+                    dep_job_id = None
+                    if COMPLEX_DEPENDENCIES_ENABLED:
+                        try:
+                            dep_manager = get_dependency_manager()
+                            all_family_jobs = [{ 'job_id': j_id, **j_item } for p_num, j_id, j_item in sorted_family_jobs]
+                            dep_job_id = dep_manager.find_job_dependency(job_id, all_family_jobs)
+                        except Exception:
+                            dep_job_id = None
+
+                    # Resolve dependency if a specific job is identified
                     if dep_job_id:
-                        # Check if dependency is scheduled
                         dep_scheduled = False
                         for machine_tasks in schedule_state['schedule'].values():
                             for task in machine_tasks:
                                 if task[0] == dep_job_id:
-                                    earliest_start = max(earliest_start, task[2])  # Use end time of dependency
+                                    earliest_start = max(earliest_start, task[2])
                                     dep_scheduled = True
                                     break
                             if dep_scheduled:
                                 break
-                        
                         if not dep_scheduled:
-                            logger.warning(f"Job {job_id} cannot be scheduled - dependency {dep_job_id} not yet scheduled")
-                            schedule_state['unscheduled_jobs'].append(job_item)
+                            # Defer to next round
+                            next_round.append((process_num, job_id, job_item))
                             continue
-                else:
-                    # STRICT SEQUENTIAL DEPENDENCY ENFORCEMENT - VALIDATE COMPLETE SEQUENCE
-                    if process_num > 1:
-                        # First check if this family has sequence gaps that would affect this job
-                        families_with_gaps = schedule_state.get('families_with_gaps', {})
-                        if family in families_with_gaps:
-                            missing_processes = families_with_gaps[family]
-                            # Check if any missing process is before this process
-                            blocking_gaps = [p for p in missing_processes if p < process_num]
-                            if blocking_gaps:
-                                logger.warning(f"🚫 SEQUENCE GAP BLOCKED: Job {job_id} (P{process_num}) cannot start due to gaps")
-                                logger.warning(f"🚫 Missing processes before P{process_num}: {blocking_gaps}")
-                                logger.warning(f"🚫 Family '{family}' has gaps: {missing_processes}")
-                                logger.warning(f"🚫 STRICT ENFORCEMENT: Cannot skip missing processes in sequence!")
-                                schedule_state['unscheduled_jobs'].append(job_item)
-                                continue
-                        
-                        # Check that ALL previous processes in sequence exist and are completed
-                        missing_processes = []
+
+                    # Regardless of complex dep resolution, enforce family serialization among present steps
+                    if self.strict_sequence:
+                        # HARD mode: require all P < current to exist and be scheduled
+                        required = [p for p in range(1, process_num)]
+                        missing_required = [p for p in required if p not in family_present_processes]
+                        if missing_required:
+                            logger.warning(f"⛔ STRICT: Blocking {job_id} due to missing predecessors {missing_required}")
+                            schedule_state['unscheduled_jobs'].append(job_item)
+                            made_progress = True
+                            continue
                         latest_predecessor_end = schedule_state['current_time']
-                        
-                        for i in range(1, process_num):
-                            required_process_key = (family, i)
-                            if required_process_key not in schedule_state['process_end_times']:
-                                missing_processes.append(f"P{i}")
+                        waiting = False
+                        for p in required:
+                            key = (family, p)
+                            if key in schedule_state['process_end_times']:
+                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][key])
                             else:
-                                # Track the latest end time of all predecessors
-                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][required_process_key])
-                        
-                        if missing_processes:
-                            available_processes = [key for key in schedule_state['process_end_times'].keys() if key[0] == family]
-                            available_list = sorted(available_processes, key=lambda x: x[1])
-                            logger.warning(f"🚫 SEQUENCE VIOLATION BLOCKED: Job {job_id} (P{process_num}) cannot start")
-                            logger.warning(f"🚫 Missing predecessor processes: {missing_processes}")
-                            logger.warning(f"🚫 Family '{family}' completed: {[f'P{p[1]}' for p in available_list]}")
-                            logger.warning(f"🚫 Required sequence: P1 → P2 → ... → P{process_num-1} → P{process_num}")
-                            schedule_state['unscheduled_jobs'].append(job_item)
+                                waiting = True
+                                break
+                        if waiting:
+                            next_round.append((process_num, job_id, job_item))
                             continue
-                        
-                        earliest_start = latest_predecessor_end
-                        wait_hours = max(0, (earliest_start - schedule_state['current_time']) / 3600)
-                        
-                        logger.info(f"✅ COMPLETE SEQUENCE VALIDATED: Job {job_id} (P{process_num}) can start after all P1-P{process_num-1} complete (wait: {wait_hours:.1f}h)")
-                
-                # Handle subcontractor vs machine jobs differently
-                machine_name = job_item.get('MachineName_v')
-                if machine_name == 'SUBCONTRACTOR':
-                    # Subcontractor job with dependencies - consider plan_date
-                    plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
-                    start_time = max(earliest_start, schedule_state['current_time'], plan_date)
-                    
-                    # Log if job is being scheduled past its plan date
-                    if plan_date and plan_date < schedule_state['current_time']:
-                        days_late = (schedule_state['current_time'] - plan_date) / 86400
-                        logger.warning(f"SUBCONTRACTOR dependency job {job_id} is {days_late:.1f} days past its plan_date")
-                    processing_time = job_item.get('processing_time', 3600)  # Default 1 hour if missing
-                    end_time = self._calculate_preemptive_end_time(start_time, processing_time)
-                    
-                    # Add to subcontractor "machine" for chart display
-                    if 'SUBCONTRACTOR' not in schedule_state['schedule']:
-                        schedule_state['schedule']['SUBCONTRACTOR'] = []
-                    
-                    schedule_state['schedule']['SUBCONTRACTOR'].append((job_id, start_time, end_time))
-                    schedule_state['scheduled_jobs'].add(job_id)
-                    
-                    # Update dependency tracking
-                    schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], end_time)
-                    schedule_state['process_end_times'][(family, process_num)] = end_time
-                    
-                    logger.info(f"Scheduled SUBCONTRACTOR dependency job {job_id}: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')} to {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d %H:%M')} (after P{process_num-1})")
-                else:
-                    # Machine job with dependencies (existing logic)
+                        earliest_start = max(earliest_start, latest_predecessor_end)
+                    else:
+                        # SOFT mode: only require earlier steps that are present in this family
+                        earlier_present = [p for p in family_present_processes if p < process_num]
+                        latest_predecessor_end = schedule_state['current_time']
+                        unmet_present_predecessor = False
+                        for p in earlier_present:
+                            key = (family, p)
+                            if key in schedule_state['process_end_times']:
+                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][key])
+                            else:
+                                unmet_present_predecessor = True
+                                break
+                        if unmet_present_predecessor:
+                            next_round.append((process_num, job_id, job_item))
+                            continue
+                        earliest_start = max(earliest_start, latest_predecessor_end)
+
+                    # NEW RULE: serialize same-process occurrences within a family
+                    # If a previous occurrence of the same process has finished, wait until its end
+                    same_proc_key = (family, process_num)
+                    if same_proc_key in schedule_state['process_end_times']:
+                        earliest_start = max(earliest_start, schedule_state['process_end_times'][same_proc_key])
+
+                    # Schedule now
+                    machine_name = job_item.get('MachineName_v')
+                    if machine_name == 'SUBCONTRACTOR':
+                        plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
+                        start_time = max(earliest_start, schedule_state['current_time'], plan_date)
+                        processing_time = job_item.get('processing_time', 3600)
+                        end_time = self._calculate_preemptive_end_time(start_time, processing_time)
+                        if 'SUBCONTRACTOR' not in schedule_state['schedule']:
+                            schedule_state['schedule']['SUBCONTRACTOR'] = []
+                        schedule_state['schedule']['SUBCONTRACTOR'].append((job_id, start_time, end_time))
+                        schedule_state['scheduled_jobs'].add(job_id)
+                        schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], end_time)
+                        schedule_state['process_end_times'][(family, process_num)] = end_time
+                        made_progress = True
+                        continue
+
                     machines = list(schedule_state['machine_available_time'].keys())
                     machine_id = MachineManager.find_best_machine(job_item, machines, schedule_state['machine_available_time'])
-                    
                     if not machine_id:
+                        # Cannot schedule on any machine; mark unscheduled and move on
                         logger.warning(f"No machine available for job {job_id}")
                         schedule_state['unscheduled_jobs'].append(job_item)
+                        made_progress = True
                         continue
-                    
-                    # STRICT SEQUENCE ENFORCEMENT: All jobs must respect dependencies regardless of urgency
+
                     machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
                     plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
-                    
-                    # Chain priority information for ordering (not preemption)
-                    boost = 1.0
-                    if chain_info and chain_info.get('chain_completion_critical', False):
-                        boost = chain_info.get('critical_urgency_boost', 1.0)
-                        logger.info(f"📊 Job {job_id} has {boost}x priority boost but must still wait for dependencies")
-                    
-                    # ALWAYS respect dependency constraints - no exceptions for urgent jobs
                     start_search_time = max(machine_available, earliest_start, plan_date)
-                    
-                    # Log dependency enforcement
-                    if earliest_start > schedule_state['current_time']:
-                        dependency_wait_hours = (earliest_start - schedule_state['current_time']) / 3600
-                        logger.info(f"🔒 Job {job_id} waiting {dependency_wait_hours:.1f}h for dependency completion (boost={boost}x)")
-                    
-                    # Log if job is being scheduled past its plan date
-                    if plan_date and plan_date < schedule_state['current_time']:
-                        days_late = (schedule_state['current_time'] - plan_date) / 86400
-                        logger.warning(f"Dependency job {job_id} is {days_late:.1f} days past its plan_date")
-                    
-                    self._find_and_schedule_job(
+
+                    if self._find_and_schedule_job(
                         job_item, machine_id, start_search_time, schedule_state,
                         family, process_num, max_operators, chain_info
-                    )
+                    ):
+                        made_progress = True
+                    else:
+                        # Already marked unscheduled by helper; continue
+                        made_progress = True
+
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                pending_jobs = next_round
+                # Any jobs still pending in this phase could not meet constraints; mark unscheduled
+                for _, _, leftover_job in pending_jobs:
+                    schedule_state['unscheduled_jobs'].append(leftover_job)
     
     def _find_and_schedule_job(self, job: Dict[str, Any], machine_id: str, start_search_time: float,
                               schedule_state: Dict[str, Any], family: str, process_num: int,

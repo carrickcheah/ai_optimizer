@@ -21,8 +21,8 @@ except ImportError:
 
 # Compiled regex patterns for performance
 PROCESS_PATTERN = re.compile(r'(\d+)/\d+$')
-FAMILY_PATTERN = re.compile(r'(.*?)-\d+/\d+$')
-FAMILY_SPLIT_PATTERN = re.compile(r'-\d+/\d+$')
+FAMILY_PATTERN = re.compile(r'(.*?)-(?:P?\d+)(?:/\d+)?$')
+FAMILY_SPLIT_PATTERN = re.compile(r'-(?:P?\d+)(?:/\d+)?$')
 
 
 class SchedulerUtilsError(Exception):
@@ -87,12 +87,29 @@ class ProcessExtractor:
             cls._cache[job_id] = 999
             return 999
         
-        # Use compiled regex for performance
+        # Try common patterns in order of specificity
+        # 1) Explicit P## marker (e.g., CD02-P01)
+        p_marker = re.search(r'P(\d+)', process_code, re.IGNORECASE)
+        if p_marker:
+            seq = int(p_marker.group(1))
+            cls._cache[job_id] = seq
+            logger.debug(f"Extracted P-sequence {seq} from job_id {job_id}")
+            return seq
+
+        # 2) Legacy form with total count (e.g., CD02-01/3)
         match = PROCESS_PATTERN.search(process_code)
         if match:
             seq = int(match.group(1))
             cls._cache[job_id] = seq
-            logger.debug(f"Extracted sequence number {seq} from job_id {job_id}")
+            logger.debug(f"Extracted legacy sequence {seq} from job_id {job_id}")
+            return seq
+
+        # 3) Simple hyphen-number at end (e.g., CD02-01)
+        hyphen_num = re.search(r'-(\d+)(?:$|[^0-9])', process_code)
+        if hyphen_num:
+            seq = int(hyphen_num.group(1))
+            cls._cache[job_id] = seq
+            logger.debug(f"Extracted simple sequence {seq} from job_id {job_id}")
             return seq
         
         cls._cache[job_id] = 999
@@ -142,20 +159,25 @@ class FamilyExtractor:
         
         process_code = process_code.upper()
         
-        # Use compiled regex for performance
-        match = FAMILY_PATTERN.search(process_code)
-        if match:
-            family = match.group(1)
-            logger.debug(f"Extracted family {family} from {job_id}")
+        # Prefer explicit '-P##' split if present
+        if '-P' in process_code.upper():
+            family = process_code.upper().split('-P', 1)[0]
+            logger.debug(f"Extracted family {family} from {job_id} (-P pattern)")
         else:
-            # Fallback to split method
-            if FAMILY_SPLIT_PATTERN.search(process_code):
-                parts = FAMILY_SPLIT_PATTERN.split(process_code)
-                family = parts[0] if parts else process_code
-                logger.debug(f"Extracted family {family} from {job_id} (using split)")
+            # Use compiled regex for performance (supports -01/3, -P01/3, -01)
+            match = FAMILY_PATTERN.search(process_code)
+            if match:
+                family = match.group(1)
+                logger.debug(f"Extracted family {family} from {job_id}")
             else:
-                logger.warning(f"Could not extract family from {job_id}, using full code")
-                family = process_code
+                # Fallback to split method
+                if FAMILY_SPLIT_PATTERN.search(process_code):
+                    parts = FAMILY_SPLIT_PATTERN.split(process_code)
+                    family = parts[0] if parts else process_code
+                    logger.debug(f"Extracted family {family} from {job_id} (using split)")
+                else:
+                    logger.warning(f"Could not extract family from {job_id}, using full code")
+                    family = process_code
         
         result = f"{family}_{job_id_suffix}" if job_id_suffix else family
         cls._cache[cache_key] = result

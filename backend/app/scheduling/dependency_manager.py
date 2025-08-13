@@ -134,14 +134,31 @@ class DependencyManager:
                 
             _, process_part = job_id.split('_', 1)
             
-            # Match pattern like CD02-01/3
-            match = re.match(r'([A-Z0-9]+)-(\d+)/(\d+)', process_part)
+            # New pattern: FAMILY-P## or FAMILY-P##/TOTAL
+            m_p = re.match(r'([A-Z0-9]+)-P(\d+)(?:/(\d+))?$', process_part, re.IGNORECASE)
+            if m_p:
+                family = m_p.group(1).upper()
+                process_num = m_p.group(2)
+                total_processes = int(m_p.group(3)) if m_p.group(3) else 0
+                process_code = f"P{process_num.zfill(2)}"
+                return (family, process_code, total_processes)
+
+            # Legacy pattern: FAMILY-##/TOTAL
+            match = re.match(r'([A-Z0-9]+)-(\d+)/(\d+)$', process_part, re.IGNORECASE)
             if match:
-                family = match.group(1)
+                family = match.group(1).upper()
                 process_num = match.group(2)
                 total_processes = int(match.group(3))
                 process_code = f'P{process_num.zfill(2)}'
                 return (family, process_code, total_processes)
+
+            # Simple pattern: FAMILY-## (no total)
+            m_simple = re.match(r'([A-Z0-9]+)-(\d+)$', process_part, re.IGNORECASE)
+            if m_simple:
+                family = m_simple.group(1).upper()
+                process_num = m_simple.group(2)
+                process_code = f"P{process_num.zfill(2)}"
+                return (family, process_code, 0)
             
             return ('', '', 0)
             
