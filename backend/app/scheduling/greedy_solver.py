@@ -363,18 +363,19 @@ class JobCategorizer:
                 family = extract_job_family(job['job_id'])
                 process_num = extract_process_number(job['job_id'])
                 
-                # CRITICAL FIX: Check if job is part of a multi-process chain (not just process_num > 1)
-                # If the family exists and has structure, ALL jobs in that family should be dependency jobs
-                # for proper chain completion prioritization
+                # STRICT SEQUENCE ENFORCEMENT: All jobs with family structure need dependency tracking
                 if family and ('/' in job['job_id'] or process_num > 0):
-                    # All jobs in structured families go to dependency category for chain analysis
+                    # All jobs in structured families go to dependency category for sequence enforcement
                     categories['dependency'].append(job)
+                    logger.debug(f"🔗 FAMILY JOB: {job['job_id']} → Family: {family}, Process: {process_num} (requires sequence enforcement)")
                 elif machine_name == 'SUBCONTRACTOR':
-                    # Only truly independent subcontractor jobs go to subcontractor category
+                    # Independent subcontractor jobs (no family dependencies)
                     categories['subcontractor'].append(job)
+                    logger.debug(f"🏭 SUBCONTRACTOR: {job['job_id']} (no sequence requirements)")
                 else:
                     # Independent machine jobs (single-process or no clear family structure)
                     categories['independent'].append(job)
+                    logger.debug(f"⚙️  INDEPENDENT: {job['job_id']} (no sequence requirements)")
         
         logger.info(
             f"Job categorization: {len(categories['not_assign'])} NOT_ASSIGN, "
@@ -819,11 +820,37 @@ class GreedyScheduler:
         logger.info(f"Scheduling {len(dependency_jobs)} jobs with dependencies")
         
         try:
-            from app.scheduling.scheduler_utils import group_jobs_by_family
+            from app.scheduling.scheduler_utils import group_jobs_by_family, extract_job_family, extract_process_number
             job_families = group_jobs_by_family([
                 job for job in dependency_jobs 
                 if job['job_id'] not in schedule_state['scheduled_jobs']
             ])
+            
+            # VALIDATE FAMILY SEQUENCES - Detect and enforce sequence gaps
+            logger.info("🔍 Validating family sequences for completeness...")
+            families_with_gaps = {}
+            
+            for family_name, family_jobs in job_families.items():
+                processes_in_family = []
+                for _, job_id, job_data in family_jobs:
+                    process_num = extract_process_number(job_id)
+                    processes_in_family.append(process_num)
+                
+                processes_in_family.sort()
+                expected_sequence = list(range(1, max(processes_in_family) + 1))
+                missing_processes = [p for p in expected_sequence if p not in processes_in_family]
+                
+                if missing_processes:
+                    families_with_gaps[family_name] = missing_processes
+                    logger.warning(f"🚫 INCOMPLETE SEQUENCE: Family '{family_name}' missing processes: {missing_processes}")
+                    logger.warning(f"🚫 Present: {sorted(processes_in_family)}, Expected: {expected_sequence}")
+                    logger.warning(f"🚫 ENFORCEMENT: Jobs beyond gaps will be blocked!")
+                else:
+                    logger.info(f"✅ COMPLETE SEQUENCE: Family '{family_name}' has all processes P1-P{max(processes_in_family)}")
+            
+            # Store gap information for enforcement during scheduling
+            schedule_state['families_with_gaps'] = families_with_gaps
+                    
         except ImportError:
             logger.warning("Could not import group_jobs_by_family - treating as independent jobs")
             self._schedule_independent_jobs(dependency_jobs, schedule_state, max_operators)
@@ -892,6 +919,21 @@ class GreedyScheduler:
                 earliest_start = schedule_state['current_time']
                 
                 if COMPLEX_DEPENDENCIES_ENABLED:
+                    # STRICT SEQUENCE GAP ENFORCEMENT - Check gaps before complex dependencies
+                    if process_num > 1:
+                        families_with_gaps = schedule_state.get('families_with_gaps', {})
+                        if family in families_with_gaps:
+                            missing_processes = families_with_gaps[family]
+                            # Check if any missing process is before this process
+                            blocking_gaps = [p for p in missing_processes if p < process_num]
+                            if blocking_gaps:
+                                logger.warning(f"🚫 SEQUENCE GAP BLOCKED: Job {job_id} (P{process_num}) cannot start due to gaps")
+                                logger.warning(f"🚫 Missing processes before P{process_num}: {blocking_gaps}")
+                                logger.warning(f"🚫 Family '{family}' has gaps: {missing_processes}")
+                                logger.warning(f"🚫 STRICT ENFORCEMENT: Cannot skip missing processes in sequence!")
+                                schedule_state['unscheduled_jobs'].append(job_item)
+                                continue
+                    
                     # Use dependency manager for complex sequences
                     dep_manager = get_dependency_manager()
                     
@@ -920,15 +962,48 @@ class GreedyScheduler:
                             schedule_state['unscheduled_jobs'].append(job_item)
                             continue
                 else:
-                    # Fallback to sequential logic
+                    # STRICT SEQUENTIAL DEPENDENCY ENFORCEMENT - VALIDATE COMPLETE SEQUENCE
                     if process_num > 1:
-                        prev_process_key = (family, process_num - 1)
-                        if prev_process_key not in schedule_state['process_end_times']:
-                            logger.warning(f"Job {job_id} cannot be scheduled due to unmet dependencies")
+                        # First check if this family has sequence gaps that would affect this job
+                        families_with_gaps = schedule_state.get('families_with_gaps', {})
+                        if family in families_with_gaps:
+                            missing_processes = families_with_gaps[family]
+                            # Check if any missing process is before this process
+                            blocking_gaps = [p for p in missing_processes if p < process_num]
+                            if blocking_gaps:
+                                logger.warning(f"🚫 SEQUENCE GAP BLOCKED: Job {job_id} (P{process_num}) cannot start due to gaps")
+                                logger.warning(f"🚫 Missing processes before P{process_num}: {blocking_gaps}")
+                                logger.warning(f"🚫 Family '{family}' has gaps: {missing_processes}")
+                                logger.warning(f"🚫 STRICT ENFORCEMENT: Cannot skip missing processes in sequence!")
+                                schedule_state['unscheduled_jobs'].append(job_item)
+                                continue
+                        
+                        # Check that ALL previous processes in sequence exist and are completed
+                        missing_processes = []
+                        latest_predecessor_end = schedule_state['current_time']
+                        
+                        for i in range(1, process_num):
+                            required_process_key = (family, i)
+                            if required_process_key not in schedule_state['process_end_times']:
+                                missing_processes.append(f"P{i}")
+                            else:
+                                # Track the latest end time of all predecessors
+                                latest_predecessor_end = max(latest_predecessor_end, schedule_state['process_end_times'][required_process_key])
+                        
+                        if missing_processes:
+                            available_processes = [key for key in schedule_state['process_end_times'].keys() if key[0] == family]
+                            available_list = sorted(available_processes, key=lambda x: x[1])
+                            logger.warning(f"🚫 SEQUENCE VIOLATION BLOCKED: Job {job_id} (P{process_num}) cannot start")
+                            logger.warning(f"🚫 Missing predecessor processes: {missing_processes}")
+                            logger.warning(f"🚫 Family '{family}' completed: {[f'P{p[1]}' for p in available_list]}")
+                            logger.warning(f"🚫 Required sequence: P1 → P2 → ... → P{process_num-1} → P{process_num}")
                             schedule_state['unscheduled_jobs'].append(job_item)
                             continue
                         
-                        earliest_start = schedule_state['process_end_times'][prev_process_key]
+                        earliest_start = latest_predecessor_end
+                        wait_hours = max(0, (earliest_start - schedule_state['current_time']) / 3600)
+                        
+                        logger.info(f"✅ COMPLETE SEQUENCE VALIDATED: Job {job_id} (P{process_num}) can start after all P1-P{process_num-1} complete (wait: {wait_hours:.1f}h)")
                 
                 # Handle subcontractor vs machine jobs differently
                 machine_name = job_item.get('MachineName_v')
@@ -966,26 +1041,23 @@ class GreedyScheduler:
                         schedule_state['unscheduled_jobs'].append(job_item)
                         continue
                     
-                    # ENHANCEMENT: Chain-critical jobs override machine availability for priority placement
+                    # STRICT SEQUENCE ENFORCEMENT: All jobs must respect dependencies regardless of urgency
                     machine_available = schedule_state['machine_available_time'].get(machine_id, schedule_state['current_time'])
                     plan_date = job_item.get('plan_date_epoch', schedule_state['current_time'])
                     
-                    # Check if this job has chain completion urgency
-                    if chain_info.get('chain_completion_critical', False):
+                    # Chain priority information for ordering (not preemption)
+                    boost = 1.0
+                    if chain_info and chain_info.get('chain_completion_critical', False):
                         boost = chain_info.get('critical_urgency_boost', 1.0)
-                        if boost >= 100.0:  # Ultra-critical jobs - complete preemption
-                            # Force immediate scheduling, push other jobs later
-                            start_search_time = max(earliest_start, schedule_state['current_time'])
-                            # Reset machine availability to allow immediate start
-                            schedule_state['machine_available_time'][machine_id] = start_search_time
-                            logger.warning(f"🚨🚨🚨 ULTRA-CRITICAL PREEMPTION: {job_id} with {boost}x boost takes machine immediately, other jobs rescheduled")
-                        elif boost >= 50.0:  # Very urgent jobs
-                            start_search_time = max(earliest_start, schedule_state['current_time'])
-                            logger.warning(f"🚨🚨 CRITICAL PREEMPTION: {job_id} with {boost}x boost bypasses machine queue")
-                        else:
-                            start_search_time = max(machine_available, earliest_start, plan_date)
-                    else:
-                        start_search_time = max(machine_available, earliest_start, plan_date)
+                        logger.info(f"📊 Job {job_id} has {boost}x priority boost but must still wait for dependencies")
+                    
+                    # ALWAYS respect dependency constraints - no exceptions for urgent jobs
+                    start_search_time = max(machine_available, earliest_start, plan_date)
+                    
+                    # Log dependency enforcement
+                    if earliest_start > schedule_state['current_time']:
+                        dependency_wait_hours = (earliest_start - schedule_state['current_time']) / 3600
+                        logger.info(f"🔒 Job {job_id} waiting {dependency_wait_hours:.1f}h for dependency completion (boost={boost}x)")
                     
                     # Log if job is being scheduled past its plan date
                     if plan_date and plan_date < schedule_state['current_time']:
@@ -1214,9 +1286,12 @@ class GreedyScheduler:
             except ImportError:
                 pass
         
-        # Update dependency tracking
+        # Update dependency tracking with logging
         schedule_state['family_end_times'][family] = max(schedule_state['family_end_times'][family], final_end_time)
         schedule_state['process_end_times'][(family, process_num)] = final_end_time
+        
+        # Log dependency tracking update for sequence validation
+        logger.debug(f"🔗 DEPENDENCY TRACKED: {family} P{process_num} completed, enables P{process_num + 1} (end time: {final_end_time})")
         
         # Log scheduling
         try:
