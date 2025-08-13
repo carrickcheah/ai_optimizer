@@ -24,7 +24,7 @@ interface ResourceChartProps {
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   const { data } = useDataCache();
-  const [timeRange, setTimeRange] = useState<string>('5d');
+  const [timeRange, setTimeRange] = useState<string>('7d');
 
   // Use cached data instead of local state
   const tasks: TaskData[] = data.ganttResourceView;
@@ -527,26 +527,12 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     // Set end date based on timeframe (forward from today)
     if (timeRange === '1d') {
       endDate.setDate(now.getDate() + 1);
-    } else if (timeRange === '2d') {
-      endDate.setDate(now.getDate() + 2);
     } else if (timeRange === '3d') {
       endDate.setDate(now.getDate() + 3);
-    } else if (timeRange === '4d') {
-      endDate.setDate(now.getDate() + 4);
-    } else if (timeRange === '5d') {
-      endDate.setDate(now.getDate() + 5);
     } else if (timeRange === '7d') {
       endDate.setDate(now.getDate() + 7);
     } else if (timeRange === '14d') {
       endDate.setDate(now.getDate() + 14);
-    } else if (timeRange === '21d') {
-      endDate.setDate(now.getDate() + 21);
-    } else if (timeRange === '1m') {
-      endDate.setMonth(now.getMonth() + 1);
-    } else if (timeRange === '2m') {
-      endDate.setMonth(now.getMonth() + 2);
-    } else if (timeRange === '3m') {
-      endDate.setMonth(now.getMonth() + 3);
     }
     
     // console.log('[ResourceChart] Filter date range:', {
@@ -884,7 +870,7 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     
     // Configure x-axis format based on timeframe
     let xAxisConfig;
-    if (['1d', '2d', '3d', '4d', '5d'].includes(timeRange)) {
+    if (['1d', '3d'].includes(timeRange)) {
       // For short timeframes, show hours from 01:00 to 23:59
       xAxisConfig = {
         ...layout.xaxis,
@@ -960,25 +946,10 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             style={{width: '55px'}}
           >1d</button>
           <button 
-            className={timeRange === '2d' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('2d')}
-            style={{width: '55px'}}
-          >2d</button>
-          <button 
             className={timeRange === '3d' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('3d')}
             style={{width: '55px'}}
           >3d</button>
-          <button 
-            className={timeRange === '4d' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('4d')}
-            style={{width: '55px'}}
-          >4d</button>
-          <button 
-            className={timeRange === '5d' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('5d')}
-            style={{width: '55px'}}
-          >5d</button>
           <button 
             className={timeRange === '7d' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('7d')}
@@ -989,26 +960,6 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
             onClick={() => handleTimeRangeChange('14d')}
             style={{width: '55px'}}
           >14d</button>
-          <button 
-            className={timeRange === '21d' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('21d')}
-            style={{width: '55px'}}
-          >21d</button>
-          <button 
-            className={timeRange === '1m' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('1m')}
-            style={{width: '55px'}}
-          >1m</button>
-          <button 
-            className={timeRange === '2m' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('2m')}
-            style={{width: '55px'}}
-          >2m</button>
-          <button 
-            className={timeRange === '3m' ? 'flat-active' : 'flat-inactive'} 
-            onClick={() => handleTimeRangeChange('3m')}
-            style={{width: '55px'}}
-          >3m</button>
           <button 
             className={timeRange === 'all' ? 'flat-active' : 'flat-inactive'} 
             onClick={() => handleTimeRangeChange('all')}
