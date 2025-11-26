@@ -1,5 +1,6 @@
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,14 +12,22 @@ import sys
 def setup_logging():
     """Setup logging that works in both local and container environments."""
     log_handlers = [logging.StreamHandler(sys.stdout)]
-    
+
     # Only add file handler if running locally (not in container)
     if not os.getenv('PYTHONUNBUFFERED'):  # Container environments set this
         try:
-            log_handlers.append(logging.FileHandler('app.log', mode='a'))
+            # Use RotatingFileHandler to prevent unbounded log growth
+            # Max 10MB per file, keep 5 backup files
+            file_handler = RotatingFileHandler(
+                'app.log',
+                maxBytes=10 * 1024 * 1024,  # 10MB
+                backupCount=5,
+                encoding='utf-8'
+            )
+            log_handlers.append(file_handler)
         except PermissionError:
             pass  # Skip file logging if no write permissions
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -99,19 +108,19 @@ class AppConfig:
         
         # Check for critical configuration errors
         if missing_vars:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
+            error_msg = f"CRITICAL CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
         
         if invalid_vars:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: Invalid environment variable values: {', '.join(invalid_vars)}"
+            error_msg = f"CRITICAL CONFIG ERROR: Invalid environment variable values: {', '.join(invalid_vars)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        logger.info(f"✅ Successfully loaded application configuration")
-        logger.info(f"📊 Database: {self.config['MARIADB_HOST']}:{self.config['MARIADB_PORT']}/{self.config['MARIADB_DATABASE']}")
-        logger.info(f"🌐 Server: {self.config['HOST']}:{self.config['PORT']}")
-        logger.info(f"🔗 CORS Origins: {self.config['CORS_ORIGINS']}")
+        logger.info("Successfully loaded application configuration")
+        logger.info(f"Database: {self.config['MARIADB_HOST']}:{self.config['MARIADB_PORT']}/{self.config['MARIADB_DATABASE']}")
+        logger.info(f"Server: {self.config['HOST']}:{self.config['PORT']}")
+        logger.info(f"CORS Origins: {self.config['CORS_ORIGINS']}")
     
     def get(self, key: str, default=None):
         """Get configuration value."""
@@ -140,12 +149,12 @@ def load_environment():
     for env_path in env_paths:
         if os.path.exists(env_path):
             load_dotenv(env_path)
-            logger.info(f"✅ Loaded environment variables from: {env_path}")
+            logger.info(f"Loaded environment variables from: {env_path}")
             loaded = True
             break
     
     if not loaded:
-        logger.warning(f"⚠️ No .env file found in locations: {env_paths}")
+        logger.warning(f"No .env file found in locations: {env_paths}")
         logger.info("Using system environment variables only")
 
 def validate_critical_services():
@@ -158,10 +167,10 @@ def validate_critical_services():
             cursor.execute("SELECT 1")
             cursor.fetchone()
             cursor.close()
-        logger.info("✅ Database connection validated")
+        logger.info("Database connection validated")
         
     except Exception as e:
-        error_msg = f"❌ CRITICAL SERVICE ERROR: Database connection failed: {e}"
+        error_msg = f"CRITICAL SERVICE ERROR: Database connection failed: {e}"
         logger.error(error_msg)
         raise RuntimeError(error_msg)
     
@@ -170,10 +179,10 @@ def validate_critical_services():
         from app.reporting.production_report_generator import ProductionReportGenerator
         # Test that report generator can initialize (validates all config)
         ProductionReportGenerator()
-        logger.info("✅ Report generator configuration validated")
+        logger.info("Report generator configuration validated")
         
     except Exception as e:
-        error_msg = f"❌ CRITICAL SERVICE ERROR: Report generator initialization failed: {e}"
+        error_msg = f"CRITICAL SERVICE ERROR: Report generator initialization failed: {e}"
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
@@ -199,21 +208,25 @@ def create_app() -> FastAPI:
         )
         
         # Configure CORS with environment-based origins
+        cors_origins = config.get('CORS_ORIGINS')
+        if cors_origins == ["*"]:
+            logger.warning("CORS allows all origins - not recommended for production")
+
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=config.get('CORS_ORIGINS'),
+            allow_origins=cors_origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["*"],
         )
-        
+
         # Store config in app state for access by routes
         app.state.config = config
         
-        logger.info("✅ FastAPI application configured successfully")
+        logger.info("FastAPI application configured successfully")
         
     except Exception as e:
-        logger.error(f"❌ FAILED to create FastAPI application: {e}")
+        logger.error(f"FAILED to create FastAPI application: {e}")
         raise
     
     try:
@@ -244,10 +257,10 @@ def create_app() -> FastAPI:
             tags=["AI Reports"]
         )
         
-        logger.info("✅ API routes configured successfully")
+        logger.info("API routes configured successfully")
         
     except Exception as e:
-        logger.error(f"❌ FAILED to configure API routes: {e}")
+        logger.error(f"FAILED to configure API routes: {e}")
         raise
     
     # Add root endpoint with configuration info
@@ -343,20 +356,20 @@ def main():
             "access_log": True
         }
         
-        logger.info(f"🚀 Starting Uvicorn server with configuration: {server_config}")
+        logger.info(f"Starting Uvicorn server with configuration: {server_config}")
         uvicorn.run(**server_config)
         
     except Exception as e:
-        logger.error(f"❌ FAILED to start application: {e}")
+        logger.error(f"FAILED to start application: {e}")
         sys.exit(1)
 
 # Create the FastAPI application instance
 try:
     load_environment()
     app = create_app()
-    logger.info("✅ Application instance created successfully")
+    logger.info("Application instance created successfully")
 except Exception as e:
-    logger.error(f"❌ FAILED to create application instance: {e}")
+    logger.error(f"FAILED to create application instance: {e}")
     # Don't raise here as this breaks imports, but log the error
     app = None
 

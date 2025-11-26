@@ -247,11 +247,15 @@ class ChainAnalyzer:
             
             if earliest_lcd:
                 days_until_lcd = (earliest_lcd - current_time) / 86400
-                
+
                 # ENHANCEMENT: Calculate required start time using realistic preemptive scheduling
                 # Instead of simple 17.5h/day, estimate based on actual working calendar
                 # Real schedule: ~2.5x longer due to breaks, weekends, working hours
-                realistic_calendar_days = (total_chain_duration / 17.5) * 2.5  # More realistic multiplier
+                # Guard against zero duration chains
+                if total_chain_duration > 0:
+                    realistic_calendar_days = (total_chain_duration / 17.5) * 2.5  # More realistic multiplier
+                else:
+                    realistic_calendar_days = 0
                 required_start_epoch = earliest_lcd - (realistic_calendar_days * 24 * 3600)
                 days_until_must_start = (required_start_epoch - current_time) / 86400
                 
@@ -268,16 +272,16 @@ class ChainAnalyzer:
                 # ULTRA-MASSIVE BOOST: Apply chain completion urgency multiplier
                 if days_until_must_start <= 0:
                     chain_boost = 100.0  # Family must start NOW - override everything!
-                    logger.warning(f"🚨🚨🚨 FAMILY ULTRA-CRITICAL: {family} past required start - applying 100x boost!")
+                    logger.warning(f"FAMILY ULTRA-CRITICAL: {family} past required start - applying 100x boost!")
                 elif days_until_must_start <= 7:
                     chain_boost = 50.0   # Must start within week - extremely urgent
-                    logger.info(f"🚨🚨 FAMILY MEGA-URGENT: {family} must start within 7 days - applying 50x boost")
+                    logger.info(f"FAMILY MEGA-URGENT: {family} must start within 7 days - applying 50x boost")
                 elif days_until_must_start <= 14:
                     chain_boost = 20.0   # Must start within 2 weeks - very urgent
-                    logger.info(f"🚨 FAMILY SUPER-URGENT: {family} must start within 14 days - applying 20x boost")
+                    logger.info(f"FAMILY SUPER-URGENT: {family} must start within 14 days - applying 20x boost")
                 elif days_until_must_start <= 30:
                     chain_boost = 5.0    # Must start within month - urgent
-                    logger.info(f"⚠️ FAMILY URGENT: {family} must start within 30 days - applying 5x boost")
+                    logger.info(f"FAMILY URGENT: {family} must start within 30 days - applying 5x boost")
                 else:
                     chain_boost = 1.0   # Normal priority
                 

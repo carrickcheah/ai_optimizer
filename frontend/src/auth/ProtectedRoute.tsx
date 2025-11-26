@@ -6,8 +6,16 @@ interface ProtectedRouteProps {
   children: React.ReactNode
 }
 
+// Check if auth is enabled via environment variable
+const AUTH_ENABLED = import.meta.env.VITE_AUTH_ENABLED === 'true'
+
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { user, loading } = useAuth()
+
+  // Dev mode: bypass auth when VITE_AUTH_ENABLED=false
+  if (!AUTH_ENABLED) {
+    return <>{children}</>
+  }
 
   if (loading) {
     return (

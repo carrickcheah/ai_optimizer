@@ -60,22 +60,22 @@ class EndpointConfig:
         
         # Check for critical errors - FAIL IMMEDIATELY
         if missing_vars:
-            error_msg = f"❌ CRITICAL ENDPOINT CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
+            error_msg = f"CRITICAL ENDPOINT CONFIG ERROR: Missing required environment variables: {', '.join(missing_vars)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        
+
         if invalid_vars:
-            error_msg = f"❌ CRITICAL ENDPOINT CONFIG ERROR: Invalid environment variable values: {', '.join(invalid_vars)}"
+            error_msg = f"CRITICAL ENDPOINT CONFIG ERROR: Invalid environment variable values: {', '.join(invalid_vars)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        
+
         # Validate business logic - FAIL IF INVALID
         if planning_horizon_days > max_planning_horizon_days:
-            error_msg = f"❌ CRITICAL CONFIG ERROR: PLANNING_HORIZON_DAYS ({planning_horizon_days}) cannot exceed MAX_PLANNING_HORIZON_DAYS ({max_planning_horizon_days})"
+            error_msg = f"CRITICAL CONFIG ERROR: PLANNING_HORIZON_DAYS ({planning_horizon_days}) cannot exceed MAX_PLANNING_HORIZON_DAYS ({max_planning_horizon_days})"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        
-        logger.info(f"✅ Successfully loaded endpoint configuration from .env")
+
+        logger.info("Successfully loaded endpoint configuration from .env")
         
         return cls(
             max_jobs_limit=max_jobs_limit,
@@ -86,9 +86,9 @@ class EndpointConfig:
 # Initialize configuration at module level - FAIL IF MISSING
 try:
     ENDPOINT_CONFIG = EndpointConfig.from_env()
-    logger.info(f"✅ Production jobs endpoints initialized")
+    logger.info("Production jobs endpoints initialized")
 except Exception as e:
-    logger.error(f"❌ FAILED to initialize endpoint configuration: {e}")
+    logger.error(f"FAILED to initialize endpoint configuration: {e}")
     raise
 
 class ProductionJobValidation:
@@ -177,7 +177,7 @@ async def get_production_jobs(
         )
         
         if not jobs_data:
-            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            logger.warning("NO JOBS FOUND from mariadb_parser")
             return []
         
         # Apply filters and pagination
@@ -207,31 +207,31 @@ async def get_production_jobs(
                 
                 # Map job_id to op_id for API compatibility
                 if 'op_id' not in job and 'job_id' in job:
-                    job['op_id'] = job.get('op_id', hash(job['job_id']) % 1000000)
+                    job['op_id'] = job.get('op_id', abs(hash(job['job_id'])) % 1000000)
                 
                 transformed_row = DataTransformer.transform_job_row(job)
                 response_jobs.append(ProductionJobResponse(**transformed_row))
                 
             except Exception as e:
                 failed_jobs += 1
-                logger.error(f"❌ FAILED to validate job data for job {job.get('job_id', 'unknown')}: {e}")
+                logger.error(f"FAILED to validate job data for job {job.get('job_id', 'unknown')}: {e}")
                 continue
-        
+
         if failed_jobs > 0:
-            logger.warning(f"⚠️ {failed_jobs} jobs failed validation and were excluded")
-        
+            logger.warning(f"{failed_jobs} jobs failed validation and were excluded")
+
         if not response_jobs:
-            logger.error(f"❌ ALL JOBS FAILED VALIDATION - no valid jobs returned")
+            logger.error("ALL JOBS FAILED VALIDATION - no valid jobs returned")
             raise HTTPException(status_code=500, detail="All jobs failed data validation")
-        
-        logger.info(f"✅ Retrieved {len(response_jobs)} valid production jobs from mariadb_parser")
+
+        logger.info(f"Retrieved {len(response_jobs)} valid production jobs from mariadb_parser")
         return response_jobs
-                
+
     except ValueError as e:
-        logger.error(f"❌ PARAMETER VALIDATION ERROR: {e}")
+        logger.error(f"PARAMETER VALIDATION ERROR: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"❌ UNEXPECTED ERROR in get_production_jobs: {e}")
+        logger.error(f"UNEXPECTED ERROR in get_production_jobs: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/production-schedule", 
@@ -287,7 +287,7 @@ async def get_production_schedule(
         )
         
         if not jobs_data:
-            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            logger.warning("NO JOBS FOUND from mariadb_parser")
             return {
                 "items": [],
                 "total_items": 0,
@@ -353,7 +353,7 @@ async def get_production_schedule(
         end_idx = start_idx + page_size
         page_items = schedule_items[start_idx:end_idx]
         
-        logger.info(f"✅ Retrieved {len(page_items)} schedule records from mariadb_parser (page {page}/{total_pages})")
+        logger.info(f"Retrieved {len(page_items)} schedule records from mariadb_parser (page {page}/{total_pages})")
         
         return {
             "items": page_items,
@@ -369,10 +369,10 @@ async def get_production_schedule(
         }
                 
     except ValueError as e:
-        logger.error(f"❌ PARAMETER VALIDATION ERROR: {e}")
+        logger.error(f"PARAMETER VALIDATION ERROR: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"❌ UNEXPECTED ERROR in get_production_schedule: {e}")
+        logger.error(f"UNEXPECTED ERROR in get_production_schedule: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/health", 
@@ -401,21 +401,21 @@ async def health_check():
             raise Exception("Database connection test failed")
             
     except Exception as e:
-        logger.error(f"❌ DATABASE HEALTH CHECK FAILED: {e}")
+        logger.error(f"DATABASE HEALTH CHECK FAILED: {e}")
         health_data["status"] = "unhealthy"
         health_data["checks"]["database"] = {
             "status": "unhealthy",
             "error": str(e)
         }
-    
+
     # Configuration validation check
     try:
         # Verify configuration is still valid
         EndpointConfig.from_env()
         health_data["checks"]["configuration"] = {"status": "healthy"}
-        
+
     except Exception as e:
-        logger.error(f"❌ CONFIGURATION HEALTH CHECK FAILED: {e}")
+        logger.error(f"CONFIGURATION HEALTH CHECK FAILED: {e}")
         health_data["status"] = "unhealthy"
         health_data["checks"]["configuration"] = {
             "status": "unhealthy",
@@ -443,7 +443,7 @@ async def get_production_job(job_id: int):
         )
         
         if not jobs_data:
-            logger.warning(f"❌ NO JOBS FOUND from mariadb_parser")
+            logger.warning("NO JOBS FOUND from mariadb_parser")
             raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
         
         # Find job by op_id
@@ -454,14 +454,14 @@ async def get_production_job(job_id: int):
                 break
         
         if not found_job:
-            logger.warning(f"❌ JOB NOT FOUND: {job_id}")
+            logger.warning(f"JOB NOT FOUND: {job_id}")
             raise HTTPException(status_code=404, detail=f"Job with ID {job_id} not found")
-        
+
         # STRICT validation - NO FALLBACKS for missing data
         required_fields = ['job_id', 'job', 'process_code']
         for field in required_fields:
             if field not in found_job or found_job[field] is None:
-                logger.error(f"❌ INVALID JOB DATA: Missing required field '{field}' for job {job_id}")
+                logger.error(f"INVALID JOB DATA: Missing required field '{field}' for job {job_id}")
                 raise HTTPException(status_code=500, detail=f"Job data incomplete - missing {field}")
         
         # Ensure op_id is available for API compatibility
@@ -472,29 +472,29 @@ async def get_production_job(job_id: int):
         return ProductionJobResponse(**transformed_row)
                 
     except ValueError as e:
-        logger.error(f"❌ JOB ID VALIDATION ERROR: {e}")
+        logger.error(f"JOB ID VALIDATION ERROR: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise  # Re-raise HTTP exceptions
     except Exception as e:
-        logger.error(f"❌ UNEXPECTED ERROR fetching job {job_id}: {e}")
+        logger.error(f"UNEXPECTED ERROR fetching job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # Disabled endpoints - NO WRITE OPERATIONS SUPPORTED
 @router.post("/", response_model=APIResponse)
 async def create_production_job(job_data: ProductionJobData = Body(...)):
     """CREATE NOT SUPPORTED - READ-ONLY ENDPOINT."""
-    logger.error("❌ ATTEMPTED CREATE OPERATION on read-only endpoint")
+    logger.error("ATTEMPTED CREATE OPERATION on read-only endpoint")
     raise HTTPException(status_code=501, detail="Create operations not supported - read-only endpoint")
 
 @router.put("/{job_id}", response_model=ProductionJobResponse)
 async def update_production_job(job_id: int, job_data: ProductionJobData = Body(...)):
     """UPDATE NOT SUPPORTED - READ-ONLY ENDPOINT."""
-    logger.error(f"❌ ATTEMPTED UPDATE OPERATION on read-only endpoint for job {job_id}")
+    logger.error(f"ATTEMPTED UPDATE OPERATION on read-only endpoint for job {job_id}")
     raise HTTPException(status_code=501, detail="Update operations not supported - read-only endpoint")
 
 @router.delete("/{job_id}", response_model=APIResponse)
 async def delete_production_job(job_id: int):
     """DELETE NOT SUPPORTED - READ-ONLY ENDPOINT."""
-    logger.error(f"❌ ATTEMPTED DELETE OPERATION on read-only endpoint for job {job_id}")
+    logger.error(f"ATTEMPTED DELETE OPERATION on read-only endpoint for job {job_id}")
     raise HTTPException(status_code=501, detail="Delete operations not supported - read-only endpoint")

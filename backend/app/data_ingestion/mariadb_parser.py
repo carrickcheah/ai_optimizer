@@ -9,13 +9,13 @@ Functions for loading job data from MariaDB with security and lint fixes
   4. Not completed/cancelled (DocStatus_c, QtyStatus_c filters)
   5. Not voided (Void_c filter)
 
-  ⏺ 📊 Complete Lookback Analysis Results:
+  Complete Lookback Analysis Results:
 
   | Lookback Days | Total Jobs | Performance  |
   |---------------|------------|--------------|
   | 30 days       | 811 jobs   | Fast         |
   | 60 days       | 811 jobs   | Fast         |
-  | 90 days       | 1019 jobs  | ⭐ Sweet spot |
+  | 90 days       | 1019 jobs  | Sweet spot   |
   | 120 days      | 1019 jobs  | Same         |
   | 180 days      | 1019 jobs  | Same         |
   | 270 days      | 1019 jobs  | Same         |
@@ -55,12 +55,12 @@ logger = logging.getLogger(__name__)
 # Get scheduling configuration
 NORMAL_WORKING_HOURS = os.getenv("NORMAL_WORKING_HOURS")
 if not NORMAL_WORKING_HOURS:
-    logger.error("❌ MISSING NORMAL_WORKING_HOURS: NORMAL_WORKING_HOURS not set in .env")
+    logger.error("MISSING NORMAL_WORKING_HOURS: NORMAL_WORKING_HOURS not set in .env")
     raise ValueError("NORMAL_WORKING_HOURS is required in .env file")
 try:
     NORMAL_WORKING_HOURS = float(NORMAL_WORKING_HOURS)
 except ValueError:
-    logger.error(f"❌ INVALID NORMAL_WORKING_HOURS: Cannot convert '{NORMAL_WORKING_HOURS}' to float")
+    logger.error(f"INVALID NORMAL_WORKING_HOURS: Cannot convert '{NORMAL_WORKING_HOURS}' to float")
     raise ValueError(f"NORMAL_WORKING_HOURS must be a valid number, got: {NORMAL_WORKING_HOURS}")
 
 
@@ -159,18 +159,18 @@ def get_working_day_end_time(target_date: date) -> dt_time:
     # Default to 18:00 if database lookup fails
     default_end_time = dt_time(18, 0, 0)
     
+    conn = None
+    cursor = None
     try:
         conn = get_db_connection()
         if conn and conn.is_connected():
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
-                "SELECT end_time FROM ai_arrangable_hour WHERE arrange_day = %s AND is_working = 1", 
+                "SELECT end_time FROM ai_arrangable_hour WHERE arrange_day = %s AND is_working = 1",
                 (mysql_day,)
             )
             result = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            
+
             if result and result['end_time']:
                 end_time_value = result['end_time']
                 # Convert timedelta to time object
@@ -184,12 +184,17 @@ def get_working_day_end_time(target_date: date) -> dt_time:
                     cached_time = end_time_value
                 else:
                     cached_time = default_end_time
-                
+
                 # Cache the result
                 _working_hours_cache[mysql_day] = cached_time
                 return cached_time
     except Exception as e:
         logger.warning(f"Could not fetch working hours for day {mysql_day}: {e}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
     
     # Cache the default and return it
     _working_hours_cache[mysql_day] = default_end_time
@@ -597,7 +602,7 @@ def load_jobs_planning_data(
         max_jobs_env = os.getenv('MAX_JOBS_LIMIT')
         if not max_jobs_env:
             logger.error(
-                "❌ MISSING MAX_JOBS_LIMIT: MAX_JOBS_LIMIT not set in .env - "
+                "MISSING MAX_JOBS_LIMIT: MAX_JOBS_LIMIT not set in .env - "
                 "cannot determine job loading limit"
             )
             return [], [], {}
@@ -605,16 +610,16 @@ def load_jobs_planning_data(
             max_jobs = int(max_jobs_env)
         except ValueError:
             logger.error(
-                f"❌ INVALID MAX_JOBS_LIMIT: Cannot convert "
+                f"INVALID MAX_JOBS_LIMIT: Cannot convert "
                 f"'{max_jobs_env}' to integer"
             )
             return [], [], {}
-    
+
     if planning_horizon_days is None:
         horizon_env = os.getenv('PLANNING_HORIZON_DAYS')
         if not horizon_env:
             logger.error(
-                "❌ MISSING PLANNING_HORIZON_DAYS: PLANNING_HORIZON_DAYS "
+                "MISSING PLANNING_HORIZON_DAYS: PLANNING_HORIZON_DAYS "
                 "not set in .env - cannot determine planning horizon"
             )
             return [], [], {}
@@ -622,7 +627,7 @@ def load_jobs_planning_data(
             planning_horizon_days = int(horizon_env)
         except ValueError:
             logger.error(
-                f"❌ INVALID PLANNING_HORIZON_DAYS: Cannot convert "
+                f"INVALID PLANNING_HORIZON_DAYS: Cannot convert "
                 f"'{horizon_env}' to integer"
             )
             return [], [], {}

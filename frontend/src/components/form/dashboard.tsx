@@ -167,6 +167,10 @@ const Dashboard: React.FC = () => {
             />
           ))}
         </div>
+        
+        <div className="dashboard-footer">
+          <p>Valiant Precision Sdn. Bhd. | Metal Manufacturing Services</p>
+        </div>
       </div>
     </div>
   );

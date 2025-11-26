@@ -56,17 +56,24 @@ async def generate_ai_report(cached_data: CachedDataInput) -> Dict[str, Any]:
         try:
             report_generator = get_report_generator()
             ai_report = await report_generator.generate_comprehensive_report(all_data)
-            logger.info("✅ Successfully generated AI report from cached data")
+            logger.info("Successfully generated AI report from cached data")
             return ai_report
             
         except Exception as llm_error:
             logger.warning(f"LLM generation failed, using fallback: {llm_error}")
-            report_generator = get_report_generator()
-            fallback_report = report_generator.generate_fallback_report(all_data)
-            return fallback_report
+            try:
+                report_generator = get_report_generator()
+                fallback_report = report_generator.generate_fallback_report(all_data)
+                return fallback_report
+            except Exception as fallback_error:
+                logger.error(f"Fallback report generation also failed: {fallback_error}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Both AI and fallback report generation failed: {fallback_error}"
+                )
             
     except Exception as e:
-        logger.error(f"❌ Error generating AI report: {str(e)}")
+        logger.error(f"Error generating AI report: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error generating AI report: {str(e)}")
 
 @router.post("/ai-report-stream")

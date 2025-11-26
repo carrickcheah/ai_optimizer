@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider, ProtectedRoute } from './auth';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import InputForm from './components/form/input';
-import Header from './components/header';
 import Dashboard from './components/form/dashboard';
 import TableData from './components/form/table_data';
 import JobView from './components/form/view';
@@ -19,7 +18,6 @@ function App() {
         <Router>
           <ProtectedRoute>
             <div className="app-container bg-gray-100 min-h-screen">
-              <Header title="AI Optimizer" />
               <main className="main-content p-4">
                 <Routes>
               <Route path="/" element={<Dashboard />} />

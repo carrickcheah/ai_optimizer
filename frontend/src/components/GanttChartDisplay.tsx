@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
-import { useDataCache } from '../contexts/DataCacheContext';
+import { useDataCache, GanttTask } from '../contexts/DataCacheContext';
 import { useWorkingHours, timeToMinutes, minutesToTime, isTimeInWorkingPeriod, isTimeInBreak, WorkingHour, BreakTime } from '../hooks/useWorkingHours';
 import './GanttChartDisplay.css'; // Import the CSS file
 
@@ -53,17 +53,17 @@ interface MergedJobData {
     start: number;
     end: number;
   }>;
-  originalTask: any; // Keep reference to original task data
+  originalTask: GanttTask; // Keep reference to original task data
 }
 
 // Helper function to create merged job bars with gap information
-const createMergedJobBarsWithGaps = (tasks: any[]): MergedJobData[] => {
+const createMergedJobBarsWithGaps = (tasks: GanttTask[]): MergedJobData[] => {
   if (!tasks || tasks.length === 0) {
     return [];
   }
 
   // Group tasks by base job ID
-  const jobGroups: Record<string, any[]> = {};
+  const jobGroups: Record<string, GanttTask[]> = {};
   
   tasks.forEach(task => {
     const baseJobId = getBaseJobId(task.Task);

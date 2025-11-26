@@ -72,7 +72,16 @@ def get_connection_pool():
 
 @contextmanager
 def get_db_connection_from_pool():
-    """Context manager for database connections with automatic cleanup."""
+    """Context manager for database connections with automatic cleanup and commit.
+
+    Usage:
+        with get_db_connection_from_pool() as conn:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(...)
+            results = cursor.fetchall()
+            cursor.close()
+        # Connection is automatically committed and closed
+    """
     connection = None
     try:
         pool = get_connection_pool()
@@ -81,15 +90,20 @@ def get_db_connection_from_pool():
         else:
             # Fallback to direct connection
             connection = get_db_connection()
-        
+
         yield connection
+
+        # Commit on successful completion (if autocommit is off)
+        if connection and connection.is_connected():
+            connection.commit()
+
     except mysql.connector.Error as e:
-        if connection:
+        if connection and connection.is_connected():
             connection.rollback()
         logger.error(f"Database error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     except Exception as e:
-        if connection:
+        if connection and connection.is_connected():
             connection.rollback()
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

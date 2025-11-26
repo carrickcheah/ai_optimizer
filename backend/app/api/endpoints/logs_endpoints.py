@@ -23,7 +23,8 @@ def parse_log_line(line: str) -> Optional[Dict[str, str]]:
                 "message": parts[3].strip()
             }
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to parse log line: {e}")
         return None
 
 @router.get("/recent")
@@ -50,12 +51,22 @@ async def get_recent_logs(
                 "message": "Log file not found"
             }
         
-        # Read the last N lines from the log file
-        with open(log_file_path, 'r', encoding='utf-8') as f:
-            all_lines = f.readlines()
-        
-        # Get the last N lines
-        recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        # Check file size to avoid memory issues (limit to 50MB)
+        file_size = os.path.getsize(log_file_path)
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+        if file_size > MAX_FILE_SIZE:
+            logger.warning(f"Log file too large ({file_size / 1024 / 1024:.1f}MB), reading last portion only")
+
+        # Read the last N lines efficiently using deque for large files
+        from collections import deque
+        recent_lines = deque(maxlen=lines)
+
+        with open(log_file_path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                recent_lines.append(line)
+
+        recent_lines = list(recent_lines)
         
         # Parse log lines
         parsed_logs = []
@@ -74,7 +85,7 @@ async def get_recent_logs(
                         "message": line
                     })
         
-        logger.info(f"✅ Retrieved {len(parsed_logs)} log entries")
+        logger.info(f"Retrieved {len(parsed_logs)} log entries")
         
         return {
             "logs": parsed_logs,
@@ -83,7 +94,7 @@ async def get_recent_logs(
         }
         
     except Exception as e:
-        logger.error(f"❌ Error fetching logs: {str(e)}")
+        logger.error(f"Error fetching logs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching logs: {str(e)}")
 
 @router.get("/health")

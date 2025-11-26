@@ -126,7 +126,7 @@ class GreedyConfigManager:
         
         if missing_vars:
             raise GreedyConfigurationError(
-                f"❌ MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
+                f"MISSING CONFIGURATION: Required environment variables not set: {missing_vars}"
             )
         
         # Convert and validate values
@@ -154,7 +154,7 @@ class GreedyConfigManager:
             return config
             
         except (ValueError, TypeError) as e:
-            raise GreedyConfigurationError(f"❌ INVALID CONFIGURATION: Error converting values: {e}")
+            raise GreedyConfigurationError(f"INVALID CONFIGURATION: Error converting values: {e}")
     
     @staticmethod
     def _validate_config(config: GreedyConfig) -> None:
@@ -178,7 +178,7 @@ class GreedyConfigManager:
         
         for condition, error_msg in validations:
             if not condition:
-                raise GreedyConfigurationError(f"❌ INVALID CONFIGURATION: {error_msg}")
+                raise GreedyConfigurationError(f"INVALID CONFIGURATION: {error_msg}")
 
 
 class JobValidator:
@@ -229,7 +229,7 @@ class JobValidator:
             processing_time = JobValidator._calculate_processing_time(normalized_job)
             if processing_time is None:
                 logger.error(
-                    f"❌ Job {normalized_job.get('job_id')} has no valid duration data - "
+                    f"Job {normalized_job.get('job_id')} has no valid duration data - "
                     f"cannot schedule without processing time"
                 )
                 return None
@@ -254,8 +254,8 @@ class JobValidator:
                 processing_time = float(hours_need) * 3600  # Convert hours to seconds
                 logger.debug(f"Using hours_need for job {job_id}: {hours_need} hours = {processing_time} seconds")
                 return processing_time
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid hours_need value for job {job_id}: {hours_need} - {e}")
         
         # Priority 2: Calculate from quantity and output rate
         job_quantity = job.get('job_quantity', 0)
@@ -737,7 +737,7 @@ class GreedyScheduler:
             sorted_subcontractor_jobs = ChainAnalyzer.identify_critical_subcontractor_jobs(
                 subcontractor_jobs, schedule_state['current_time']
             )
-            logger.info("✅ Using enhanced LCD-based priority for SUBCONTRACTOR jobs")
+            logger.info("Using enhanced LCD-based priority for SUBCONTRACTOR jobs")
         except ImportError:
             logger.warning("Chain analyzer not available, falling back to basic urgency sorting")
             sorted_subcontractor_jobs = self._sort_jobs_by_urgency(subcontractor_jobs, schedule_state['current_time'])
@@ -778,7 +778,7 @@ class GreedyScheduler:
             sorted_jobs = PriorityCalculator.sort_jobs_by_enhanced_priority(
                 independent_jobs, schedule_state['current_time']
             )
-            logger.info("✅ Using enhanced LCD-based priority for independent jobs")
+            logger.info("Using enhanced LCD-based priority for independent jobs")
         except ImportError:
             logger.warning("Priority calculator not available, falling back to basic urgency sorting")
             sorted_jobs = self._sort_jobs_by_urgency(independent_jobs, schedule_state['current_time'])
@@ -845,11 +845,11 @@ class GreedyScheduler:
                 
                 if missing_processes:
                     families_with_gaps[family_name] = missing_processes
-                    logger.warning(f"🚫 INCOMPLETE SEQUENCE: Family '{family_name}' missing processes: {missing_processes}")
-                    logger.warning(f"🚫 Present: {sorted(processes_in_family)}, Expected: {expected_sequence}")
-                    logger.warning(f"🔧 SEQUENTIAL MODE: Jobs will wait for immediate predecessors to finish (gaps allowed)")
+                    logger.warning(f"INCOMPLETE SEQUENCE: Family '{family_name}' missing processes: {missing_processes}")
+                    logger.warning(f"Present: {sorted(processes_in_family)}, Expected: {expected_sequence}")
+                    logger.warning(f"SEQUENTIAL MODE: Jobs will wait for immediate predecessors to finish (gaps allowed)")
                 else:
-                    logger.info(f"✅ COMPLETE SEQUENCE: Family '{family_name}' has all processes P1-P{max(processes_in_family)}")
+                    logger.info(f"COMPLETE SEQUENCE: Family '{family_name}' has all processes P1-P{max(processes_in_family)}")
             
             # Store gap information for enforcement during scheduling
             schedule_state['families_with_gaps'] = families_with_gaps
@@ -868,7 +868,7 @@ class GreedyScheduler:
             family_priorities = ChainAnalyzer.prioritize_families_by_urgency(
                 job_families, schedule_state['current_time']
             )
-            logger.info("✅ Using enhanced chain completion analysis for dependency scheduling")
+            logger.info("Using enhanced chain completion analysis for dependency scheduling")
             # Sort families by priority (most urgent first)
             ordered_families = [(family, job_families[family]) for family, _ in family_priorities]
         except ImportError:
@@ -900,7 +900,7 @@ class GreedyScheduler:
                     return (-priority, process_num)
                 
                 sorted_family_jobs = sorted(family_job_items, key=family_job_priority_key)
-                logger.info(f"✅ Applied chain completion priority sorting for family '{family}'")
+                logger.info(f"Applied chain completion priority sorting for family '{family}'")
             except ImportError:
                 logger.warning("Priority calculator not available, using original order")
                 sorted_family_jobs = family_jobs
@@ -936,7 +936,8 @@ class GreedyScheduler:
                             dep_manager = get_dependency_manager()
                             all_family_jobs = [{ 'job_id': j_id, **j_item } for p_num, j_id, j_item in sorted_family_jobs]
                             dep_job_id = dep_manager.find_job_dependency(job_id, all_family_jobs)
-                        except Exception:
+                        except Exception as e:
+                            logger.warning(f"Dependency resolution failed for job {job_id}: {e}")
                             dep_job_id = None
 
                     # Resolve dependency if a specific job is identified
@@ -1408,22 +1409,25 @@ class GreedyScheduler:
             logger.debug(f"Calculating preemptive end time: start={datetime.fromtimestamp(start_time, tz=malaysia_tz)}, duration={processing_time/3600:.1f}h")
             
             # Process the job in working time chunks, pausing during breaks
+            # Use 1-hour chunks for efficiency (avoid millions of iterations for long jobs)
+            CHUNK_SIZE = 3600  # 1 hour in seconds
+
             while remaining_time > 0:
                 current_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
-                
+
                 # Check if current time is during working hours
                 if is_time_available_for_scheduling(current_dt):
-                    # Work for 1 minute or remaining time, whichever is less
-                    work_chunk = min(60, remaining_time)  # 1 minute = 60 seconds
+                    # Work for 1 hour or remaining time, whichever is less
+                    work_chunk = min(CHUNK_SIZE, remaining_time)
                     remaining_time -= work_chunk
                     current_time += work_chunk
                 else:
-                    # Skip to next minute (pause during break/non-working time)
-                    current_time += 60  # Jump 1 minute ahead
-                
-                # Safety check to prevent infinite loops
-                if current_time > start_time + (365 * 24 * 3600):  # 1 year limit
-                    logger.warning(f"Preemptive scheduling exceeded 1 year limit - using simple end time")
+                    # Skip to next hour (pause during break/non-working time)
+                    current_time += CHUNK_SIZE
+
+                # Safety check to prevent infinite loops (30 days limit for reasonable jobs)
+                if current_time > start_time + (30 * 24 * 3600):
+                    logger.warning(f"Preemptive scheduling exceeded 30 day limit - using simple end time")
                     return start_time + processing_time
             
             end_dt = datetime.fromtimestamp(current_time, tz=malaysia_tz)
@@ -1556,14 +1560,14 @@ if __name__ == "__main__":
     
     except GreedyConfigurationError as e:
         logger.error(f"Configuration error: {e}")
-        print(f"\n❌ Configuration Error: {e}")
+        print(f"\nConfiguration Error: {e}")
         print("Ensure all required variables are set in your .env file:")
         print("- NORMAL_WORKING_HOURS, OT_WORKING_HOURS, EMERGENCY_OT_HOURS")
-        print("- EMERGENCY_MINIMUM_START_HOUR, GRACE_PERIOD_HOURS") 
+        print("- EMERGENCY_MINIMUM_START_HOUR, GRACE_PERIOD_HOURS")
         print("- SCHEDULER_SEARCH_DAYS, URGENT_BUFFER_THRESHOLD_HOURS")
         print("- URGENT_REDUCTION_FACTOR, BUFFER_*_HOURS variables")
         print("- MINIMUM_TIME_SHIFT_SECONDS, SETUP_TIME variables")
-        
+
     except Exception as e:
         logger.error(f"Unexpected error in main: {e}")
-        print(f"\n❌ Unexpected Error: {e}")
+        print(f"\nUnexpected Error: {e}")

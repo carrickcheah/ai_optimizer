@@ -35,8 +35,8 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   // DEBUG: Log what data we're actually receiving
   // Only log component state once when data loads
   useEffect(() => {
-    if (!isLoading && tasks.length > 0) {
-      console.log('✅ [ResourceChart] Component ready with', tasks.length, 'tasks');
+    if (import.meta.env.DEV && !isLoading && tasks.length > 0) {
+      console.log('[ResourceChart] Component ready with', tasks.length, 'tasks');
     }
   }, [isLoading, tasks.length]);
 

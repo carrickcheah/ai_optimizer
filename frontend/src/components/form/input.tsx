@@ -63,6 +63,8 @@ const InputForm: React.FC = () => {
   const [isEditMode, setIsEditMode] = useState<boolean>(!!id);
   const [isLoading, setIsLoading] = useState<boolean>(!!id);
   const [error, setError] = useState<string | null>(null);
+  // Track if data is being loaded to prevent auto-calculation override
+  const [isDataLoaded, setIsDataLoaded] = useState<boolean>(!id);
   
   // New state for machine names
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -89,7 +91,10 @@ const InputForm: React.FC = () => {
   });
 
   // useEffect for auto-calculating hours_need
+  // Skip calculation until data is loaded (prevents overriding API values in edit mode)
   useEffect(() => {
+    if (!isDataLoaded) return;
+
     const jobQtyNum = parseFloat(formData.job_quantity);
     const outputPerHourNum = parseFloat(formData.expect_output_per_hour);
 
@@ -102,10 +107,10 @@ const InputForm: React.FC = () => {
     } else {
       setFormData(prevFormData => ({
         ...prevFormData,
-        hours_need: '0.00' 
+        hours_need: '0.00'
       }));
     }
-  }, [formData.job_quantity, formData.expect_output_per_hour]);
+  }, [formData.job_quantity, formData.expect_output_per_hour, isDataLoaded]);
 
   // Track raw input values for number fields to make typing easier
   const [numberInputs, setNumberInputs] = useState({
@@ -278,6 +283,8 @@ const InputForm: React.FC = () => {
         })
         .finally(() => {
           setIsLoading(false);
+          // Mark data as loaded to enable auto-calculation for subsequent changes
+          setIsDataLoaded(true);
         });
     }
   }, [id, isEditMode]);
@@ -306,13 +313,8 @@ const InputForm: React.FC = () => {
       })
       .catch(error => {
         console.error('Error fetching machine data:', error);
-        setError(`Failed to load machines: ${error.message}`);
-        // Set fallback machines for development
-        setMachines([
-          { MachineName_v: "Machine1" },
-          { MachineName_v: "Machine2" },
-          { MachineName_v: "Machine3" }
-        ]);
+        setError(`Failed to load machines: ${error.message}. Please refresh the page.`);
+        setMachines([]);
       })
       .finally(() => {
         setLoadingMachines(false);
@@ -400,6 +402,9 @@ const InputForm: React.FC = () => {
       priority: '3',
       number_operator: '1'
     });
+
+    // Clear any error state
+    setError(null);
   };
 
   // Add handler for select changes (for dropdown fields like job_dependency and rsc_code)
@@ -521,8 +526,8 @@ const InputForm: React.FC = () => {
                   required
                 >
                   <option value="">Select a machine</option>
-                  {machines.map((machine, index) => (
-                    <option key={`${machine.MachineName_v}-${index}`} value={machine.MachineName_v}>
+                  {machines.map((machine) => (
+                    <option key={machine.MachineName_v} value={machine.MachineName_v}>
                       {machine.MachineName_v}
                     </option>
                   ))}

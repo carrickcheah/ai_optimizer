@@ -305,7 +305,8 @@ class ProductionReportGenerator:
     def _calculate_machine_utilization(self, schedule: Dict[str, Any]) -> Dict[str, float]:
         """Calculate utilization percentage for each machine based on configured working hours."""
         utilization = {}
-        daily_seconds = self.config.normal_working_hours * 3600
+        # Ensure daily_seconds is at least 1 hour to prevent division by zero
+        daily_seconds = max(self.config.normal_working_hours * 3600, 3600)
         
         for machine, jobs in schedule.items():
             if not isinstance(jobs, list) or not jobs:

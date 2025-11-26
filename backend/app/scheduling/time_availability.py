@@ -359,12 +359,12 @@ class TimeAvailabilityChecker:
             start_time = period['start_time']
             end_time = period['end_time']
             
-            # Handle overnight shifts
+            # Handle overnight shifts (exclusive upper bound to avoid edge case at exact end time)
             if end_time < start_time:
-                if current_time >= start_time or current_time <= end_time:
+                if current_time >= start_time or current_time < end_time:
                     return True
             else:
-                if start_time <= current_time <= end_time:
+                if start_time <= current_time < end_time:
                     return True
         
         return False
@@ -379,13 +379,13 @@ class TimeAvailabilityChecker:
             start_time = breaktime['start_time']
             end_time = breaktime['end_time']
             
-            # Handle overnight breaks
+            # Handle overnight breaks (exclusive upper bound to avoid edge case at exact end time)
             if end_time < start_time:
-                if current_time >= start_time or current_time <= end_time:
+                if current_time >= start_time or current_time < end_time:
                     logger.debug(f"Time {current_time} is during break: {breaktime['name']}")
                     return True
             else:
-                if start_time <= current_time <= end_time:
+                if start_time <= current_time < end_time:
                     logger.debug(f"Time {current_time} is during break: {breaktime['name']}")
                     return True
         
