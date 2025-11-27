@@ -1036,11 +1036,11 @@ const GanttChartDisplay: React.FC = () => {
   return (
     <div className="gantt-container">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <button 
-          className="back-button" 
-          onClick={() => window.history.back()}
+        <button
+          className="back-button"
+          onClick={() => window.location.href = '/'}
         >
-          <i className="fas fa-arrow-left"></i> Back
+          <i className="fas fa-home"></i> Home
         </button>
       </div>
       <div className="flat-time-selector">
@@ -1103,7 +1103,7 @@ const GanttChartDisplay: React.FC = () => {
                 }</span>
               </div>
               <div className="stat-item">
-                <span className="stat-label">Work Duration:</span>
+                <span className="stat-label">Total Machine Hours:</span>
                 <span className="stat-value">{
                   (() => {
                     if (sortedMergedJobs.length === 0) return '0 hours';

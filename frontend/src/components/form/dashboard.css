@@ -71,7 +71,8 @@ body, h1, h2, h3, h4, h5, h6, p, label, input, select, button {
 
 .dashboard-cards-container {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, auto);
     gap: 20px;
     margin-top: 32px;
 }
@@ -250,12 +251,6 @@ body, h1, h2, h3, h4, h5, h6, p, label, input, select, button {
 */
 
 /* Responsive adjustments */
-@media (max-width: 1400px) {
-    .dashboard-cards-container {
-        grid-template-columns: repeat(4, 1fr);
-    }
-}
-
 @media (max-width: 1200px) {
     .dashboard-cards-container {
         grid-template-columns: repeat(3, 1fr);

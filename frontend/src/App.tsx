@@ -9,7 +9,7 @@ import JobView from './components/form/view';
 import DetailedScheduleTable from './components/DetailedScheduleTable';
 import GanttChartDisplay from './components/GanttChartDisplay';
 import ResourceChart from './components/resource_chart';
-import AIReport from './components/form/ai_report';
+import Settings from './components/form/settings';
 
 function App() {
   return (
@@ -46,9 +46,9 @@ function App() {
                   <ResourceChart title="Machine Allocation (Resource View)" />
                 </div>
               } />
-              
-              {/* AI Report */}
-              <Route path="/reports" element={<AIReport />} />
+
+              {/* Settings */}
+              <Route path="/settings" element={<Settings />} />
                 </Routes>
               </main>
             </div>

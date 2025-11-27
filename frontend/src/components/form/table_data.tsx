@@ -349,11 +349,11 @@ const TableData: React.FC<TableDataProps> = ({ endpoint = `${API_BASE_URL}/produ
       
       <div className="row">
         <div className="col-12">
-          <button 
-            className="back-button" 
-            onClick={() => window.history.back()}
+          <button
+            className="back-button"
+            onClick={() => window.location.href = '/'}
           >
-            <i className="fas fa-arrow-left"></i> Back
+            <i className="fas fa-home"></i> Home
           </button>
           <div className="card">
             <div className="card-header">

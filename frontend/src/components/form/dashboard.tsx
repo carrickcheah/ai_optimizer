@@ -82,40 +82,40 @@ const Dashboard: React.FC = () => {
   };
 
   const dashboardItems: DashboardCardProps[] = [
-    { 
-      title: 'Data', 
-      iconClass: 'fas fa-database', 
-      description: 'Manage and visualize production data, including job details, resource allocations, and historical metrics.',
+    {
+      title: 'Data',
+      iconClass: 'fas fa-database',
+      description: 'Manage and visualize production data.',
       linkTo: '/data',
       linkText: 'Manage Data'
     },
-    { 
-      title: 'Schedule Table', 
-      iconClass: 'fas fa-calendar-alt', 
-      description: 'View and interact with comprehensive production schedules and timeline visualizations.',
+    {
+      title: 'Schedule Table',
+      iconClass: 'fas fa-calendar-alt',
+      description: 'View and interact with comprehensive production schedules.',
       linkTo: '/schedule-table',
       linkText: 'View Schedule'
     },
-    { 
-      title: 'Jobs Allocation', 
-      iconClass: 'fas fa-tasks', 
-      description: 'Optimize job assignments across production facilities using AI-driven allocation algorithms.',
+    {
+      title: 'Jobs Allocation',
+      iconClass: 'fas fa-tasks',
+      description: 'Optimize job assignments across production facilities.',
       linkTo: '/gantt-chart',
-      linkText: 'View Jobs Allocation'
+      linkText: 'View Jobs Chart'
     },
-    { 
-      title: 'Machine Allocation', 
-      iconClass: 'fas fa-robot', 
-      description: 'Allocate machines and equipment to jobs based on availability, capability, and efficiency.',
+    {
+      title: 'Machine Allocation',
+      iconClass: 'fas fa-robot',
+      description: 'Allocate machines and equipment to jobs.',
       linkTo: '/resource-chart',
-      linkText: 'View Machine Allocation'
+      linkText: 'View Machine Chart'
     },
-    { 
-      title: 'AI Report', 
-      iconClass: 'fas fa-brain', 
-      description: 'Generate AI-powered insights and reporting on production efficiency, bottlenecks, and optimization opportunities.',
-      linkTo: '/reports',
-      linkText: 'View Reports'
+    {
+      title: 'Settings',
+      iconClass: 'fas fa-cog',
+      description: 'Configure application settings and system preferences.',
+      linkTo: '/settings',
+      linkText: 'Open Settings'
     },
   ];
 

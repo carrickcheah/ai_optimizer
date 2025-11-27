@@ -458,11 +458,11 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     return (
       <div className="gantt-container">
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <button 
-            className="back-button" 
-            onClick={() => window.history.back()}
+          <button
+            className="back-button"
+            onClick={() => window.location.href = '/'}
           >
-            <i className="fas fa-arrow-left"></i> Back
+            <i className="fas fa-home"></i> Home
           </button>
 
         </div>
@@ -941,11 +941,11 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
   return (
     <div className="gantt-container">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <button 
-          className="back-button" 
-          onClick={() => window.history.back()}
+        <button
+          className="back-button"
+          onClick={() => window.location.href = '/'}
         >
-          <i className="fas fa-arrow-left"></i> Back
+          <i className="fas fa-home"></i> Home
         </button>
 
       </div>
