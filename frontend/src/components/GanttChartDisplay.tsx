@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Plot from 'react-plotly.js';
 import { useDataCache, GanttTask } from '../contexts/DataCacheContext';
 import { useWorkingHours, timeToMinutes, minutesToTime, isTimeInWorkingPeriod, isTimeInBreak, WorkingHour, BreakTime } from '../hooks/useWorkingHours';
 import './GanttChartDisplay.css'; // Import the CSS file
+
+// Performance threshold - skip gap shapes for large datasets
+const LARGE_DATASET_THRESHOLD = 200;
 
 
 
@@ -134,8 +137,14 @@ const createMergedJobBarsWithGaps = (tasks: GanttTask[]): MergedJobData[] => {
 
 // Helper function to generate Plotly shapes for job gaps
 const generateJobGapShapes = (mergedJobs: MergedJobData[], yAxisLabels: string[]): any[] => {
+  // PERFORMANCE: Skip gap shapes for large datasets to improve rendering speed
+  if (mergedJobs.length > LARGE_DATASET_THRESHOLD) {
+    console.log(`[GanttChart] Skipping gap shapes for ${mergedJobs.length} jobs (threshold: ${LARGE_DATASET_THRESHOLD})`);
+    return [];
+  }
+
   const shapes: any[] = [];
-  
+
   mergedJobs.forEach((job, jobIndex) => {
     const yPosition = yAxisLabels.indexOf(job.baseJobId);
     if (yPosition === -1) return;
@@ -196,7 +205,8 @@ const GanttChartDisplay: React.FC = () => {
   const { config: workingHoursConfig, isLoading: workingHoursLoading, error: workingHoursError } = useWorkingHours();
   const [timeRange, setTimeRange] = useState<string>('21d');
   const [chartTitle] = useState<string>('Production Planning System');
-  
+  const [isRendering, setIsRendering] = useState<boolean>(false);
+
   // DEBUG: Check working hours config (only log once when config loads)
   useEffect(() => {
     if (workingHoursConfig && !workingHoursLoading) {
@@ -237,7 +247,15 @@ const GanttChartDisplay: React.FC = () => {
     return color; // Return color as-is
   };
 
-  // No automatic data loading - user must click refresh button
+  // AUTO-LOAD: Fetch data automatically when component mounts and no cached data exists
+  useEffect(() => {
+    // Only auto-load if we don't have cached data and not currently loading
+    if (rawTasks.length === 0 && !isLoading && !error) {
+      console.log('[GanttChart] No cached data found, auto-loading...');
+      refreshData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount - we intentionally want this to fire only once
 
   // Log data when available
   useEffect(() => {
@@ -265,7 +283,18 @@ const GanttChartDisplay: React.FC = () => {
     }
   }, [tasks, isLoading]);
 
-
+  // PERFORMANCE: Show rendering indicator when processing large datasets
+  useEffect(() => {
+    if (tasks.length > 100 && !isLoading) {
+      setIsRendering(true);
+      // Use requestAnimationFrame to show spinner before heavy computation
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setIsRendering(false);
+        });
+      });
+    }
+  }, [tasks.length, isLoading, timeRange]);
 
   // Create task segments with dynamic working hours and break gaps
   const createTaskSegmentsWithBreaks = (task: any) => {
@@ -400,50 +429,63 @@ const GanttChartDisplay: React.FC = () => {
     return segments.length > 0 ? segments : [task];
   };
   
+  // PERFORMANCE: Memoize expensive calculations to prevent re-computation on every render
   // Create segmented tasks for gap analysis, then merge them back
-  const segmentedTasks = tasks.flatMap(task => {
-    const duration = new Date(task.Finish).getTime() - new Date(task.Start).getTime();
-    const hoursDuration = duration / (1000 * 60 * 60);
-    
-    // Only segment tasks longer than 4 hours (likely to span breaks)
-    if (hoursDuration > 4) {
-      return createTaskSegmentsWithBreaks(task);
-    }
-    return [task];
-  });
-  
-  // Create merged job bars with gap information
-  const mergedJobsWithGaps = createMergedJobBarsWithGaps(segmentedTasks);
-  
-  // Sort merged jobs by job ID for consistency
-  const sortedMergedJobs = [...mergedJobsWithGaps].sort((a, b) => {
-    const partsA = getTaskParts(a.baseJobId);
-    const partsB = getTaskParts(b.baseJobId);
+  const segmentedTasks = useMemo(() => {
+    console.log('[GanttChart] Computing segmented tasks for', tasks.length, 'tasks');
+    return tasks.flatMap(task => {
+      const duration = new Date(task.Finish).getTime() - new Date(task.Start).getTime();
+      const hoursDuration = duration / (1000 * 60 * 60);
 
-    // First, compare by jobGroup alphabetically ascending
-    const jobCompare = partsA.jobGroup.localeCompare(partsB.jobGroup);
-    if (jobCompare !== 0) {
-      return jobCompare;
-    }
+      // Only segment tasks longer than 8 hours (likely to span breaks)
+      // PERFORMANCE: Increased from 4h to 8h to reduce segmentation overhead
+      if (hoursDuration > 8) {
+        return createTaskSegmentsWithBreaks(task);
+      }
+      return [task];
+    });
+  }, [tasks, workingHoursConfig]);
 
-    // If jobGroups are the same, sort by processNum ascending
-    // This ensures jobs follow their natural sequence: P1, P2, P3, P4, P5, P6...
-    // P1 (processNum=1) will come before P2 (processNum=2), and so on
-    return partsA.processNum - partsB.processNum;
-  });
-  
+  // PERFORMANCE: Memoize merged job bars calculation
+  const mergedJobsWithGaps = useMemo(() => {
+    console.log('[GanttChart] Computing merged jobs with gaps');
+    return createMergedJobBarsWithGaps(segmentedTasks);
+  }, [segmentedTasks]);
+
+  // PERFORMANCE: Memoize sorting of merged jobs
+  const sortedMergedJobs = useMemo(() => {
+    console.log('[GanttChart] Sorting', mergedJobsWithGaps.length, 'merged jobs');
+    return [...mergedJobsWithGaps].sort((a, b) => {
+      const partsA = getTaskParts(a.baseJobId);
+      const partsB = getTaskParts(b.baseJobId);
+
+      // First, compare by jobGroup alphabetically ascending
+      const jobCompare = partsA.jobGroup.localeCompare(partsB.jobGroup);
+      if (jobCompare !== 0) {
+        return jobCompare;
+      }
+
+      // If jobGroups are the same, sort by processNum ascending
+      // This ensures jobs follow their natural sequence: P1, P2, P3, P4, P5, P6...
+      // P1 (processNum=1) will come before P2 (processNum=2), and so on
+      return partsA.processNum - partsB.processNum;
+    });
+  }, [mergedJobsWithGaps]);
+
   // For backward compatibility, also keep the segmented tasks sorted (some functions may still need this)
-  const sortedTasks = [...segmentedTasks].sort((a, b) => {
-    const partsA = getTaskParts(a.Task);
-    const partsB = getTaskParts(b.Task);
+  const sortedTasks = useMemo(() => {
+    return [...segmentedTasks].sort((a, b) => {
+      const partsA = getTaskParts(a.Task);
+      const partsB = getTaskParts(b.Task);
 
-    const jobCompare = partsA.jobGroup.localeCompare(partsB.jobGroup);
-    if (jobCompare !== 0) {
-      return jobCompare;
-    }
+      const jobCompare = partsA.jobGroup.localeCompare(partsB.jobGroup);
+      if (jobCompare !== 0) {
+        return jobCompare;
+      }
 
-    return partsA.processNum - partsB.processNum;
-  });
+      return partsA.processNum - partsB.processNum;
+    });
+  }, [segmentedTasks]);
 
 
 
@@ -1196,8 +1238,14 @@ const GanttChartDisplay: React.FC = () => {
       </div>
 
       {isLoading && <div className="loading">Loading chart data...</div>}
+      {isRendering && !isLoading && (
+        <div className="loading" style={{ backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+          <i className="fas fa-spinner fa-spin" style={{ marginRight: '8px' }}></i>
+          Rendering {sortedMergedJobs.length} jobs... (this may take a moment for large datasets)
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
-      
+
       {!isLoading && !error && sortedMergedJobs.length === 0 && (
         <div className="text-center p-4">
           <h3>No Data Available</h3>
@@ -1205,7 +1253,7 @@ const GanttChartDisplay: React.FC = () => {
           <p><small>Data will be shared across all pages once loaded.</small></p>
         </div>
       )}
-      
+
       {!isLoading && !error && sortedMergedJobs.length > 0 && (
         <Plot
           data={getTimeFilteredData() as any}

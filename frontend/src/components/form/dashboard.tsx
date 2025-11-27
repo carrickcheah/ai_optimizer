@@ -61,14 +61,9 @@ const Dashboard: React.FC = () => {
       addLog('📡 Fetching schedule data...');
 
       
-      // Loading Gantt chart data with animated dots
+      // Loading Gantt chart data
       addLog('📊 Loading Gantt chart data...');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      addLog('🏭 The App is scheduling now...');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Retrieving resource allocation
-      addLog('🏭 The jobs will finish scheduling in 60 seconds...');
+      addLog('🏭 Scheduling jobs...');
       await refreshData();
       
       // Clear processing logs and show final success messages

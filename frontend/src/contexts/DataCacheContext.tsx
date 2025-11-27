@@ -336,8 +336,10 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     }
   };
 
-  // Cleanup on unmount to prevent state updates after unmount
+  // Track mount state - reset to true on mount, false on unmount
+  // This handles React Strict Mode double-mounting correctly
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };

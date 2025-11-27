@@ -23,7 +23,7 @@ interface ResourceChartProps {
 }
 
 const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
-  const { data } = useDataCache();
+  const { data, refreshData } = useDataCache();
   const [timeRange, setTimeRange] = useState<string>('21d');
 
   // Use cached data instead of local state
@@ -267,8 +267,16 @@ const ResourceChart: React.FC<ResourceChartProps> = ({ title }) => {
     return shapes;
   };
 
-  // No automatic data loading - user must click refresh button
-  
+  // AUTO-LOAD: Fetch data automatically when component mounts and no cached data exists
+  useEffect(() => {
+    // Only auto-load if we don't have cached data and not currently loading
+    if (tasks.length === 0 && !isLoading && !error) {
+      console.log('[ResourceChart] No cached data found, auto-loading...');
+      refreshData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount - we intentionally want this to fire only once
+
   // Log data when available (debounced to prevent spam)
   useEffect(() => {
     if (tasks.length > 0) {
