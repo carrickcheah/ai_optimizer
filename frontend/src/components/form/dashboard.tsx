@@ -129,7 +129,7 @@ const Dashboard: React.FC = () => {
       <div className="dashboard-main-content">
         <div className="dashboard-section-description">
           <div className="d-flex align-items-center justify-content-between mb-3">
-            <h1 className="dashboard-title mb-0">AI Optimizer</h1>
+            <h1 className="dashboard-title mb-0">Jobs Scheduling App</h1>
             <button 
               className="btn btn-primary" 
               onClick={handleRefreshAll}
