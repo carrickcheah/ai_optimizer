@@ -1,13 +1,17 @@
-# Multi-stage build for AI Optimizer Full Stack
+# ===========================================
+# AI Optimizer Full Stack Dockerfile
+# Multi-stage build: Frontend + Backend combined
+# ===========================================
+
 # Stage 1: Build Frontend (React + Vite)
-FROM node:20-alpine as frontend-builder
+FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
 # Copy frontend package files
 COPY frontend/package*.json ./
 
-# Install ALL dependencies (including dev dependencies for build)
+# Install dependencies
 RUN npm ci
 
 # Copy frontend source and build
@@ -15,23 +19,23 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Backend Dependencies
-FROM python:3.11-slim as backend-builder
+FROM python:3.11-slim AS backend-builder
+
+WORKDIR /app/backend
 
 # Install uv for fast dependency management
 RUN pip install uv
 
-WORKDIR /app/backend
-
 # Copy backend dependency files
-COPY backend/pyproject.toml ./
+COPY backend/pyproject.toml backend/uv.lock ./
 
-# Install dependencies to virtual environment
+# Create virtual environment and install dependencies
 RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN uv pip install --no-cache -r pyproject.toml
+RUN uv sync --frozen --no-dev
 
 # Stage 3: Production Runtime
-FROM python:3.11-slim as production
+FROM python:3.11-slim AS production
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -53,26 +57,23 @@ WORKDIR /app/backend
 
 # Copy backend application
 COPY backend/app ./app
+COPY backend/main.py ./main.py
 
 # Copy nginx configuration
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 
-# Create non-root user for backend
-RUN useradd --create-home --shell /bin/bash app
-
 # Setup directories and permissions
-RUN mkdir -p /app/logs && chown app:app /app/logs
-RUN mkdir -p /var/log/nginx
+RUN mkdir -p /app/logs /var/log/nginx
 
-# Expose ports
-EXPOSE 80 8000
+# Expose port 80 (nginx serves both frontend and proxies to backend)
+EXPOSE 80
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost/health || exit 1
 
 # Start script
-COPY start.sh /start.sh
+COPY docker/start.sh /start.sh
 RUN chmod +x /start.sh
 
 CMD ["/start.sh"] 

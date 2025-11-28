@@ -1,0 +1,30 @@
+# ===========================================
+# AI Optimizer Production Docker Compose
+# ===========================================
+
+services:
+  ai-optimizer:
+    image: ghcr.io/carrickcheah/ai-optimizer:latest
+    container_name: ai-optimizer
+    restart: unless-stopped
+    ports:
+      - "5000:80"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=${DB_HOST:-172.17.0.1}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${DB_USER:-nex_docker}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-nex_valiant}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ai-optimizer-network
+
+networks:
+  ai-optimizer-network:
+    driver: bridge
