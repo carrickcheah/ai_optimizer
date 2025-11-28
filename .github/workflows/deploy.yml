@@ -93,6 +93,8 @@ jobs:
           MAX_JOBS_LIMIT=1000
           PLANNING_HORIZON_DAYS=180
           MAX_PLANNING_HORIZON_DAYS=240
+          SCHEDULER_SEARCH_DAYS=180
+          OVERLOADED_MACHINE_SEARCH_DAYS=120
           EOF"
 
       - name: Login to GHCR on server
