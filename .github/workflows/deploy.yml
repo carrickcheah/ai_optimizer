@@ -82,11 +82,11 @@ jobs:
       - name: Create .env file on server
         run: |
           ssh -i ~/.ssh/deploy_key root@194.233.83.157 "cat > /opt/ai-optimizer/.env << 'EOF'
-          DB_HOST=172.17.0.1
-          DB_PORT=3306
-          DB_USER=nex_docker
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          DB_NAME=nex_valiant
+          MARIADB_HOST=172.17.0.1
+          MARIADB_PORT=3306
+          MARIADB_USERNAME=nex_docker
+          MARIADB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          MARIADB_DATABASE=nex_valiant
           EOF"
 
       - name: Login to GHCR on server
