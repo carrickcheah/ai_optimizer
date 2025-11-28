@@ -210,7 +210,7 @@ class DatabaseCache:
                 cursor.close()
                 
         except Exception as e:
-            logger.error(f"Error loading holidays from ai_holidays: {e}")
+            logger.warning(f"Could not load holidays from ai_holidays: {e}. Using empty holidays (no holidays defined).")
             self._holidays_cache = {}
     
     def _load_arrangable_hours(self) -> None:
@@ -218,35 +218,58 @@ class DatabaseCache:
         try:
             with DatabaseConnectionManager.get_connection() as conn:
                 cursor = conn.cursor(dictionary=True)
-                
+
                 query = """
                 SELECT id, arrange_day, start_time, end_time, is_working, created_at, updated_at
-                FROM ai_arrangable_hour 
+                FROM ai_arrangable_hour
                 WHERE is_working = 1
                 ORDER BY arrange_day, start_time
                 """
-                
+
                 cursor.execute(query)
                 hours = cursor.fetchall()
-                
+
                 self._arrangable_hours_cache = {}
                 for hour in hours:
                     day = hour['arrange_day']
                     if day not in self._arrangable_hours_cache:
                         self._arrangable_hours_cache[day] = []
-                    
+
                     self._arrangable_hours_cache[day].append({
                         'start_time': TimeConverter.timedelta_to_time(hour['start_time']),
                         'end_time': TimeConverter.timedelta_to_time(hour['end_time']),
                         'is_working': hour['is_working']
                     })
-                
-                logger.info(f"Loaded arrangable hours for {len(self._arrangable_hours_cache)} days")
+
+                # If no data loaded, use default working hours
+                if not self._arrangable_hours_cache:
+                    self._use_default_working_hours()
+                else:
+                    logger.info(f"Loaded arrangable hours for {len(self._arrangable_hours_cache)} days from database")
                 cursor.close()
-                
+
         except Exception as e:
-            logger.error(f"Error loading arrangable hours: {e}")
-            self._arrangable_hours_cache = {}
+            logger.warning(f"Could not load arrangable hours from database: {e}. Using defaults.")
+            self._use_default_working_hours()
+
+    def _use_default_working_hours(self) -> None:
+        """Set default working hours when database table is empty or unavailable.
+
+        Default: Monday-Saturday (days 1-6), 6:30 AM to 11:59 PM
+        This matches typical Malaysian manufacturing schedules.
+        """
+        logger.info("Using default working hours: Mon-Sat 6:30 AM - 11:59 PM")
+        self._arrangable_hours_cache = {}
+
+        # Days 1-6 = Monday to Saturday (Sunday = 7 is off)
+        for day in range(1, 7):
+            self._arrangable_hours_cache[day] = [{
+                'start_time': time(6, 30, 0),   # 6:30 AM
+                'end_time': time(23, 59, 0),    # 11:59 PM
+                'is_working': 1
+            }]
+
+        logger.info(f"Default working hours configured for {len(self._arrangable_hours_cache)} days")
     
     def _load_breaktimes(self) -> None:
         """Load break times from ai_breaktimes table."""
@@ -281,7 +304,7 @@ class DatabaseCache:
                 cursor.close()
                 
         except Exception as e:
-            logger.error(f"Error loading breaktimes: {e}")
+            logger.warning(f"Could not load breaktimes from ai_breaktimes: {e}. Using no break times.")
             self._breaktimes_cache = []
     
     def _build_epoch_caches(self) -> None:
