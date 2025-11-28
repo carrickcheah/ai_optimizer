@@ -23,16 +23,18 @@ FROM python:3.11-slim AS backend-builder
 
 WORKDIR /app/backend
 
-# Install uv for fast dependency management
-RUN pip install uv
+# Install build dependencies
+RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
 
-# Copy backend dependency files
-COPY backend/pyproject.toml backend/uv.lock ./
-
-# Create virtual environment and install dependencies
-RUN uv venv /opt/venv
+# Create virtual environment
+RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN uv sync --frozen --no-dev
+
+# Copy backend dependency files and install
+COPY backend/pyproject.toml ./
+RUN pip install --no-cache-dir -e . || pip install --no-cache-dir \
+    fastapi uvicorn mysql-connector-python python-dotenv pytz requests \
+    pandas psutil numpy ortools seaborn plotly fastmcp pydantic pydantic-settings tenacity httpx
 
 # Stage 3: Production Runtime
 FROM python:3.11-slim AS production
