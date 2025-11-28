@@ -9,13 +9,24 @@ services:
     restart: unless-stopped
     ports:
       - "5000:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PYTHONUNBUFFERED=1
+      # Database configuration
       - MARIADB_HOST=${MARIADB_HOST:-172.17.0.1}
       - MARIADB_PORT=${MARIADB_PORT:-3306}
       - MARIADB_USERNAME=${MARIADB_USERNAME:-nex_docker}
       - MARIADB_PASSWORD=${MARIADB_PASSWORD}
       - MARIADB_DATABASE=${MARIADB_DATABASE:-nex_valiant}
+      # Working hours configuration
+      - NORMAL_WORKING_HOURS=${NORMAL_WORKING_HOURS:-17.5}
+      - OT_WORKING_HOURS=${OT_WORKING_HOURS:-19.5}
+      - EMERGENCY_OT_HOURS=${EMERGENCY_OT_HOURS:-22.0}
+      # Planning configuration
+      - MAX_JOBS_LIMIT=${MAX_JOBS_LIMIT:-1000}
+      - PLANNING_HORIZON_DAYS=${PLANNING_HORIZON_DAYS:-180}
+      - MAX_PLANNING_HORIZON_DAYS=${MAX_PLANNING_HORIZON_DAYS:-240}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s

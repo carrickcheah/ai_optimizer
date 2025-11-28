@@ -87,6 +87,12 @@ jobs:
           MARIADB_USERNAME=nex_docker
           MARIADB_PASSWORD=${{ secrets.DB_PASSWORD }}
           MARIADB_DATABASE=nex_valiant
+          NORMAL_WORKING_HOURS=17.5
+          OT_WORKING_HOURS=19.5
+          EMERGENCY_OT_HOURS=22.0
+          MAX_JOBS_LIMIT=1000
+          PLANNING_HORIZON_DAYS=180
+          MAX_PLANNING_HORIZON_DAYS=240
           EOF"
 
       - name: Login to GHCR on server
