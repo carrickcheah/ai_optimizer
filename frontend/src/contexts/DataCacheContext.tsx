@@ -185,7 +185,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
     setData(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/api$/, '');
+      const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/api$/, '');
       if (import.meta.env.DEV) {
         console.log('DataCacheContext: Using API_BASE_URL:', API_BASE_URL);
         console.log('DataCacheContext: Using solver:', solver);
@@ -310,7 +310,7 @@ export const DataCacheProvider: React.FC<DataCacheProviderProps> = ({ children }
 
       // Clear backend caches
       try {
-        const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/api$/, '');
+        const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/api$/, '');
         const response = await fetch(`${API_BASE_URL}/api/reports/clear-cache`, {
           method: 'POST',
           headers: {
