@@ -7,6 +7,6 @@ set -e
 # Start nginx in background
 nginx &
 
-# Start backend with uvicorn
+# Start backend with python (venv already in PATH)
 cd /app/backend
-exec uv run python main.py
+exec python main.py
